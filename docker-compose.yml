@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # --- BANCO DE DADOS (PostgreSQL) ---
+  postgres:
+    image: postgres:15-alpine
+    container_name: auth-db
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=auth_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Salva os dados se reiniciar
+
+  # --- SEU MICROSERVIÇO (Auth) ---
+  auth-service:
+    build: ./apps/auth-service # Onde está o Dockerfile
+    container_name: auth-service
+    ports:
+      - "8081:8081" # Expondo na porta 8081 (pra não bater com frontends na 3000 ou 8080)
+    depends_on:
+      - postgres # Espera o banco subir
+    environment:
+      # Passando as configurações do banco para o Java
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=auth_db
+      - DB_USER=postgres
+      - DB_PASS=admin
+      - JWT_SECRET=uma_chave_super_secreta_e_longa_para_o_jwt_funcionar_123456
+
+volumes:
+  postgres_data:
