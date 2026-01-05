@@ -17,10 +17,10 @@ O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autentic
 
 ```mermaid
 
-graph TD
-    User(["Usuário / Front-end"])
+graph LR
+    User(["User / Front-end"])
     
-    subgraph "Docker Compose Environment"
+    subgraph Docker["Docker Compose Environment"]
         direction TB
         
         %% Serviços
@@ -28,24 +28,29 @@ graph TD
         Pet["🐾 Pet Service<br/>(Em Breve)"]
         
         %% Bancos de Dados
-        AuthDB[("Auth DB<br/>PostgreSQL")]
-        PetDB[("Pet DB<br/>PostgreSQL")]
+        AuthDB[("Auth DB")]
+        PetDB[("Pet DB")]
         
-        %% Fluxos - ASPAS ADICIONADAS AQUI
-        User -->|"1. Login/Registro"| Auth
-        User -.->|"2. Gerencia Pets (com Token)"| Pet
+        %% Fluxos do Usuário (Esquerda p/ Direita)
+        User -->|"1. Login"| Auth
+        User -.->|"2. Usa (Token)"| Pet
         
-        Auth <-->|Persistência| AuthDB
-        Pet <-->|Persistência| PetDB
+        %% Persistência (Serviço p/ Banco)
+        Auth <--> AuthDB
+        Pet <--> PetDB
         
-        %% Validação de Token - ASPAS ADICIONADAS AQUI
-        Pet -.->|"Valida Assinatura JWT"| Auth
+        %% Comunicação Interna (Pet chama Auth)
+        Pet -.->|"Valida Token"| Auth
     end
 
-    classDef service fill:#2ea44f,stroke:#fff,stroke-width:2px,color:white;
+    %% Estilização (Cores do GitHub)
+    classDef service fill:#2da44e,stroke:#fff,stroke-width:2px,color:white;
     classDef db fill:#0366d6,stroke:#fff,stroke-width:2px,color:white;
+    classDef user fill:#6e7681,stroke:#fff,stroke-width:2px,color:white;
+    
     class Auth,Pet service;
     class AuthDB,PetDB db;
+    class User user;
     
 ```
 ## 🚀 Tecnologias & Patterns
