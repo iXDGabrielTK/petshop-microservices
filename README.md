@@ -16,6 +16,7 @@ Este projeto é um sistema distribuído baseado em **microsserviços** para gere
 O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autenticação é desacoplada das regras de negócio.
 
 ```mermaid
+
 graph TD
     User(["Usuário / Front-end"])
     
@@ -30,15 +31,15 @@ graph TD
         AuthDB[("Auth DB<br/>PostgreSQL")]
         PetDB[("Pet DB<br/>PostgreSQL")]
         
-        %% Fluxos
-        User -->|1. Login/Registro| Auth
-        User -.->|2. Gerencia Pets (com Token)| Pet
+        %% Fluxos - ASPAS ADICIONADAS AQUI
+        User -->|"1. Login/Registro"| Auth
+        User -.->|"2. Gerencia Pets (com Token)"| Pet
         
         Auth <-->|Persistência| AuthDB
         Pet <-->|Persistência| PetDB
         
-        %% Validação de Token
-        Pet -.->|Valida Assinatura JWT| Auth
+        %% Validação de Token - ASPAS ADICIONADAS AQUI
+        Pet -.->|"Valida Assinatura JWT"| Auth
     end
 
     classDef service fill:#2ea44f,stroke:#fff,stroke-width:2px,color:white;
