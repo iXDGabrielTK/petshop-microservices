@@ -17,18 +17,18 @@ O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autentic
 
 ```mermaid
 graph TD
-    User([Usuário / Front-end])
+    User(["Usuário / Front-end"])
     
     subgraph "Docker Compose Environment"
         direction TB
         
         %% Serviços
-        Auth[🐶 Auth Service<br/>(Porta 8081)]
-        Pet[🐾 Pet Service<br/>(Em Breve)]
+        Auth["🐶 Auth Service<br/>(Porta 8081)"]
+        Pet["🐾 Pet Service<br/>(Em Breve)"]
         
         %% Bancos de Dados
-        AuthDB[(Auth DB<br/>PostgreSQL)]
-        PetDB[(Pet DB<br/>PostgreSQL)]
+        AuthDB[("Auth DB<br/>PostgreSQL")]
+        PetDB[("Pet DB<br/>PostgreSQL")]
         
         %% Fluxos
         User -->|1. Login/Registro| Auth
