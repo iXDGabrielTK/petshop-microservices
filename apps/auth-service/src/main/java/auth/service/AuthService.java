@@ -49,7 +49,17 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    // --- LOGIN ---
+    /**
+     * Realiza autenticação do usuário.
+     *<p>
+     * - Recebe um LoginRequest com email e senha.
+     * - Autentica via AuthenticationManager e obtém UserDetails.
+     * - Busca o Usuario no repositório e gera access e refresh tokens.
+     * - Retorna um LoginResponse com tokens e dados do usuário.
+     *
+     * @param request dados de login (email, senha)
+     * @return LoginResponse contendo accessToken, refreshToken e dados do usuário
+     */
     public LoginResponse login(LoginRequest request) {
         Authentication auth = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getEmail(), request.getSenha())
@@ -74,7 +84,17 @@ public class AuthService {
         return new LoginResponse(accessToken, refreshToken, usuario.getId().toString(), usuario.getNome(), usuario.getEmail());
     }
 
-    // --- REFRESH TOKEN ---
+    /**
+     * Valida e processa um refresh token para emitir novos tokens.
+     *<p>
+     * - Recebe um RefreshTokenRequest contendo o refresh token.
+     * - Verifica se é realmente um refresh token e se é válido/nao expirado.
+     * - Coloca o refresh token atual na blacklist e gera novos access/refresh tokens.
+     * - Retorna um mapa com os novos tokens.
+     *
+     * @param request dados contendo o refresh token
+     * @return mapa com "access_token" e "refresh_token" novos
+     */
     public Map<String, String> refreshToken(RefreshTokenRequest request) {
         String refreshToken = request.getRefreshToken();
 
@@ -98,7 +118,17 @@ public class AuthService {
         return tokens;
     }
 
-    // --- LOGOUT ---
+    /**
+     * Revoga tokens e efetua logout.
+     *<p>
+     * - Aceita header Authorization com Access Token e/ou um LogoutRequest com Refresh Token.
+     * - Valida tokens e os adiciona à blacklist para impedir uso futuro.
+     * - Retorna um mapa indicando quais tokens foram revogados.
+     *
+     * @param accessTokenHeader header Authorization (pode ser nulo)
+     * @param logoutRequest corpo opcional contendo refreshToken
+     * @return mapa com mensagem e flags de revogação de access/refresh token
+     */
     public Map<String, Object> logout(String accessTokenHeader, LogoutRequest logoutRequest) {
         boolean accessTokenRevoked = false;
         boolean refreshTokenRevoked = false;
@@ -130,6 +160,16 @@ public class AuthService {
         return response;
     }
 
+    /**
+     * Registra um novo usuário na aplicação.
+     *<p>
+     * - Verifica se o email já existe e lança IllegalArgumentException se estiver em uso.
+     * - Cria o Usuario com senha codificada e atribui a role padrão "USER".
+     * - Persiste o usuário no repositório e retorna a entidade criada.
+     *
+     * @param request dados para cadastro (nome, email, senha)
+     * @return Usuario recém-criado
+     */
     public Usuario register(auth.dto.request.RegisterRequest request) {
     if (usuarioRepository.findByEmail(request.getEmail()).isPresent()) {
         throw new IllegalArgumentException("Email já cadastrado");
@@ -138,9 +178,8 @@ public class AuthService {
     Usuario novoUsuario = new Usuario();
     novoUsuario.setNome(request.getNome());
     novoUsuario.setEmail(request.getEmail());
-    novoUsuario.setSenha(passwordEncoder.encode(request.getSenha())); // Criptografa!
+    novoUsuario.setSenha(passwordEncoder.encode(request.getSenha()));
 
-    // Garante que a role USER existe no banco
     auth.model.Role roleUser = roleRepository.findByNome("USER")
             .orElseGet(() -> roleRepository.save(new auth.model.Role(null, "USER")));
 

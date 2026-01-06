@@ -20,13 +20,37 @@ public class JwtAuthorizationFilter extends OncePerRequestFilter {
     private final JwtTokenValidator tokenValidator;
     private final TokenBlacklistService blacklistService;
 
-    // REMOVIDO: UserDetailsServiceImpl (Não precisamos mais ir no banco!)
     public JwtAuthorizationFilter(JwtTokenValidator tokenValidator,
                                   TokenBlacklistService blacklistService) {
         this.tokenValidator = tokenValidator;
         this.blacklistService = blacklistService;
     }
 
+    /**
+     * Filtra requisições para autorizar usuários via JWT.
+     *<p>
+     * Fluxo:
+     * 1. Lê o header "Authorization" e valida o formato "Bearer &lt;token&gt;".
+     * 2. Verifica se o token está na blacklist (revogado) — responde 401 se estiver.
+     * 3. Valida o token e a "fingerprint" associada ao token — responde 401 em falha.
+     * 4. Extrai username e roles do token, converte roles para GrantedAuthority e popula
+     *    o SecurityContext com uma UsernamePasswordAuthenticationToken.
+     * 5. Continua a cadeia de filtros em caso de sucesso.
+     *<p>
+     * Respostas HTTP:
+     * - 401 Unauthorized quando token ausente/invalidado/revogado/fingerprint inválida.
+     * - Para token expirado responde 401 com JSON {"message": "Token expired"}.
+     *<p>
+     * Observações de segurança:
+     * - Não logar o conteúdo do token nem a senha.
+     * - Tratar mensagens de erro de forma genérica para evitar vazamento de informações.
+     *
+     * @param request  requisição HTTP que pode conter o header Authorization
+     * @param response resposta HTTP usada para enviar erros quando necessário
+     * @param filterChain cadeia de filtros a ser continuada em caso de autorização bem-sucedida
+     * @throws ServletException em caso de erro de servlet durante o filtro
+     * @throws IOException em caso de erro de I/O durante o filtro
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     @NonNull HttpServletResponse response,
@@ -42,32 +66,26 @@ public class JwtAuthorizationFilter extends OncePerRequestFilter {
 
         String token = header.substring(7);
 
-        // Verifica Blacklist (Logout)
         if (blacklistService.isBlacklisted(token)) {
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token revoked");
             return;
         }
 
         try {
-            // 1. Valida o token
             tokenValidator.validateTokenOrThrow(token);
 
-            // 2. Valida Fingerprint (IP/UserAgent)
             if (!tokenValidator.validateFingerprint(token)) {
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid fingerprint");
                 return;
             }
 
-            // 3. Extrai dados DIRETO DO TOKEN (Sem ir no banco)
             String username = tokenValidator.extractUsername(token);
             List<String> roles = tokenValidator.extractRoles(token);
 
-            // Converte String "ADMIN" para Authority do Spring
             var authorities = roles.stream()
                     .map(role -> new SimpleGrantedAuthority("ROLE_" + role.replace("ROLE_", "")))
                     .collect(Collectors.toList());
 
-            // 4. Autentica o usuário no contexto
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(username, null, authorities);
 

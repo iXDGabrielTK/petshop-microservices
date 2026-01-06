@@ -42,6 +42,16 @@ public class SecurityConfig {
         this.blacklistService = blacklistService;
     }
 
+    /**
+     * Configura a cadeia de filtros de segurança (SecurityFilterChain) do Spring Security:
+     * - Desabilita CSRF.
+     * - Habilita CORS usando `corsConfigurationSourceSecurity()`.
+     * - Define sessão como stateless (baseada em JWT).
+     * - Define regras de autorização: rotas públicas de autenticação, documentação e erros/OPTIONS são permitidas;
+     *   todas as outras requisições exigem autenticação.
+     * - Registra o `DaoAuthenticationProvider` e adiciona o `JwtAuthorizationFilter` antes do
+     *   `UsernamePasswordAuthenticationFilter` para validar tokens JWT e checar blacklist.
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception { // Adicionado throws Exception
         http
@@ -57,7 +67,7 @@ public class SecurityConfig {
 
                         // 3. ERROS E UTILITÁRIOS (O Pulo do Gato para evitar 403 falso)
                         .requestMatchers("/error").permitAll()
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Pre-flight do CORS
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         // 4. RESTO BLOQUEADO
                         .anyRequest().authenticated()
@@ -72,8 +82,6 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSourceSecurity() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // Dica: Use "*" para desenvolvimento local se estiver tendo problemas de CORS,
-        // mas mantenha a lista específica para produção.
         configuration.setAllowedOrigins(List.of(
                 "http://localhost:3000",
                 "http://localhost:5173",

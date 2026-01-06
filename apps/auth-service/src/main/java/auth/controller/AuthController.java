@@ -35,6 +35,18 @@ public class AuthController {
         this.authService = authService;
     }
 
+    /**
+     * Processa a tentativa de login.
+     *<p>
+     * Recebe um LoginRequest validado, delega a autenticação para AuthService e
+     * retorna um LoginResponse com os tokens em caso de sucesso.
+     *<p>
+     * Em caso de falha retorna 401 (Unauthorized). Atenção: não registrar senhas
+     * em logs — apenas o email é registrado para auditoria.
+     *
+     * @param loginRequest dados de autenticação (email e senha)
+     * @return ResponseEntity contendo LoginResponse em sucesso ou status apropriado em erro
+     */
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest loginRequest) {
         logger.info("🔐 Tentativa de login: {}", loginRequest.getEmail());
@@ -47,6 +59,24 @@ public class AuthController {
         }
     }
 
+    /**
+     * Atualiza tokens usando um refresh token.
+     *<p>
+     * Recebe um RefreshTokenRequest (normalmente contendo o refresh token) e delega
+     * a validação/geração de novos tokens para AuthService.
+     *<p>
+     * Respostas:
+     * - 200 OK com um mapa contendo os novos tokens em caso de sucesso.
+     * - 400 Bad Request quando os parâmetros são inválidos (p.ex. token ausente ou mal formado).
+     * - 401 Unauthorized quando o refresh token for inválido ou expirado.
+     *<p>
+     * Observações de segurança:
+     * - Não registar o conteúdo do token em logs.
+     * - Tratar mensagens de erro de forma genérica para não vazar informação de segurança.
+     *
+     * @param request dados para refresh de token
+     * @return ResponseEntity com tokens ou mensagem de erro apropriada
+     */
     @PostMapping("/refresh-token")
     public ResponseEntity<?> refreshToken(@RequestBody RefreshTokenRequest request) {
         try {
@@ -60,6 +90,24 @@ public class AuthController {
         }
     }
 
+    /**
+     * Efetua o logout do usuário.
+     *<p>
+     * A função tenta extrair o Authorization header (se presente) e também aceita um
+     * corpo opcional (`LogoutRequest`) para suportar diferentes mecanismos de logout.
+     *<p>
+     * Respostas:
+     * - 200 OK com um mapa contendo informações sobre o logout (p.ex. confirmação, tokens revogados).
+     * - 500 Internal Server Error em caso de erro inesperado no servidor.
+     *<p>
+     * Observações:
+     * - Não registrar tokens completos em logs. Se necessário, registrar apenas indicadores (ex.: hash ou parte).
+     * - O header Authorization pode ser nulo quando o logout for acionado via corpo (p.ex. revogação por ID).
+     *
+     * @param request HttpServletRequest para acessar headers (Authorization)
+     * @param logoutRequest corpo opcional com dados de logout
+     * @return ResponseEntity com resultado do logout ou status de erro
+     */
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request,
                                     @RequestBody(required = false) LogoutRequest logoutRequest) {
@@ -72,19 +120,33 @@ public class AuthController {
         }
     }
 
+    /**
+     * Registra um novo usuário.
+     *<p>
+     * Recebe um RegisterRequest validado, delega a criação do usuário para AuthService
+     * e devolve 201 Created com um corpo contendo mensagem, id e email sanitizado.
+     *<p>
+     * Respostas:
+     * - 201 Created quando o usuário é criado com sucesso. Localização retornada em `Location`.
+     * - 400 Bad Request quando dados de entrada são inválidos (ex.: email já usado).
+     * - 500 Internal Server Error para erros inesperados.
+     *<p>
+     * Observações de segurança:
+     * - Sanitizar dados sensíveis antes de retorná-los (ex.: HtmlUtils.htmlEscape para email).
+     * - Não incluir informações sensíveis como senha no payload de resposta.
+     *
+     * @param request dados para cadastro do usuário
+     * @return ResponseEntity contendo informação do novo usuário ou erro apropriado
+     */
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {
         try {
             Usuario usuarioCriado = authService.register(request);
 
-            // CRIAÇÃO DA RESPOSTA SEGURA
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Usuário registrado com sucesso");
             response.put("id", usuarioCriado.getId());
 
-            // AQUI ESTÁ A CORREÇÃO REAL:
-            // Nós "limpamos" o email antes de devolver para o mundo externo.
-            // Isso avisa ao scanner: "Eu tratei esse dado, ele é seguro agora".
             String emailSeguro = HtmlUtils.htmlEscape(usuarioCriado.getEmail());
             response.put("email", emailSeguro);
 

@@ -27,9 +27,6 @@ public class JwtTokenValidator {
         this.secretKey = secretKey;
     }
 
-    /**
-     * Valida se o token está integro e não expirado.
-     */
     public void validateTokenOrThrow(String token) {
         Claims claims = extractAllClaims(token);
         Date expiration = claims.getExpiration();
@@ -42,13 +39,17 @@ public class JwtTokenValidator {
         return extractAllClaims(token).getSubject();
     }
 
-    /**
-     * Extrai a data de expiração (necessário para o AuthController calcular o tempo de blacklist).
-     */
     public long extractExpiration(String token) {
         return extractAllClaims(token).getExpiration().getTime();
     }
 
+    /**
+     * Extrai o claim "roles" como uma lista de strings.
+     * Retorna lista vazia se o claim não existir ou estiver em formato inesperado.
+     *
+     * @param token token JWT
+     * @return lista de roles
+     */
     public List<String> extractRoles(String token) {
         Claims claims = extractAllClaims(token);
         Object roles = claims.get("roles");
@@ -60,6 +61,13 @@ public class JwtTokenValidator {
         return Collections.emptyList();
     }
 
+    /**
+     * Valida a fingerprint do token comparando ip e userAgent com a requisição atual.
+     * Retorna true quando não há dados de fingerprint ou quando coincidem.
+     *
+     * @param token token JWT
+     * @return true se a fingerprint for válida ou ausente
+     */
     public boolean validateFingerprint(String token) {
         try {
             Claims claims = extractAllClaims(token);
@@ -98,11 +106,23 @@ public class JwtTokenValidator {
         }
     }
 
+    /**
+     * Verifica se o token é um refresh token (claim tokenType == "refresh").
+     *
+     * @param token token JWT
+     * @return true se for refresh token
+     */
     public boolean isRefreshToken(String token) {
         Claims claims = extractAllClaims(token);
         return "refresh".equals(claims.get("tokenType", String.class));
     }
 
+    /**
+     * Parseia e retorna todos os claims do token usando a secretKey.
+     *
+     * @param token token JWT
+     * @return Claims extraídos do token
+     */
     public Claims extractAllClaims(String token) {
         return Jwts.parser()
                 .verifyWith(secretKey)
@@ -111,6 +131,12 @@ public class JwtTokenValidator {
                 .getPayload();
     }
 
+    /**
+     * Obtém o IP do cliente, considerando o header X-Forwarded-For quando presente.
+     *
+     * @param request requisição HTTP atual
+     * @return IP do cliente
+     */
     private String getClientIp(HttpServletRequest request) {
         String xForwardedFor = request.getHeader("X-Forwarded-For");
         if (xForwardedFor != null && !xForwardedFor.isEmpty()) {

@@ -8,9 +8,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Armazena tokens que foram revogados, fazer logout ou revogar token por exemplo
- */
 @Service
 public class TokenBlacklistService {
 
