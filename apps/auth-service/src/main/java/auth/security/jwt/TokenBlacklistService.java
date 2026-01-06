@@ -1,5 +1,6 @@
 package auth.security.jwt;
 
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -13,9 +14,31 @@ public class TokenBlacklistService {
 
     private final Map<String, Long> blacklistedTokens = new ConcurrentHashMap<>();
 
+    private final ScheduledExecutorService cleanupService = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r);
+        t.setDaemon(true);
+        t.setName("token-blacklist-cleanup");
+        return t;
+    });
+
     public TokenBlacklistService() {
-        ScheduledExecutorService cleanupService = Executors.newSingleThreadScheduledExecutor();
         cleanupService.scheduleAtFixedRate(this::cleanupExpiredTokens, 1, 1, TimeUnit.HOURS);
+    }
+
+    /**
+     * Metodo chamado automaticamente pelo Spring antes do Bean ser destruído.
+     */
+    @PreDestroy
+    public void shutdown() {
+        cleanupService.shutdown();
+        try {
+            if (!cleanupService.awaitTermination(5, TimeUnit.SECONDS)) {
+                cleanupService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            cleanupService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
