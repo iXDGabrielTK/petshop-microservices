@@ -3,12 +3,17 @@ package auth.service;
 import auth.dto.request.LoginRequest;
 import auth.dto.request.LogoutRequest;
 import auth.dto.request.RefreshTokenRequest;
+import auth.dto.request.ForgotPasswordRequest;
+import auth.dto.request.ResetPasswordRequest;
 import auth.dto.response.LoginResponse;
+import auth.model.PasswordResetToken;
 import auth.model.Usuario;
+import auth.repository.PasswordResetTokenRepository;
 import auth.repository.UsuarioRepository;
 import auth.security.jwt.JwtTokenService;
 import auth.security.jwt.JwtTokenValidator;
 import auth.security.jwt.TokenBlacklistService;
+import jakarta.transaction.Transactional;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -18,12 +23,15 @@ import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class AuthService {
 
     private final UsuarioRepository usuarioRepository;
     private final AuthenticationManager authenticationManager;
+    private final PasswordResetTokenRepository tokenRepository;
+    private final EmailService emailService;
     private final JwtTokenService tokenService;
     private final JwtTokenValidator tokenValidator;
     private final TokenBlacklistService blacklistService;
@@ -32,7 +40,7 @@ public class AuthService {
     private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     public AuthService(UsuarioRepository usuarioRepository,
-                       AuthenticationManager authenticationManager,
+                       AuthenticationManager authenticationManager, PasswordResetTokenRepository tokenRepository, EmailService emailService,
                        JwtTokenService tokenService,
                        JwtTokenValidator tokenValidator,
                        TokenBlacklistService blacklistService,
@@ -41,6 +49,8 @@ public class AuthService {
                        org.springframework.security.crypto.password.PasswordEncoder passwordEncoder) {
         this.usuarioRepository = usuarioRepository;
         this.authenticationManager = authenticationManager;
+        this.tokenRepository = tokenRepository;
+        this.emailService = emailService;
         this.tokenService = tokenService;
         this.tokenValidator = tokenValidator;
         this.blacklistService = blacklistService;
@@ -186,5 +196,51 @@ public class AuthService {
     novoUsuario.setRoles(java.util.Collections.singleton(roleUser));
 
     return usuarioRepository.save(novoUsuario);
+    }
+
+    /**
+     * Passo 1: Usuário pede para recuperar senha.
+     * Gera token, salva no banco e envia email.
+     */
+    @Transactional
+    public void forgotPassword(ForgotPasswordRequest request) {
+        Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new RuntimeException("Email não encontrado"));
+
+        // Limpa tokens antigos desse usuário para não acumular lixo
+        tokenRepository.deleteByUsuario(usuario);
+
+        // Gera token aleatório
+        String token = UUID.randomUUID().toString();
+
+        // Salva
+        PasswordResetToken myToken = new PasswordResetToken(token, usuario);
+        tokenRepository.save(myToken);
+
+        // Envia email
+        emailService.sendResetTokenEmail(usuario.getEmail(), token);
+    }
+
+    /**
+     * Passo 2: Usuário envia o token e a nova senha.
+     */
+    @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        PasswordResetToken resetToken = tokenRepository.findByToken(request.getToken())
+                .orElseThrow(() -> new RuntimeException("Token inválido"));
+
+        if (resetToken.isExpired()) {
+            tokenRepository.delete(resetToken);
+            throw new RuntimeException("Token expirado");
+        }
+
+        Usuario usuario = resetToken.getUsuario();
+
+        // Atualiza senha criptografada
+        usuario.setSenha(passwordEncoder.encode(request.getNewPassword()));
+        usuarioRepository.save(usuario);
+
+        // Consome o token (deleta para não usar de novo)
+        tokenRepository.delete(resetToken);
     }
 }

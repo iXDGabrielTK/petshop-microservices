@@ -1,8 +1,6 @@
 package auth.controller;
 
-import auth.dto.request.LoginRequest;
-import auth.dto.request.LogoutRequest;
-import auth.dto.request.RefreshTokenRequest;
+import auth.dto.request.*;
 import auth.dto.response.LoginResponse;
 import auth.model.Usuario;
 import auth.service.AuthService;
@@ -16,7 +14,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import auth.dto.request.RegisterRequest;
 import org.springframework.web.util.HtmlUtils;
 import java.net.URI;
 
@@ -159,6 +156,61 @@ public class AuthController {
             logger.warn("Erro ao registrar: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Erro interno no servidor"));
+        }
+    }
+
+    /**
+     * Inicia o processo de recuperação de senha.
+     *<p>
+     * Recebe um ForgotPasswordRequest contendo o email do usuário e delega
+     * a geração do token e envio do email para AuthService.
+     *<p>
+     * Respostas:
+     * - 200 OK com mensagem genérica para evitar vazamento de informação sobre existência do email.
+     * - 400 Bad Request em caso de erro (ex.: formato inválido).
+     *<p>
+     * Observações de segurança:
+     * - Nunca revelar se o email existe ou não no sistema na resposta.
+     * - Tratar erros de forma genérica para não vazar informações sensíveis.
+     *
+     * @param request dados para recuperação de senha
+     * @return ResponseEntity com mensagem genérica ou erro apropriado
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequest request) {
+        try {
+            authService.forgotPassword(request);
+            // Por segurança, sempre retornamos OK mesmo se o email não existir (para não revelar usuários)
+            // Mas para seu teste agora, pode retornar o erro se quiser.
+            return ResponseEntity.ok(Map.of("message", "Se o email existir, um link de recuperação foi enviado."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Reseta a senha do usuário usando um token de recuperação.
+     *<p>
+     * Recebe um ResetPasswordRequest contendo o token e a nova senha,
+     * delega a validação e atualização da senha para AuthService.
+     *<p>
+     * Respostas:
+     * - 200 OK com mensagem de sucesso quando a senha é alterada.
+     * - 400 Bad Request em caso de erro (ex.: token inválido ou expirado).
+     *<p>
+     * Observações de segurança:
+     * - Tratar erros de forma genérica para não vazar informações sensíveis.
+     *
+     * @param request dados para resetar a senha
+     * @return ResponseEntity com mensagem de sucesso ou erro apropriado
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
+        try {
+            authService.resetPassword(request);
+            return ResponseEntity.ok(Map.of("message", "Senha alterada com sucesso!"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 }

@@ -53,14 +53,14 @@ public class SecurityConfig {
      *   `UsernamePasswordAuthenticationFilter` para validar tokens JWT e checar blacklist.
      */
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception { // Adicionado throws Exception
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSourceSecurity()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // 1. ROTAS PÚBLICAS (Auth)
-                        .requestMatchers(HttpMethod.POST, "/usuarios/login", "/usuarios/register", "/usuarios/refresh-token", "/usuarios/logout").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/usuarios/login", "/usuarios/register", "/usuarios/refresh-token", "/usuarios/logout", "/usuarios/forgot-password", "/usuarios/reset-password").permitAll()
 
                         // 2. DOCUMENTAÇÃO (Swagger)
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()

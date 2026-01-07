@@ -75,6 +75,7 @@ Responsável pela identidade e segurança de todo o ecossistema.
 * **Porta:** `8081`
 * **Features:**
     * Autenticação via **JWT (Access + Refresh Token)**.
+    * Recuperação de Senha via **E-mail (Token temporário)**.
     * Sistema de **Blacklist** para Logout seguro.
     * Senhas criptografadas com **BCrypt**.
     * Proteção contra **XSS (Cross-Site Scripting)** usando sanitização de HTML.
@@ -153,6 +154,21 @@ Responsável pelo core business (regras de negócio).
 }
 ```
 
+### 5. Recuperar Senha - Solicitação (POST /usuarios/forgot-password)
+```json
+{
+  "email": "teste@email.com"
+}
+```
+
+### 6. Recuperar Senha - Reset (POST /usuarios/reset-password)
+```json
+{
+  "token": "COLE_O_TOKEN_RECEBIDO_NO_EMAIL",
+  "newPassword": "NovaSenhaForte123!"
+}
+```
+
 ## 📂 Estrutura do Projeto
 ```
 petshop-microservices/
@@ -174,7 +190,7 @@ petshop-microservices/
 ```
 [x] Auth Service: Login, Registro, JWT, Refresh Token, Logout.
 
-[x] Segurança: Criptografia de senhas e proteção XSS.
+[x] Segurança: Criptografia de senhas, proteção XSS e Recuperação de Senha.
 
 [x] Docker: Containerização do Banco e API.
 
