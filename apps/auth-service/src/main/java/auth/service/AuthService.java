@@ -1,24 +1,22 @@
 package auth.service;
 
-import auth.dto.request.LoginRequest;
-import auth.dto.request.LogoutRequest;
-import auth.dto.request.RefreshTokenRequest;
-import auth.dto.request.ForgotPasswordRequest;
-import auth.dto.request.ResetPasswordRequest;
+import auth.dto.request.*;
 import auth.dto.response.LoginResponse;
-import auth.model.PasswordResetToken;
+import auth.dto.message.PasswordResetMessage;
+import auth.config.RabbitMQConfig;
 import auth.model.Usuario;
-import auth.repository.PasswordResetTokenRepository;
+import auth.model.PasswordResetToken;
 import auth.repository.UsuarioRepository;
 import auth.security.jwt.JwtTokenService;
 import auth.security.jwt.JwtTokenValidator;
 import auth.security.jwt.TokenBlacklistService;
 import jakarta.transaction.Transactional;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -29,9 +27,9 @@ import java.util.UUID;
 public class AuthService {
 
     private final UsuarioRepository usuarioRepository;
+    private final auth.repository.PasswordResetTokenRepository tokenRepository;
+    private final RabbitTemplate rabbitTemplate;
     private final AuthenticationManager authenticationManager;
-    private final PasswordResetTokenRepository tokenRepository;
-    private final EmailService emailService;
     private final JwtTokenService tokenService;
     private final JwtTokenValidator tokenValidator;
     private final TokenBlacklistService blacklistService;
@@ -39,8 +37,9 @@ public class AuthService {
     private final auth.repository.RoleRepository roleRepository;
     private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
-    public AuthService(UsuarioRepository usuarioRepository,
-                       AuthenticationManager authenticationManager, PasswordResetTokenRepository tokenRepository, EmailService emailService,
+    public AuthService(UsuarioRepository usuarioRepository, auth.repository.PasswordResetTokenRepository tokenRepository,
+                       RabbitTemplate rabbitTemplate,
+                       AuthenticationManager authenticationManager,
                        JwtTokenService tokenService,
                        JwtTokenValidator tokenValidator,
                        TokenBlacklistService blacklistService,
@@ -48,9 +47,9 @@ public class AuthService {
                        auth.repository.RoleRepository roleRepository,
                        org.springframework.security.crypto.password.PasswordEncoder passwordEncoder) {
         this.usuarioRepository = usuarioRepository;
-        this.authenticationManager = authenticationManager;
         this.tokenRepository = tokenRepository;
-        this.emailService = emailService;
+        this.rabbitTemplate = rabbitTemplate;
+        this.authenticationManager = authenticationManager;
         this.tokenService = tokenService;
         this.tokenValidator = tokenValidator;
         this.blacklistService = blacklistService;
@@ -199,30 +198,49 @@ public class AuthService {
     }
 
     /**
-     * Passo 1: Usuário pede para recuperar senha.
-     * Gera token, salva no banco e envia email.
+     * Inicia o processo de recuperação de senha.
+     *<p>
+     * - Recebe um ForgotPasswordRequest contendo o email do usuário.
+     * - Gera um token único e persiste como PasswordResetToken associado ao usuário.
+     * - Envia uma mensagem para RabbitMQ com os detalhes para envio de email.
+     *
+     * @param request dados contendo o email do usuário
      */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("Email não encontrado"));
 
-        // Limpa tokens antigos desse usuário para não acumular lixo
         tokenRepository.deleteByUsuario(usuario);
 
-        // Gera token aleatório
         String token = UUID.randomUUID().toString();
-
-        // Salva
         PasswordResetToken myToken = new PasswordResetToken(token, usuario);
         tokenRepository.save(myToken);
 
-        // Envia email
-        emailService.sendResetTokenEmail(usuario.getEmail(), token);
+        PasswordResetMessage message = new PasswordResetMessage(
+                usuario.getEmail(),
+                token,
+                usuario.getNome()
+        );
+
+        rabbitTemplate.convertAndSend(
+                RabbitMQConfig.EXCHANGER_NAME,
+                RabbitMQConfig.ROUTING_KEY,
+                message
+        );
+
+        System.out.println("🐇 Mensagem enviada para RabbitMQ: " + usuario.getEmail());
     }
 
     /**
-     * Passo 2: Usuário envia o token e a nova senha.
+     * Reseta a senha do usuário usando um token válido.
+     *<p>
+     * - Recebe um ResetPasswordRequest com token e nova senha.
+     * - Valida o token, verifica expiração e obtém o usuário associado.
+     * - Atualiza a senha do usuário com a nova senha codificada.
+     * - Remove o token usado do repositório.
+     *
+     * @param request dados contendo token e nova senha
      */
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
@@ -236,11 +254,10 @@ public class AuthService {
 
         Usuario usuario = resetToken.getUsuario();
 
-        // Atualiza senha criptografada
         usuario.setSenha(passwordEncoder.encode(request.getNewPassword()));
         usuarioRepository.save(usuario);
 
-        // Consome o token (deleta para não usar de novo)
         tokenRepository.delete(resetToken);
     }
+
 }

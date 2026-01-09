@@ -16,6 +16,7 @@
     <packaging>pom</packaging>
     <modules>
         <module>apps/auth-service</module>
+        <module>apps/mail-service</module>
     </modules>
 
     <properties>
