@@ -65,11 +65,14 @@ public class SecurityConfig {
                         // 2. DOCUMENTAÇÃO (Swagger)
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
 
-                        // 3. ERROS E UTILITÁRIOS (O Pulo do Gato para evitar 403 falso)
+                        // 3. MONITORAMENTO
+                        .requestMatchers("/actuator/**").permitAll()
+
+                        // 4. ERROS E UTILITÁRIOS
                         .requestMatchers("/error").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // 4. RESTO BLOQUEADO
+                        // 5. RESTO BLOQUEADO
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())
@@ -84,8 +87,7 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(List.of(
                 "http://localhost:3000",
-                "http://localhost:5173",
-                "https://tccfrontimoveis.netlify.app"
+                "http://localhost:5173"
         ));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));

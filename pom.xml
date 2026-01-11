@@ -14,7 +14,9 @@
     <artifactId>petshop-microservices</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
+
     <modules>
+        <module>apps/common-lib</module>
         <module>apps/auth-service</module>
         <module>apps/mail-service</module>
     </modules>

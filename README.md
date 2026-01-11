@@ -9,6 +9,8 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat&logo=postgresql&logoColor=white)
 ![Security](https://img.shields.io/badge/Spring%20Security-BCrypt%20%7C%20JWT-red?style=flat&logo=springsecurity&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?style=flat&logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?style=flat&logo=grafana&logoColor=white)
 
 Este projeto é um sistema distribuído baseado em **microsserviços** para gerenciamento de um **Pet Shop**. O objetivo é demonstrar uma arquitetura robusta, segura e escalável utilizando Java e Docker.
 
@@ -207,8 +209,29 @@ petshop-microservices/
 │   │
 │   └── pet-service/        # (Em construção...)
 │
+├── infra/                  # Configurações de Observabilidade
+│   ├── prometheus/
+│   └── grafana/
+│
 └── docker-compose.yml      # Orquestração dos containers
 ```
+
+## 📊 Observabilidade e Monitoramento
+
+O projeto possui uma stack completa de monitoramento configurada via Docker.
+
+| Ferramenta     | URL                                              | Credenciais (Padrão) | Descrição                              |
+|:---------------|:-------------------------------------------------|:---------------------|:---------------------------------------|
+| **Grafana**    | [http://localhost:3000](http://localhost:3000)   | `admin` / `admin`    | Visualização de métricas e Dashboards. |
+| **Prometheus** | [http://localhost:9090](http://localhost:9090)   | N/A                  | Coletor de métricas (Time Series DB).  |
+| **RabbitMQ**   | [http://localhost:15672](http://localhost:15672) | `guest` / `guest`    | Gestão de filas e exchanges.           |
+
+### Dashboards Recomendados (Grafana)
+Para visualizar os dados, importe os seguintes IDs no Grafana:
+* **Spring Boot Statistics:** ID `11378` ou `19004` (Métricas de JVM, CPU, Requisições HTTP e Erros).
+* **RabbitMQ Overview:** ID `4279` (Métricas de Filas, Conexões e Consumidores).
+
+---
 
 ## 🗺️ Roadmap (Próximos Passos)
 ```
@@ -221,6 +244,8 @@ petshop-microservices/
 [x] Mensageria: Integração com RabbitMQ (Producer/Consumer).
 
 [x] Resiliência: Implementação de DLQ (Dead Letter Queue) e Retries.
+
+[x] Observabilidade: Monitoramento com Prometheus e Grafana.
 
 [x] Mail Service: Microserviço dedicado para notificações.
 

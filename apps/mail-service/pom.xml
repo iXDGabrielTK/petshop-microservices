@@ -8,7 +8,8 @@
         <groupId>br.com.gabriel.semrumo</groupId>
         <artifactId>petshop-microservices</artifactId>
         <version>1.0-SNAPSHOT</version>
-        <relativePath>../../pom.xml</relativePath> </parent>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
 
     <artifactId>mail-service</artifactId>
 
@@ -32,6 +33,16 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
     </dependencies>
 

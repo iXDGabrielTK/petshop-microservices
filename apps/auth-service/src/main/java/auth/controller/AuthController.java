@@ -1,14 +1,13 @@
 package auth.controller;
 
 import auth.dto.request.*;
-import auth.dto.response.LoginResponse;
+import auth.dto.response.*;
 import auth.model.Usuario;
 import auth.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -17,7 +16,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.HtmlUtils;
 import java.net.URI;
 
-import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -47,13 +45,9 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest loginRequest) {
         logger.info("🔐 Tentativa de login: {}", loginRequest.getEmail());
-        try {
-            LoginResponse response = authService.login(loginRequest);
-            return ResponseEntity.ok(response);
-        } catch (Exception ex) {
-            logger.warn("❌ Falha no login de {}: {}", loginRequest.getEmail(), ex.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
+        LoginResponse response = authService.login(loginRequest);
+
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -75,16 +69,15 @@ public class AuthController {
      * @return ResponseEntity com tokens ou mensagem de erro apropriada
      */
     @PostMapping("/refresh-token")
-    public ResponseEntity<?> refreshToken(@RequestBody RefreshTokenRequest request) {
-        try {
-            Map<String, String> tokens = authService.refreshToken(request);
-            return ResponseEntity.ok(tokens);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
-        } catch (Exception e) {
-            logger.warn("Erro no refresh token: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Token inválido ou expirado");
-        }
+    public ResponseEntity<TokenResponse> refreshToken(@RequestBody RefreshTokenRequest request) {
+        Map<String, String> tokens = authService.refreshToken(request);
+
+        TokenResponse response = new TokenResponse(
+                tokens.get("access_token"),
+                tokens.get("refresh_token")
+        );
+
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -106,15 +99,19 @@ public class AuthController {
      * @return ResponseEntity com resultado do logout ou status de erro
      */
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(HttpServletRequest request,
+    public ResponseEntity<LogoutResponse> logout(HttpServletRequest request,
                                     @RequestBody(required = false) LogoutRequest logoutRequest) {
-        try {
-            String authHeader = request.getHeader("Authorization");
-            Map<String, Object> result = authService.logout(authHeader, logoutRequest);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        String authHeader = request.getHeader("Authorization");
+
+        Map<String, Object> result = authService.logout(authHeader, logoutRequest);
+
+        LogoutResponse response = new LogoutResponse(
+                (String) result.get("message"),
+                (Boolean) result.get("accessTokenRevoked"),
+                (Boolean) result.get("refreshTokenRevoked")
+        );
+
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -136,27 +133,20 @@ public class AuthController {
      * @return ResponseEntity contendo informação do novo usuário ou erro apropriado
      */
     @PostMapping("/register")
-    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {
-        try {
-            Usuario usuarioCriado = authService.register(request);
+    public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
+        Usuario usuarioCriado = authService.register(request);
 
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Usuário registrado com sucesso");
-            response.put("id", usuarioCriado.getId());
+        String emailSeguro = HtmlUtils.htmlEscape(usuarioCriado.getEmail());
 
-            String emailSeguro = HtmlUtils.htmlEscape(usuarioCriado.getEmail());
-            response.put("email", emailSeguro);
+        RegisterResponse response = new RegisterResponse(
+                "Usuário registrado com sucesso",
+                usuarioCriado.getId(),
+                emailSeguro
+        );
 
-            return ResponseEntity.created(URI.create("/usuarios/" + usuarioCriado.getId()))
-                    .body(response);
-
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            logger.warn("Erro ao registrar: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Erro interno no servidor"));
-        }
+        return ResponseEntity
+                .created(URI.create("/usuarios/" + usuarioCriado.getId()))
+                .body(response);
     }
 
     /**
@@ -177,15 +167,9 @@ public class AuthController {
      * @return ResponseEntity com mensagem genérica ou erro apropriado
      */
     @PostMapping("/forgot-password")
-    public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequest request) {
-        try {
-            authService.forgotPassword(request);
-            // Por segurança, sempre retornamos OK mesmo se o email não existir (para não revelar usuários)
-            // Mas para seu teste agora, pode retornar o erro se quiser.
-            return ResponseEntity.ok(Map.of("message", "Se o email existir, um link de recuperação foi enviado."));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResponseEntity<GenericResponse> forgotPassword(@RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request);
+        return ResponseEntity.ok(new GenericResponse("Se o email existir, um link de recuperação foi enviado."));
     }
 
     /**
@@ -205,12 +189,8 @@ public class AuthController {
      * @return ResponseEntity com mensagem de sucesso ou erro apropriado
      */
     @PostMapping("/reset-password")
-    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
-        try {
-            authService.resetPassword(request);
-            return ResponseEntity.ok(Map.of("message", "Senha alterada com sucesso!"));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResponseEntity<GenericResponse> resetPassword(@RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request);
+        return ResponseEntity.ok(new GenericResponse("Senha alterada com sucesso!"));
     }
 }

@@ -92,10 +92,9 @@ public class RabbitMQConfig {
 
             if (t instanceof ListenerExecutionFailedException && causaReal != null) {
 
-                // 3. AQUI VOCÊ CONFIGURA SUAS REGRAS:
                 if (causaReal instanceof IllegalArgumentException) {
                     System.err.println("❌ Erro Fatal (Dados Inválidos): " + causaReal.getMessage());
-                    return true; // TRUE = Não faz retry, joga fora (ou DLQ)
+                    return true;
                 }
 
                 if (causaReal instanceof NullPointerException) {

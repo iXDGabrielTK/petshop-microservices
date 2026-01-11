@@ -10,6 +10,8 @@ import auth.repository.UsuarioRepository;
 import auth.security.jwt.JwtTokenService;
 import auth.security.jwt.JwtTokenValidator;
 import auth.security.jwt.TokenBlacklistService;
+import common.exception.BusinessException;
+import common.exception.ResourceNotFoundException;
 import jakarta.transaction.Transactional;
 import org.springframework.security.core.Authentication;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -85,7 +87,7 @@ public class AuthService {
         }
 
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+                .orElseThrow(() -> new BusinessException("Credenciais inválidas"));
 
         String accessToken = tokenService.generateAccessToken(userDetails);
         String refreshToken = tokenService.generateRefreshToken(userDetails);
@@ -108,7 +110,7 @@ public class AuthService {
         String refreshToken = request.getRefreshToken();
 
         if (refreshToken == null || !tokenValidator.isRefreshToken(refreshToken)) {
-            throw new IllegalArgumentException("Token inválido para refresh");
+            throw new BusinessException("Token inválido para refresh");
         }
 
         tokenValidator.validateTokenOrThrow(refreshToken);
@@ -181,7 +183,7 @@ public class AuthService {
      */
     public Usuario register(auth.dto.request.RegisterRequest request) {
     if (usuarioRepository.findByEmail(request.getEmail()).isPresent()) {
-        throw new IllegalArgumentException("Email já cadastrado");
+        throw new BusinessException("Email já cadastrado");
     }
 
     Usuario novoUsuario = new Usuario();
@@ -209,7 +211,7 @@ public class AuthService {
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Email não encontrado"));
+                .orElseThrow(() -> new ResourceNotFoundException("Email não encontrado"));
 
         tokenRepository.deleteByUsuario(usuario);
 
@@ -245,11 +247,11 @@ public class AuthService {
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
         PasswordResetToken resetToken = tokenRepository.findByToken(request.getToken())
-                .orElseThrow(() -> new RuntimeException("Token inválido"));
+                .orElseThrow(() -> new ResourceNotFoundException("Token inválido"));
 
         if (resetToken.isExpired()) {
             tokenRepository.delete(resetToken);
-            throw new RuntimeException("Token expirado");
+            throw new BusinessException("Token expirado");
         }
 
         Usuario usuario = resetToken.getUsuario();
