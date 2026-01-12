@@ -1,6 +1,6 @@
 package mail.service;
 
-import mail.dto.message.PasswordResetMessage;
+import mail.message.PasswordResetMessage;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mail.SimpleMailMessage;

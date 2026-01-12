@@ -1,4 +1,4 @@
-package mail.dto.message;
+package mail.message;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

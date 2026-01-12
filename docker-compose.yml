@@ -62,6 +62,7 @@ services:
       - JWT_SECRET=uma_chave_super_secreta_e_longa_para_o_jwt_funcionar_123456
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
+      - SERVER_FORWARD_HEADERS_STRATEGY=framework
     networks:
       - pet-network
 
@@ -81,6 +82,20 @@ services:
       - MAILTRAP_PORT=2525
       - MAILTRAP_USER=bb758a3a7bdd19
       - MAILTRAP_PASS=e6a7400cf94844
+    networks:
+      - pet-network
+
+    # --- API GATEWAY ---
+  api-gateway:
+    build: ./apps/api-gateway
+    container_name: api-gateway
+    ports:
+      - "8080:8080" # Porta oficial de acesso
+    depends_on:
+      - auth-service
+      - redis
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
     networks:
       - pet-network
 
@@ -110,6 +125,33 @@ services:
       - pet-network
     depends_on:
       - prometheus
+
+  # --- LOGS (Loki + Promtail + Redis) ---
+  redis:
+    image: redis:alpine
+    container_name: petshop-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - pet-network
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - pet-network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infra/promtail/config.yml:/etc/promtail/config.yml
+    networks:
+      - pet-network
 
 # --- DEFINIÇÃO DE REDES E VOLUMES ---
 networks:

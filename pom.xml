@@ -19,6 +19,7 @@
         <module>apps/common-lib</module>
         <module>apps/auth-service</module>
         <module>apps/mail-service</module>
+        <module>apps/api-gateway</module>
     </modules>
 
     <properties>
