@@ -1,113 +1,191 @@
 package auth.config;
 
-import auth.security.jwt.JwtAuthorizationFilter;
-import auth.security.jwt.JwtTokenValidator;
-import auth.security.jwt.TokenBlacklistService;
-import auth.security.user.UserDetailsServiceImpl;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
-import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationConsentService;
+import org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationService;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
+import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity
 public class SecurityConfig {
 
-    private final JwtTokenValidator tokenValidator;
-    private final UserDetailsServiceImpl userDetailsService;
-    private final TokenBlacklistService blacklistService;
+    @Value("${jwt.public.key}")
+    private String publicKeyString;
 
-    public SecurityConfig(JwtTokenValidator tokenValidator,
-                          UserDetailsServiceImpl userDetailsService,
-                          TokenBlacklistService blacklistService) {
-        this.tokenValidator = tokenValidator;
-        this.userDetailsService = userDetailsService;
-        this.blacklistService = blacklistService;
+    @Value("${jwt.private.key}")
+    private String privateKeyString;
+
+    // Security filter chain for the authorization server endpoints
+    @Bean
+    @Order(1)
+    public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {
+
+        OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =
+                new OAuth2AuthorizationServerConfigurer();
+
+        http
+                .securityMatcher(authorizationServerConfigurer.getEndpointsMatcher())
+                .with(authorizationServerConfigurer, (authorizationServer) ->
+                        authorizationServer
+                                .oidc(Customizer.withDefaults())
+                );
+
+        http
+                .exceptionHandling((exceptions) -> exceptions
+                        .defaultAuthenticationEntryPointFor(
+                                new LoginUrlAuthenticationEntryPoint("/login"),
+                                new MediaTypeRequestMatcher(MediaType.TEXT_HTML)
+                        )
+                )
+                .oauth2ResourceServer((resourceServer) -> resourceServer
+                        .jwt(Customizer.withDefaults()));
+
+        http.cors(Customizer.withDefaults());
+
+        return http.build();
     }
 
-    /**
-     * Configura a cadeia de filtros de segurança (SecurityFilterChain) do Spring Security:
-     * - Desabilita CSRF.
-     * - Habilita CORS usando `corsConfigurationSourceSecurity()`.
-     * - Define sessão como stateless (baseada em JWT).
-     * - Define regras de autorização: rotas públicas de autenticação, documentação e erros/OPTIONS são permitidas;
-     *   todas as outras requisições exigem autenticação.
-     * - Registra o `DaoAuthenticationProvider` e adiciona o `JwtAuthorizationFilter` antes do
-     *   `UsernamePasswordAuthenticationFilter` para validar tokens JWT e checar blacklist.
-     */
+    // Security filter chain for the default application endpoints
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    @Order(2)
+    public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
         http
+                .cors(Customizer.withDefaults())
                 .csrf(AbstractHttpConfigurer::disable)
-                .cors(cors -> cors.configurationSource(corsConfigurationSourceSecurity()))
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        // 1. ROTAS PÚBLICAS (Auth)
-                        .requestMatchers(HttpMethod.POST, "/usuarios/login", "/usuarios/register", "/usuarios/refresh-token", "/usuarios/logout", "/usuarios/forgot-password", "/usuarios/reset-password").permitAll()
-
-                        // 2. DOCUMENTAÇÃO (Swagger)
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-
-                        // 3. MONITORAMENTO
-                        .requestMatchers("/actuator/**").permitAll()
-
-                        // 4. ERROS E UTILITÁRIOS
-                        .requestMatchers("/error").permitAll()
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-
-                        // 5. RESTO BLOQUEADO
+                .authorizeHttpRequests((authorize) -> authorize
+                        .requestMatchers("/actuator/**", "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
+                        .requestMatchers("/usuarios/register", "/usuarios/forgot-password", "/error").permitAll()
                         .anyRequest().authenticated()
                 )
-                .authenticationProvider(authenticationProvider())
-                .addFilterBefore(new JwtAuthorizationFilter(tokenValidator, blacklistService),
-                        UsernamePasswordAuthenticationFilter.class);
+                .formLogin(Customizer.withDefaults());
 
         return http.build();
     }
 
     @Bean
-    public CorsConfigurationSource corsConfigurationSourceSecurity() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of(
+    public RegisteredClientRepository registeredClientRepository(JdbcTemplate jdbcTemplate) {
+        return new JdbcRegisteredClientRepository(jdbcTemplate);
+    }
+
+    @Bean
+    public OAuth2AuthorizationService authorizationService(JdbcTemplate jdbcTemplate, RegisteredClientRepository registeredClientRepository) {
+        return new JdbcOAuth2AuthorizationService(jdbcTemplate, registeredClientRepository);
+    }
+
+    @Bean
+    public OAuth2AuthorizationConsentService authorizationConsentService(JdbcTemplate jdbcTemplate, RegisteredClientRepository registeredClientRepository) {
+        return new JdbcOAuth2AuthorizationConsentService(jdbcTemplate, registeredClientRepository);
+    }
+
+    @Bean
+    public JWKSource<SecurityContext> jwkSource() {
+        RSAKey rsaKey;
+
+        if (publicKeyString != null && !publicKeyString.isBlank() &&
+                privateKeyString != null && !privateKeyString.isBlank()) {
+
+            try {
+                RSAPublicKey publicKey = parsePublicKey(publicKeyString);
+                RSAPrivateKey privateKey = parsePrivateKey(privateKeyString);
+
+                rsaKey = new RSAKey.Builder(publicKey)
+                        .privateKey(privateKey)
+                        .keyID("auth-key-id") // ID fixo para permitir reinicialização sem invalidar
+                        .build();
+            } catch (Exception e) {
+                throw new IllegalStateException("Erro ao carregar chaves RSA do application.properties", e);
+            }
+
+        } else {
+            // Fallback: Se não tiver config (ex: rodando teste unitário local sem env), gera aleatório
+            System.out.println("⚠️ AVISO: Usando chaves RSA geradas em memória (Tokens serão invalidados no restart)");
+            KeyPair keyPair = generateRsaKey();
+            RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+            RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+            rsaKey = new RSAKey.Builder(publicKey)
+                    .privateKey(privateKey)
+                    .keyID(UUID.randomUUID().toString())
+                    .build();
+        }
+
+        JWKSet jwkSet = new JWKSet(rsaKey);
+        return new ImmutableJWKSet<>(jwkSet);
+    }
+
+    private RSAPublicKey parsePublicKey(String key) throws Exception {
+        byte[] decoded = Base64.getDecoder().decode(key);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        return (RSAPublicKey) keyFactory.generatePublic(new X509EncodedKeySpec(decoded));
+    }
+
+    private RSAPrivateKey parsePrivateKey(String key) throws Exception {
+        byte[] decoded = Base64.getDecoder().decode(key);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        return (RSAPrivateKey) keyFactory.generatePrivate(new PKCS8EncodedKeySpec(decoded));
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of(
                 "http://localhost:3000",
                 "http://localhost:5173"
         ));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        configuration.setAllowCredentials(true);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        config.setAllowCredentials(true);
+        source.registerCorsConfiguration("/**", config);
         return source;
     }
 
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
-    }
-
-    @Bean
-    public DaoAuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider(userDetailsService);
-        authProvider.setPasswordEncoder(passwordEncoder());
-        return authProvider;
+    private static KeyPair generateRsaKey() {
+        KeyPair keyPair;
+        try {
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+            keyPairGenerator.initialize(2048);
+            keyPair = keyPairGenerator.generateKeyPair();
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
+        return keyPair;
     }
 
     @Bean

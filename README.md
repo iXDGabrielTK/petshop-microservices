@@ -3,13 +3,11 @@
 ---
 
 ![Java](https://img.shields.io/badge/Java-21-blue?style=flat&logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.1-brightgreen?style=flat&logo=springboot&logoColor=white)
+![OAuth2](https://img.shields.io/badge/Spring_Auth_Server-OAuth2_%7C_OIDC-green?style=flat&logo=springsecurity&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Messaging-orange?style=flat&logo=rabbitmq&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.1-brightgreen?style=flat&logo=springboot&logoColor=white)
-![Spring Cloud Gateway](https://img.shields.io/badge/Spring%20Gateway-Stable-green?style=flat&logo=spring&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED?style=flat&logo=docker&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat&logo=postgresql&logoColor=white)
-![Security](https://img.shields.io/badge/Spring%20Security-BCrypt%20%7C%20JWT-red?style=flat&logo=springsecurity&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?style=flat&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?style=flat&logo=grafana&logoColor=white)
 
@@ -21,60 +19,67 @@ O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autentic
 ```mermaid
 graph LR
     User(["User / Front-end"])
-    
-    subgraph Docker["Docker Compose Environment"]
+
+    subgraph Docker["Ambiente Docker"]
         direction TB
-        
-        %% Gateway
-        Gateway["⛩️ API Gateway<br/>(Porta 8080)<br/>[Spring 3.4]"]
-        
+
         %% Serviços
-        Auth["🐶 Auth Service<br/>(Porta 8081)<br/>[Spring 4.0]"]
-        Mail["📨 Mail Service<br/>(Porta 8082)<br/>[Consumer]"]
-        Pet["🐾 Pet Service<br/>(Em Breve)"]
-        
-        %% Bancos & Infra
-        AuthDB[("Auth DB")]
+        Auth["🔐 Auth Service<br/>(Authorization Server / IdP)<br/>[Spring Authorization Server]"]
+        Gateway["⛩️ API Gateway<br/>(OAuth2 Resource Server)<br/>[JWT + RSA]"]
+        Pet["🐾 Pet Service<br/>(OAuth2 Resource Server)"]
+        Mail["📨 Mail Service<br/>(Consumer)"]
+
+        %% Infra
+        AuthDB[("PostgreSQL<br/>(Users, Clients, Tokens)")]
         Redis[("Redis<br/>(Rate Limit)")]
         Rabbit[("RabbitMQ")]
-        
-        %% Fluxos
-        User -->|"HTTPS / JSON"| Gateway
-        Gateway -->|"Roteamento &<br/>Rate Limit"| Auth
-        Gateway -.-> Pet
-        
-        %% Comunicação Interna
-        Auth -->|"Publish"| Rabbit
-        Rabbit -->|"Consume"| Mail
-        
+
+        %% Fluxo OAuth2
+        User --"1. Authorization Code Flow"--> Auth
+        Auth --"2. JWT Assinado"--> User
+
+        %% Consumo da API
+        User --"3. Request + Bearer Token"--> Gateway
+        Gateway --"4. Validação Local do JWT"--> Gateway
+        Gateway --"5. Proxy / Roteamento"--> Pet
+
+        %% Comunicação interna
+        Auth --"Evento: Reset de Senha"--> Rabbit
+        Rabbit --> Mail
+
         %% Persistência
         Auth <--> AuthDB
         Gateway <--> Redis
     end
 
-    %% Estilização
+    %% Estilos
     classDef gateway fill:#e16b16,stroke:#fff,stroke-width:2px,color:white;
+    classDef auth fill:#800080,stroke:#fff,stroke-width:2px,color:white;
     classDef service fill:#2da44e,stroke:#fff,stroke-width:2px,color:white;
     classDef infra fill:#0366d6,stroke:#fff,stroke-width:2px,color:white;
-    
+
     class Gateway gateway;
-    class Auth,Mail,Pet service;
+    class Auth auth;
+    class Pet,Mail service;
     class AuthDB,Redis,Rabbit infra;
+
     
 ```
 ## 🚀 Tecnologias & Patterns
-* **Core:** Java 21, Spring Boot 4.0.1 (Services) e 3.4.1 (Gateway).
+* **Core:** Java 21, Spring Boot 3.4.1.
 
 * **API Gateway:** Spring Cloud Gateway, Rate Limiting (Redis) e Roteamento Dinâmico..
 
 * **Mensageria:** RabbitMQ (AMQP), Topic Exchange.
 
-* **Segurança:** Spring Security, JWT (Access + Refresh Token), BCrypt (Cost 12), Google Guava (Blacklist).
-
+* **Segurança (Modernizada):** 
+  * **Spring Authorization Server:** Implementação de OAuth2.1 e OpenID Connect 1.0.
+  * **Assinatura RSA:** Chaves assimétricas (Pública/Privada) persistidas para assinatura de tokens.
+  * **Persistência JDBC:** Tokens, Clients e Consentimentos salvos no PostgreSQL (não perde login ao reiniciar).
+  * **Resource Server:** Validação de JWT nos microsserviços.
 * **Observabilidade:** 
   * **Métricas:** Prometheus e Grafana.
   * **Logs:** Grafana Loki e Promtail (Logs estruturados em JSON).
-
 * **Infraestrutura:** Docker, Docker Compose.
 
 * **Banco de Dados:** PostgreSQL 15.
@@ -100,15 +105,15 @@ graph LR
   * **Segurança:** Filtros globais de header e proteção de rotas.
 
 ### 2. 🔐 Auth Service (Rodando)
-Responsável pela identidade e segurança de todo o ecossistema.
+O coração da segurança. Não é apenas uma API de usuários, mas um servidor OAuth2 completo.
 * **Porta:** `8081`
-* **Features:**
-    * Autenticação via **JWT (Access + Refresh Token)**.
-    * Recuperação de Senha via **E-mail (Token temporário)**.
-    * Sistema de **Blacklist** para Logout seguro.
-    * Senhas criptografadas com **BCrypt**.
-    * Proteção contra **XSS (Cross-Site Scripting)** usando sanitização de HTML.
-    * Validação de **Fingerprint** no token.
+* **Endpoints OAuth2:**
+    * `/oauth2/authorize` - Autorização.
+    * `/oauth2/token` - Emissão de Tokens (Access + Refresh).
+    * `/oauth2/jwks` - Chaves Públicas (RSA) para validação de JWT.
+* **Endpoints de Gestão:** Registro de usuário, recuperação de senha.
+
+* **Segurança:** Chaves RSA 2048-bit carregadas via variáveis de ambiente.
 
 ### 3. 📨 Mail Service (Consumer)
    Responsável pelo envio de notificações transacionais.
@@ -163,8 +168,41 @@ Responsável pelo core business (regras de negócio).
         cd apps/auth-service
         ./mvnw clean package
         ```
+3. **Configuração de Segurança**
+    * **Crie um arquivo chamado `.env`  na raiz.**
+    * Gere as chaves **RSA** e converta o conteúdo **PEM** para **Base64** (linha única).
+    * **Preencha o arquivo:**
+    ```env
+    # .env (Exemplo)
+    DB_HOST=postgres
+    DB_PORT=5432
+    DB_USER=postgres
+    DB_PASS=admin
+    DB_NAME=auth_db
+   
+    # RabbitMQ
+    RABBITMQ_DEFAULT_USER=guest
+    RABBITMQ_DEFAULT_PASS=guest
+   
+    # Chaves RSA em Base64 (Sem quebras de linha!)
+    JWT_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAJD...
+    JWT_PUBLIC_KEY=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkO...
 
-3.  **Suba os containers:**
+    # Mailtrap
+    MAILTRAP_HOST=smtp.mailtrap.io
+    MAILTRAP_PORT=2525
+    MAILTRAP_USER=seu_user
+    MAILTRAP_PASS=sua_senha
+   
+    # Redis
+    SPRING_DATA_REDIS_HOST=petshop-redis
+    SPRING_DATA_REDIS_PORT=6379
+    
+    # Outras Configurações
+    SERVER_FORWARD_HEADERS_STRATEGY=native
+    GRAFANA_ADMIN_PASSWORD=admin
+    ```
+4. **Suba os containers:**
     Na raiz do projeto (onde está o `docker-compose.yml`):
     ```bash
     docker-compose up --build
@@ -175,10 +213,110 @@ Responsável pelo core business (regras de negócio).
 
 ---
 
-## 🧪 Payloads para Teste (JSON)
+## 🧪 Payloads e Fluxos de Autenticação (OAuth2)
 
-### 1. Registrar Usuário (POST /usuarios/register)
-**Segurança:** A senha deve ter min 8 caracteres, maiúscula, minúscula, número e especial.
+> ⚠️ O projeto utiliza **OAuth2 com JWT**.  
+> Não existe mais login via endpoint REST (`/usuarios/login`).
+> A autenticação é feita exclusivamente pelo Authorization Server.
+
+---
+
+## 🔐 1. Obter Token – Client Credentials Flow
+
+Fluxo utilizado para:
+- Testes no Postman
+- Comunicação máquina-a-máquina
+- Endpoints sem usuário final
+
+### Endpoint
+POST http://localhost:8081/oauth2/token
+
+### Autenticação
+**Basic Auth**
+```bash
+Username: petshop-client
+Password: secret123
+```
+### Body (x-www-form-urlencoded)
+```bash
+grant_type=client_credentials
+scope=pets:read
+```
+### Resposta (exemplo)
+```json
+{
+  "access_token": "SEU_ACCESS_TOKEN_AQUI",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "pets:read"
+}
+```
+📌 Utilize o token nos endpoints protegidos:
+
+`Authorization: Bearer SEU_ACCESS_TOKEN_AQUI`
+
+## 🔑 2. Login de Usuário – Authorization Code Flow (Front-end)
+
+Este fluxo é utilizado pelo Front-end e ocorre via redirecionamento no navegador.
+
+### 2.1 Acessar no navegador
+```
+http://localhost:8081/oauth2/authorize?response_type=code&client_id=petshop-client&scope=openid profile&redirect_uri=http://127.0.0.1:8080/authorized
+```
+
+### 2.2 Login
+Faça login com um usuário cadastrado (ex: `user1` / `password1`)
+
+```bash
+Email: admin@petshop.com
+Senha: admin123
+```
+
+### 2.3 Callback com Authorization Code
+Após o login, o usuário será redirecionado para:
+
+```
+http://127.0.0.1:8080/authorized?code=AUTHORIZATION_CODE
+```
+
+### 2.4 Trocar Authorization Code por Tokens
+Faça uma requisição POST para:
+```
+POST http://localhost:8081/oauth2/token
+```
+### Autenticação
+**Basic Auth**
+
+```bash
+Username: petshop-client
+Password: secret123
+```
+
+### Body (x-www-form-urlencoded)
+```bash
+grant_type=authorization_code
+code=AUTHORIZATION_CODE
+redirect_uri=http://127.0.0.1:8080/authorized
+```
+
+### Resposta (exemplo)
+```json
+{
+  "access_token": "SEU_ACCESS_TOKEN_AQUI",
+  "refresh_token": "SEU_REFRESH_TOKEN_AQUI",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "openid profile"
+}
+```
+
+## 👤 3. Endpoints de Usuário (REST)
+### 3.1 Registrar Novo Usuário
+
+```
+POST /usuarios/register
+```
+
 ```json
 {
   "nome": "Seu Nome",
@@ -187,41 +325,43 @@ Responsável pelo core business (regras de negócio).
 }
 ```
 
-### 2. Login (POST /usuarios/login)
-```json
-{
-  "email": "teste@email.com",
-  "senha": "SenhaForte123!"
-}
+#### 🔐 Regras da senha
+
+* Mínimo 8 caracteres
+
+* Letra maiúscula
+
+* Letra minúscula
+
+* Número
+
+* Caractere especial
+
+3.2 Recuperar Senha – Solicitação (Público)
+
 ```
-### 3. Refresh Token (POST /usuarios/refresh-token)
-```json
-{
-  "refreshToken": "COLE_O_TOKEN_DE_REFRESH_AQUI"
-}
+POST /usuarios/forgot-password
 ```
 
-### 4. Logout (POST /usuarios/logout)
-```json
-{
-  "refreshToken": "COLE_O_TOKEN_DE_REFRESH_AQUI"
-}
-```
-
-### 5. Recuperar Senha - Solicitação (POST /usuarios/forgot-password)
 ```json
 {
   "email": "teste@email.com"
 }
 ```
 
-### 6. Recuperar Senha - Reset (POST /usuarios/reset-password)
-```json
-{
-  "token": "COLE_O_TOKEN_RECEBIDO_NO_EMAIL",
-  "newPassword": "NovaSenhaForte123!"
-}
-```
+📌 Um email será enviado com instruções para redefinição da senha.
+---
+
+### 🚫 Endpoints Removidos
+Os endpoints abaixo não existem mais e não devem ser utilizados:
+
+* ❌ POST /usuarios/login
+
+* ❌ POST /usuarios/refresh-token
+
+* ❌ POST /usuarios/logout
+
+---
 
 ## 📂 Estrutura do Projeto
 ```

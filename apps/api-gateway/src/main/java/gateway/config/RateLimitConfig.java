@@ -13,7 +13,8 @@ public class RateLimitConfig {
     public KeyResolver userKeyResolver() {
         return exchange -> Mono.just(
                 Objects.requireNonNull(exchange.getRequest().getRemoteAddress())
-                        .getAddress().getHostAddress()
+                        .getAddress()
+                        .getHostAddress()
         );
     }
 }

@@ -5,9 +5,9 @@ services:
     container_name: auth-db
     restart: always
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=admin
-      - POSTGRES_DB=auth_db
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+      - POSTGRES_DB=${DB_NAME}
     ports:
       - "5432:5432"
     volumes:
@@ -30,8 +30,8 @@ services:
       - "15672:15672"
       - "15692:15692"
     environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
     command: >
       sh -c "rabbitmq-plugins enable rabbitmq_prometheus && rabbitmq-server"
     healthcheck:
@@ -54,15 +54,16 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=auth_db
-      - DB_USER=postgres
-      - DB_PASS=admin
-      - JWT_SECRET=uma_chave_super_secreta_e_longa_para_o_jwt_funcionar_123456
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
-      - SERVER_FORWARD_HEADERS_STRATEGY=framework
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - JWT_PRIVATE_KEY=${JWT_PRIVATE_KEY}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+      - SERVER_FORWARD_HEADERS_STRATEGY=${SERVER_FORWARD_HEADERS_STRATEGY}
     networks:
       - pet-network
 
@@ -76,12 +77,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
-      - MAILTRAP_HOST=sandbox.smtp.mailtrap.io
-      - MAILTRAP_PORT=2525
-      - MAILTRAP_USER=bb758a3a7bdd19
-      - MAILTRAP_PASS=e6a7400cf94844
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+      - MAILTRAP_HOST=${MAILTRAP_HOST}
+      - MAILTRAP_PORT=${MAILTRAP_PORT}
+      - MAILTRAP_USER=${MAILTRAP_USER}
+      - MAILTRAP_PASS=${MAILTRAP_PASS}
     networks:
       - pet-network
 
@@ -90,12 +91,14 @@ services:
     build: ./apps/api-gateway
     container_name: api-gateway
     ports:
-      - "8080:8080" # Porta oficial de acesso
+      - "8080:8080"
     depends_on:
       - auth-service
       - redis
     environment:
-      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_HOST=${SPRING_DATA_REDIS_HOST}
+      - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
+      - jWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
     networks:
       - pet-network
 
@@ -115,12 +118,12 @@ services:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "3001:3001"
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=GrafanaAdmin12391
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
     networks:
       - pet-network
     depends_on:
