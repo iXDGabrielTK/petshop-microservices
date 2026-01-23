@@ -7,14 +7,17 @@ import java.util.Set;
 
 @Entity
 @Table(name = "usuario")
-@Data
+@Getter
+@Setter
+@ToString(exclude = "roles")
 @NoArgsConstructor
 @AllArgsConstructor
-
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Usuario {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(name = "NOME", nullable = false)

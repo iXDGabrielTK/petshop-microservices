@@ -18,52 +18,43 @@ Este projeto é um sistema distribuído baseado em **microsserviços** para gere
 O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autenticação é desacoplada das regras de negócio.
 ```mermaid
 graph LR
-    User(["User / Front-end"])
+    User["User / Front-end"]
 
     subgraph Docker["Ambiente Docker"]
         direction TB
 
-        %% Serviços
-        Auth["🔐 Auth Service<br/>(Authorization Server / IdP)<br/>[Spring Authorization Server]"]
-        Gateway["⛩️ API Gateway<br/>(OAuth2 Resource Server)<br/>[JWT + RSA]"]
-        Pet["🐾 Pet Service<br/>(OAuth2 Resource Server)"]
-        Mail["📨 Mail Service<br/>(Consumer)"]
+        Auth["Auth Service<br>(Authorization Server / IdP)<br>[Spring Authorization Server]"]
+        Gateway["API Gateway<br>(OAuth2 Resource Server)<br>[JWT + RSA]"]
+        Pet["Pet Service<br>(OAuth2 Resource Server)"]
+        Mail["Mail Service<br>(Consumer)"]
 
-        %% Infra
-        AuthDB[("PostgreSQL<br/>(Users, Clients, Tokens)")]
-        Redis[("Redis<br/>(Rate Limit)")]
-        Rabbit[("RabbitMQ")]
+        AuthDB["PostgreSQL<br>(Users, Clients, Tokens)"]
+        Redis["Redis<br>(Rate Limit)"]
+        Rabbit["RabbitMQ"]
 
-        %% Fluxo OAuth2
-        User --"1. Authorization Code Flow"--> Auth
-        Auth --"2. JWT Assinado"--> User
+        User -- "1. Authorization Code Flow" --> Auth
+        Auth -- "2. JWT Assinado" --> User
 
-        %% Consumo da API
-        User --"3. Request + Bearer Token"--> Gateway
-        Gateway --"4. Validação Local do JWT"--> Gateway
-        Gateway --"5. Proxy / Roteamento"--> Pet
+        User -- "3. Request + Bearer Token" --> Gateway
+        Gateway -- "5. Proxy / Roteamento" --> Pet
 
-        %% Comunicação interna
-        Auth --"Evento: Reset de Senha"--> Rabbit
+        Auth -- "Evento: Reset de Senha" --> Rabbit
         Rabbit --> Mail
 
-        %% Persistência
         Auth <--> AuthDB
         Gateway <--> Redis
     end
 
-    %% Estilos
-    classDef gateway fill:#e16b16,stroke:#fff,stroke-width:2px,color:white;
-    classDef auth fill:#800080,stroke:#fff,stroke-width:2px,color:white;
-    classDef service fill:#2da44e,stroke:#fff,stroke-width:2px,color:white;
-    classDef infra fill:#0366d6,stroke:#fff,stroke-width:2px,color:white;
+    classDef gateway fill:#e16b16,stroke:#fff,stroke-width:2px,color:white
+    classDef auth fill:#800080,stroke:#fff,stroke-width:2px,color:white
+    classDef service fill:#2da44e,stroke:#fff,stroke-width:2px,color:white
+    classDef infra fill:#0366d6,stroke:#fff,stroke-width:2px,color:white
 
-    class Gateway gateway;
-    class Auth auth;
-    class Pet,Mail service;
-    class AuthDB,Redis,Rabbit infra;
+    class Gateway gateway
+    class Auth auth
+    class Pet,Mail service
+    class AuthDB,Redis,Rabbit infra
 
-    
 ```
 ## 🚀 Tecnologias & Patterns
 * **Core:** Java 21, Spring Boot 3.4.1.
@@ -155,13 +146,13 @@ Responsável pelo core business (regras de negócio).
 
 ### Passo a Passo
 
-1.  **Clone o repositório:**
+1. **Clone o repositório:**
     ```bash
     git clone [https://github.com/iXDGabrielTK/petshop-microservices.git](https://github.com/iXDGabrielTK/petshop-microservices.git)
     cd petshop-microservices
     ```
 
-2.  **Gere os executáveis (.jar):**
+2. **Gere os executáveis (.jar):**
     * No IntelliJ: Aba Maven > `auth-service` > `Lifecycle` > `clean` e `package`.
     * Ou via terminal na pasta do serviço:
         ```bash
@@ -208,7 +199,7 @@ Responsável pelo core business (regras de negócio).
     docker-compose up --build
     ```
 
-4.  **Acesse a Documentação Unificada:**
+5. **Acesse a Documentação Unificada:**
     http://localhost:8080/swagger-ui/index.html
 
 ---
@@ -420,29 +411,28 @@ Para visualizar os dados, importe os seguintes IDs no Grafana:
 ---
 
 ## 🗺️ Roadmap (Próximos Passos)
-```
-[x] Auth Service: Login, Registro, JWT, Refresh Token, Logout.
 
-[x] Segurança: Criptografia de senhas, proteção XSS e Recuperação de Senha.
+* [x] Auth Service: Login, Registro, JWT, Refresh Token, Logout.
 
-[x] Docker: Containerização do Banco e API.
+* [x] Segurança: Criptografia de senhas, proteção XSS e Recuperação de Senha.
 
-[x] Mensageria: Integração com RabbitMQ (Producer/Consumer).
+* [x] Docker: Containerização do Banco e API.
 
-[x] Resiliência: Implementação de DLQ (Dead Letter Queue) e Retries.
+* [x] Mensageria: Integração com RabbitMQ (Producer/Consumer).
 
-[x] Observabilidade Completa:
-    [x] Métricas (Prometheus/Grafana)
-    [x] Logs Centralizados (Loki/Promtail)
-[x] Mail Service: Microserviço dedicado para notificações.
+* [x] Resiliência: Implementação de DLQ (Dead Letter Queue) e Retries.
 
-[ ] Pet Service: CRUD de Pets e vínculo com usuário logado.
+* [x] Observabilidade Completa:
+    *[x] Métricas (Prometheus/Grafana)
+    *[x] Logs Centralizados (Loki/Promtail)
+* [x] Mail Service: Microserviço dedicado para notificações.
 
-[ ] Agendamento: Lógica de horários para Banho e Tosa.
+* [ ] Pet Service: CRUD de Pets e vínculo com usuário logado.
 
-[ ] Front-end: Interface em React.
-```
+* [ ] Agendamento: Lógica de horários para Banho e Tosa.
 
+* [ ] Front-end: Interface em React.
+---
 ## 📄 Licença
 
 Este projeto está sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.

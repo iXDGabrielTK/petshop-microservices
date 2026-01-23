@@ -2,6 +2,7 @@ package auth.security.user;
 
 import auth.model.Usuario;
 import auth.repository.UsuarioRepository;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import org.jspecify.annotations.NonNull;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;

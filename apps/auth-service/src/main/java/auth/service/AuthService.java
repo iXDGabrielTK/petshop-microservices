@@ -9,12 +9,16 @@ import auth.repository.UsuarioRepository;
 import common.exception.BusinessException;
 import common.exception.ResourceNotFoundException;
 import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
+@Slf4j
 public class AuthService {
 
     private final UsuarioRepository usuarioRepository;
@@ -57,7 +61,7 @@ public class AuthService {
     auth.model.Role roleUser = roleRepository.findByNome("USER")
             .orElseGet(() -> roleRepository.save(new auth.model.Role(null, "USER")));
 
-    novoUsuario.setRoles(java.util.Collections.singleton(roleUser));
+        novoUsuario.setRoles(new HashSet<>(Set.of(roleUser)));
 
     return usuarioRepository.save(novoUsuario);
     }

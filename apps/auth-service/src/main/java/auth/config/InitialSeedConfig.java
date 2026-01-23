@@ -33,14 +33,12 @@ public class InitialSeedConfig {
             if (clientRepository.findByClientId("petshop-client") == null) {
                 RegisteredClient oidcClient = RegisteredClient.withId(UUID.randomUUID().toString())
                         .clientId("petshop-client")
-                        .clientSecret(passwordEncoder.encode("secret123"))
-                        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                        .clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
                         .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                         .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                        .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
 
                         .redirectUri("https://oauth.pstmn.io/v1/callback")
-                        .redirectUri("http://127.0.0.1:8080/authorized")
+                        .redirectUri("http://localhost:5173/authorized")
 
                         .scope(OidcScopes.OPENID)
                         .scope(OidcScopes.PROFILE)
@@ -50,28 +48,34 @@ public class InitialSeedConfig {
                         .tokenSettings(TokenSettings.builder()
                                 .accessTokenTimeToLive(Duration.ofMinutes(30))
                                 .refreshTokenTimeToLive(Duration.ofDays(1))
+                                .reuseRefreshTokens(false)
                                 .build())
 
-                        .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                        .clientSettings(ClientSettings.builder()
+                                .requireProofKey(true)
+                                .requireAuthorizationConsent(false)
+                                .build())
                         .build();
 
                 clientRepository.save(oidcClient);
-                System.out.println("✅ Cliente OAuth2 'petshop-client' criado.");
+                System.out.println("✅ Cliente OAuth2 'petshop-client' Público criado.");
             }
 
-            if (usuarioRepository.findByEmail("admin@petshop.com").isEmpty()) {
-                Role roleAdmin = roleRepository.findByNome("ADMIN")
-                        .orElseGet(() -> roleRepository.save(new Role(null, "ADMIN")));
+            Usuario admin = usuarioRepository.findByEmail("admin@petshop.com")
+                    .orElse(new Usuario());
 
-                Usuario admin = new Usuario();
-                admin.setNome("Administrador");
-                admin.setEmail("admin@petshop.com");
-                admin.setSenha(passwordEncoder.encode("admin123"));
-                admin.setRoles(Collections.singleton(roleAdmin));
+            Role roleAdmin = roleRepository.findByNome("ADMIN")
+                    .orElseGet(() -> roleRepository.save(new Role(null, "ADMIN")));
 
-                usuarioRepository.save(admin);
-                System.out.println("✅ Usuário 'admin@petshop.com' criado.");
+            admin.setNome("Administrador");
+            admin.setEmail("admin@petshop.com");
+            if (admin.getId() == null) {
+                admin.setSenha(passwordEncoder.encode("Senha!foda123456"));
             }
+            admin.setRoles(Collections.singleton(roleAdmin));
+
+            usuarioRepository.save(admin);
+            System.out.println("✅ Usuário Admin garantido no banco.");
         };
     }
 }
