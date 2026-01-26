@@ -21,6 +21,7 @@
         <module>apps/auth-service</module>
         <module>apps/mail-service</module>
         <module>apps/api-gateway</module>
+        <module>apps/inv-service</module>
     </modules>
 
     <properties>

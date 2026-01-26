@@ -1,17 +1,38 @@
 services:
-  # --- BANCO DE DADOS (PostgreSQL) ---
-  postgres:
+  # --- BANCO DE DADOS AUTH (PostgreSQL) ---
+  postgres-auth:
     image: postgres:15-alpine
     container_name: auth-db
     restart: always
     environment:
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASS}
-      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER_AUTH}
+      - POSTGRES_PASSWORD=${DB_PASS_AUTH}
+      - POSTGRES_DB=${DB_NAME_AUTH}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_auth_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pet-network
+
+  # --- BANCO DE DADOS 2 INV (PostgreSQL) ---
+  postgres-inv:
+    image: postgres:15-alpine
+    container_name: inv_db
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER_INV}
+      - POSTGRES_PASSWORD=${DB_PASS_INV}
+      - POSTGRES_DB=${DB_NAME_INV}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_inv_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -49,16 +70,16 @@ services:
     ports:
       - "8081:8081"
     depends_on:
-      postgres:
+      postgres-auth:
         condition: service_started
       rabbitmq:
         condition: service_healthy
     environment:
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASS}
+      - DB_HOST=${DB_HOST_AUTH}
+      - DB_PORT=${DB_PORT_AUTH}
+      - DB_NAME=${DB_NAME_AUTH}
+      - DB_USER=${DB_USER_AUTH}
+      - DB_PASS=${DB_PASS_AUTH}
       - JWT_PRIVATE_KEY=${JWT_PRIVATE_KEY}
       - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
@@ -87,6 +108,26 @@ services:
       - FRONTEND_DASHBOARD_URL=${FRONTEND_DASHBOARD_URL}
     networks:
       - pet-network
+
+  # --- MICROSERVIÇO 3 (Inventory Service) ---
+  inv-service:
+    build: ./apps/inv-service
+    container_name: inv-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres-inv:
+        condition: service_started
+    environment:
+      - DB_HOST=${DB_HOST_INV}
+      - DB_PORT=${DB_PORT_INV}
+      - DB_NAME=${DB_NAME_INV}
+      - DB_USER=${DB_USER_INV}
+      - DB_PASS=${DB_PASS_INV}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+    networks:
+      - pet-network
+
 
     # --- API GATEWAY ---
   api-gateway:
@@ -168,5 +209,6 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  postgres_auth_data:
+  postgres_inv_data:
   grafana_data:
