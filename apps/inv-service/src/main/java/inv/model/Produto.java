@@ -16,22 +16,25 @@ public class Produto {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Código de barras deve ser único para busca rápida no PDV
     @Column(unique = true)
     private String codigoBarras;
 
     @Column(nullable = false)
     private String nome;
 
+    @Column(precision = 10, scale = 3)
+    private BigDecimal estoqueMinimo;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UnidadeMedida unidadeMedida;
 
-    // Scale 3 permite até 1.500 kg ou 0.250 kg
     @Column(precision = 10, scale = 3, nullable = false)
     private BigDecimal quantidadeEstoque;
 
-    // Scale 2 para dinheiro
     @Column(precision = 10, scale = 2, nullable = false)
     private BigDecimal precoVenda;
+
+    @Version
+    private Long version;
 }

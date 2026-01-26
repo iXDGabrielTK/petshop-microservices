@@ -24,6 +24,10 @@ public class RabbitMQConfig {
     public static final String DLQ_QUEUE_NAME = "auth.v1.password-reset.send-email.dlq";
     public static final String DLQ_ROUTING_KEY = "auth.password.reset.dlq";
 
+    public static final String INVENTORY_EXCHANGE = "inventory.v1.events";
+    public static final String LOW_STOCK_QUEUE = "inventory.v1.low-stock.send-email";
+    public static final String LOW_STOCK_ROUTING_KEY = "inventory.stock.low";
+
     @Bean
     public Queue dlqQueue() {
         return QueueBuilder.durable(DLQ_QUEUE_NAME).build();
@@ -42,6 +46,23 @@ public class RabbitMQConfig {
     @Bean
     public TopicExchange authExchange() {
         return new TopicExchange(EXCHANGER_NAME);
+    }
+
+    @Bean
+    public TopicExchange inventoryExchange() {
+        return new TopicExchange(INVENTORY_EXCHANGE);
+    }
+
+    @Bean
+    public Queue lowStockQueue() {
+        return QueueBuilder.durable(LOW_STOCK_QUEUE).build();
+    }
+
+    @Bean
+    public Binding lowStockBinding() {
+        return BindingBuilder.bind(lowStockQueue())
+                .to(inventoryExchange())
+                .with(LOW_STOCK_ROUTING_KEY);
     }
 
     @Bean

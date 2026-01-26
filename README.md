@@ -62,22 +62,33 @@ graph LR
 * **API Gateway:** Spring Cloud Gateway, Rate Limiting (Redis) e Roteamento Dinâmico..
 
 * **Mensageria:** RabbitMQ (AMQP), Topic Exchange.
-
-* **Segurança (Modernizada):** 
-  * **Spring Authorization Server:** Implementação de OAuth2.1 e OpenID Connect 1.0.
-  * **Assinatura RSA:** Chaves assimétricas (Pública/Privada) persistidas para assinatura de tokens.
-  * **Persistência JDBC:** Tokens, Clients e Consentimentos salvos no PostgreSQL (não perde login ao reiniciar).
-  * **Resource Server:** Validação de JWT nos microsserviços.
+  * **Padrão:** Transactional Outbox Pattern (adaptado com Transactional Listeners).
+  * **Resiliência:** Retries automáticos + Dead Letter Queues (DLQ).
+* **Segurança (OAuth2):**
+  * **Spring Authorization Server:** Implementação de OpenID Connect 1.0.
+  * **Assinatura RSA:** Chaves assimétricas (Pública/Privada) rotacionáveis.
+  * **Stateful Security:** Persistência JDBC de tokens e consentimentos (PostgreSQL).
+  * **Resource Server:** Validação JWT Stateless nos microsserviços.
 * **Observabilidade:** 
   * **Métricas:** Prometheus e Grafana.
-  * **Logs:** Grafana Loki e Promtail (Logs estruturados em JSON).
+  * **Logs:** Grafana Loki, Promtail e Logback Async Appender (Non-blocking I/O).
+* **Persistência:** 
+  * **Banco de Dados:** PostgreSQL 15.
+
+  * **ORM:** Hibernate (com otimizações de Batch).
+
+  * **Migrações:** Flyway (Versionamento de Schema).
+  
 * **Infraestrutura:** Docker, Docker Compose.
 
-* **Banco de Dados:** PostgreSQL 15.
+* **Qualidade & Docs:** Swagger/OpenAPI, Sanitização XSS.
 
-* **Documentação:** Swagger/OpenAPI (/swagger-ui.html).
+### ⚡ Destaques de Engenharia (High Performance)
+* **Virtual Threads (Project Loom):** O sistema roda sobre o novo modelo de concorrência leve do Java 21, maximizando o throughput de I/O.
 
-* **Qualidade:** Tratamento de XSS (Sanitização de HTML), Validação de Fingerprint (IP/User-Agent).
+* **Event-Driven Consistency:** Garantia de integridade atômica entre Banco de Dados e RabbitMQ usando `@TransactionalEventListener`.
+
+* **Database Optimization:** Eliminação de queries N+1 e implementação de Batch Inserts para processamento de vendas em larga escala.
 
 ---
 
@@ -358,39 +369,50 @@ Os endpoints abaixo não existem mais e não devem ser utilizados:
 ```
 petshop-microservices/
 ├── apps/
-│   ├── auth-service/       # Microsserviço de Autenticação
+│   ├── auth-service/       # [Provider] Autenticação (OAuth2 + OIDC)
 │   │   ├── src/main/java/auth/
+│   │   │   ├── config/     # SecurityConfig, RabbitMQConfig
+│   │   │   ├── controller/ # Endpoints de Login/Token
+│   │   │   ├── security/   # UserDetails, JWK Source
+│   │   │   └── service/    # Regras de Auth
+│   │   └── Dockerfile
+│   │
+│   ├── inv-service/        # [Core] Gestão de Estoque e Vendas (Novo!)
+│   │   ├── src/main/java/inv/
 │   │   │   ├── config/     # SecurityConfig
-│   │   │   ├── controller/ # Endpoints
-│   │   │   ├── security/   # Lógica JWT e Filtros
-│   │   │   └── service/    # Regras de Negócio
+│   │   │   ├── controller/ # Endpoints de Produto/Venda
+│   │   │   ├── dto/        # Records (VendaRequest, etc)
+│   │   │   ├── event/      # Eventos de Domínio (EstoqueBaixoEvent)
+│   │   │   ├── listener/   # Transactional Event Listeners
+│   │   │   └── service/    # Regras de Baixa Atômica
 │   │   └── Dockerfile
 │   │
 │   ├── mail-service/       # [Consumer] Envio de E-mails
 │   │   ├── src/main/java/mail/
-│   │   │   ├── config/  
-│   │   │   ├── message/  
-│   │   │   └── service/
+│   │   │   ├── config/     # RabbitMQConfig (Bindings)
+│   │   │   ├── message/    # DTOs de Mensagem
+│   │   │   └── service/    # Consumidores (RabbitListener)
 │   │   └── Dockerfile
 │   │ 
-│   ├── api-gateway/        # API Gateway com Spring Cloud Gateway
+│   ├── api-gateway/        # API Gateway (Spring Cloud Gateway)
 │   │   ├── src/main/java/gateway/
-│   │   │   └──config/     # Configurações do Gateway
+│   │   │   └── config/     # RateLimiting, Rotas e Segurança
 │   │   └── Dockerfile
 │   │
-│   ├── common-lib/   # Biblioteca comum (DTOs, Utils, Exceptions)
-│   │   ├── src/main/java/common/
-│   │   │   └── exception/  # Exceções personalizadas
-│   │   └── Dockerfile
-│   │
-│   └── pet-service/        # (Em construção...)
+│   └── common-lib/         # Biblioteca Compartilhada
+│       ├── src/main/java/common/
+│       │   ├── exception/  # GlobalExceptionHandler
+│       │   └── security/   # Utilitários RSA/JWT
+│       ├── src/main/resources/
+│       │   └── logback-shared.xml # Configuração Async de Logs
+│       └── Dockerfile
 │
-├── infra/                  # Configurações de Observabilidade
-│   ├── prometheus/
-│   ├── grafana/
-│   └── promtail/
+├── infra/                  # Stack de Observabilidade
+│   ├── prometheus/         # Coleta de métricas
+│   ├── grafana/            # Dashboards
+│   └── promtail/           # Coleta de logs para o Loki
 │
-└── docker-compose.yml      # Orquestração dos containers
+└── docker-compose.yml      # Orquestração de todos os containers
 ```
 
 ## 📊 Observabilidade e Monitoramento
@@ -427,6 +449,10 @@ Para visualizar os dados, importe os seguintes IDs no Grafana:
     *[x] Logs Centralizados (Loki/Promtail)
 * [x] Mail Service: Microserviço dedicado para notificações.
 
+* [x] Inventory Service:
+    * [x] Catálogo de Produtos e Controle de Estoque.
+    * [x] Motor de Vendas com baixa atômica e validação de concorrência.
+    * [x] Alertas automáticos de estoque baixo via RabbitMQ e E-mail.
 * [ ] Pet Service: CRUD de Pets e vínculo com usuário logado.
 
 * [ ] Agendamento: Lógica de horários para Banho e Tosa.
