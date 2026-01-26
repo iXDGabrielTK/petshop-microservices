@@ -16,8 +16,8 @@ import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import java.security.KeyFactory;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 import java.util.Base64;
-import java.util.List;
 
 @Configuration
 @EnableWebFluxSecurity
@@ -25,6 +25,18 @@ public class GatewaySecurityConfig {
 
     @Value("${jwt.public.key}")
     private String publicKeyString;
+
+    @Value("${cors.allowed-origins}")
+    private String corsAllowedOrigins;
+
+    @Value("${cors.allowed-methods}")
+    private String corsAllowedMethods;
+
+    @Value("${cors.allowed-headers}")
+    private String corsAllowedHeaders;
+
+    @Value("${cors.allow-credentials}")
+    private Boolean corsAllowCredentials;
 
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
@@ -62,13 +74,13 @@ public class GatewaySecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        configuration.setAllowCredentials(true);
+        configuration.setAllowedOrigins(Arrays.asList(corsAllowedOrigins.split(",")));
+        configuration.setAllowedMethods(Arrays.asList(corsAllowedMethods.split(",")));
+        configuration.setAllowedHeaders(Arrays.asList(corsAllowedHeaders.split(",")));
+        configuration.setAllowCredentials(corsAllowCredentials);
+
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/oauth2/**", configuration);
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }

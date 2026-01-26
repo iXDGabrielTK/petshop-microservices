@@ -61,6 +61,9 @@ public class SecurityConfig {
     @Value("${jwt.private.key:}")
     private String privateKeyString;
 
+    @Value("${frontend.base-url}")
+    private String frontendBaseUrl;
+
     // --- 1. CONFIGURAÇÃO MODERNA DO AUTH SERVER (SEM DEPRECATED) ---
     @Bean
     @Order(1)
@@ -220,11 +223,10 @@ public class SecurityConfig {
             SavedRequest savedRequest = requestCache.getRequest(request, response);
 
             if (savedRequest == null) {
-                response.sendRedirect("http://localhost:5173/dashboard");
+                response.sendRedirect(frontendBaseUrl);
                 return;
             }
 
-            // Redireciona para a URL original (agora correta, vinda do front)
             String targetUrl = savedRequest.getRedirectUrl();
             requestCache.removeRequest(request, response);
             response.sendRedirect(targetUrl);
