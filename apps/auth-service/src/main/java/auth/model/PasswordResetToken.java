@@ -1,33 +1,47 @@
 package auth.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
-
 @Entity
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 public class PasswordResetToken {
+
+    private static final Duration EXPIRACAO = Duration.ofMinutes(30);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false)
     private String token;
 
-    @OneToOne(fetch = FetchType.EAGER)
-    @JoinColumn(nullable = false, name = "usuario_id")
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "usuario_id", nullable = false, unique = true)
     private Usuario usuario;
 
+    @Column(nullable = false)
     private LocalDateTime expiryDate;
 
     public PasswordResetToken(String token, Usuario usuario) {
         this.token = token;
         this.usuario = usuario;
-        // Set expiry date to 30 minutes from now
-        this.expiryDate = LocalDateTime.now().plusMinutes(30);
+        renovar();
+    }
+
+    public void renovar() {
+        this.expiryDate = LocalDateTime.now().plus(EXPIRACAO);
+    }
+
+    public void atualizarToken(String novoToken) {
+        this.token = novoToken;
+        renovar();
     }
 
     public boolean isExpired() {

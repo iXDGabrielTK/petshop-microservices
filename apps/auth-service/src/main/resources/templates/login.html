@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html xmlns:th="http://www.thymeleaf.org" lang="PT-BR">
 <head>
     <meta charset="UTF-8">
     <title>Login - Malvadao Inc</title>
@@ -54,8 +54,14 @@
                             <input id="username" name="username" type="email" placeholder="admin@petshop.com" autocapitalize="none" autocomplete="email" autocorrect="off" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" required>
                         </div>
                         <div class="grid gap-2">
-                            <label class="text-sm font-medium leading-none" for="password">Senha</label>
-                            <input id="password" name="password" type="password" placeholder="******" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" required>
+                            <div class="flex items-center justify-between">
+                                <label class="text-sm font-medium leading-none" for="password">Senha</label>
+                                <a href="http://localhost:5173/esqueci-senha"
+                                   class="text-sm font-medium text-zinc-500 hover:text-zinc-900 underline-offset-4 hover:underline">
+                                    Esqueceu a senha?
+                                </a>
+                            </div>
+                                <input id="password" name="password" type="password" placeholder="******" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" required>
                         </div>
                         <button type="submit" class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-zinc-900 text-white hover:bg-zinc-900/90 h-9 px-4 py-2">
                             Entrar

@@ -80,15 +80,20 @@ public class AuthService {
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("Email não encontrado"));
 
-        tokenRepository.deleteByUsuario(usuario);
+        String tokenGerado = UUID.randomUUID().toString();
 
-        String token = UUID.randomUUID().toString();
-        PasswordResetToken myToken = new PasswordResetToken(token, usuario);
-        tokenRepository.save(myToken);
+        PasswordResetToken token = tokenRepository.findByUsuario(usuario)
+                .map(existingToken -> {
+                    existingToken.atualizarToken(tokenGerado);
+                    return existingToken;
+                })
+                .orElseGet(() -> new PasswordResetToken(tokenGerado, usuario));
+
+        tokenRepository.save(token);
 
         PasswordResetMessage message = new PasswordResetMessage(
                 usuario.getEmail(),
-                token,
+                tokenGerado,
                 usuario.getNome()
         );
 
@@ -115,6 +120,10 @@ public class AuthService {
     public void resetPassword(ResetPasswordRequest request) {
         PasswordResetToken resetToken = tokenRepository.findByToken(request.getToken())
                 .orElseThrow(() -> new ResourceNotFoundException("Token inválido"));
+
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new BusinessException("As senhas não conferem.");
+        }
 
         if (resetToken.isExpired()) {
             tokenRepository.delete(resetToken);

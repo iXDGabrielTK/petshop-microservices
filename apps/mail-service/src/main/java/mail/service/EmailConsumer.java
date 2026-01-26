@@ -30,9 +30,22 @@ public class EmailConsumer {
         email.setTo(dados.getEmail());
         email.setSubject("Recuperação de Senha - PetShop");
 
-        String texto = String.format("Olá, %s!\n\nUse o token abaixo para redefinir sua senha:\n%s\n\nVálido por 30 minutos.",
+        String urlFrontend = "http://localhost:5173";
+
+        String linkRecuperacao = urlFrontend + "/redefinir-senha?token=" + dados.getToken();
+
+        String texto = String.format("""
+            Olá, %s!
+            
+            Você solicitou a redefinição de senha. Clique no link abaixo para criar uma nova senha:
+            
+            %s
+            
+            Se você não solicitou isso, ignore este e-mail.
+            (O link expira em 30 minutos)
+            """,
                 dados.getNomeUsuario() != null ? dados.getNomeUsuario() : "Usuário",
-                dados.getToken());
+                linkRecuperacao);
 
         email.setText(texto);
 

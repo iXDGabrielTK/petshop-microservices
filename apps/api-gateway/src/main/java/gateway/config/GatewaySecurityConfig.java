@@ -68,6 +68,7 @@ public class GatewaySecurityConfig {
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/oauth2/**", configuration);
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
