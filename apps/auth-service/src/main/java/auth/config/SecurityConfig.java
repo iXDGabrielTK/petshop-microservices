@@ -9,6 +9,9 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import common.security.RsaKeyUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -38,14 +41,9 @@ import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 import org.springframework.security.web.savedrequest.RequestCache;
 import org.springframework.security.web.savedrequest.SavedRequest;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
-import java.security.KeyFactory;
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
-import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -63,6 +61,8 @@ public class SecurityConfig {
 
     @Value("${frontend.base-url}")
     private String frontendBaseUrl;
+
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     // --- 1. CONFIGURAÇÃO MODERNA DO AUTH SERVER (SEM DEPRECATED) ---
     @Bean
@@ -185,28 +185,32 @@ public class SecurityConfig {
     @Bean
     public JWKSource<SecurityContext> jwkSource() {
         RSAKey rsaKey;
+
         if (publicKeyString != null && !publicKeyString.isBlank() &&
                 privateKeyString != null && !privateKeyString.isBlank()) {
-            try {
-                RSAPublicKey publicKey = parsePublicKey(publicKeyString);
-                RSAPrivateKey privateKey = parsePrivateKey(privateKeyString);
-                rsaKey = new RSAKey.Builder(publicKey)
-                        .privateKey(privateKey)
-                        .keyID("auth-key-id")
-                        .build();
-            } catch (Exception e) {
-                throw new IllegalStateException("Erro ao carregar chaves RSA", e);
-            }
+
+            RSAPublicKey publicKey = RsaKeyUtils.parsePublicKey(publicKeyString);
+            RSAPrivateKey privateKey = RsaKeyUtils.parsePrivateKey(privateKeyString);
+
+            rsaKey = new RSAKey.Builder(publicKey)
+                    .privateKey(privateKey)
+                    .keyID("auth-key-id")
+                    .build();
+
         } else {
-            System.out.println("⚠️ AVISO: Usando chaves RSA geradas em memória");
-            KeyPair keyPair = generateRsaKey();
+            log.warn("Usando chaves RSA geradas em memória");
+
+            KeyPair keyPair = RsaKeyUtils.generateKeyPair();
+
             RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
             RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+
             rsaKey = new RSAKey.Builder(publicKey)
                     .privateKey(privateKey)
                     .keyID(UUID.randomUUID().toString())
                     .build();
         }
+
         JWKSet jwkSet = new JWKSet(rsaKey);
         return new ImmutableJWKSet<>(jwkSet);
     }
@@ -233,29 +237,4 @@ public class SecurityConfig {
         };
     }
 
-    // --- HELPERS ---
-
-    private static KeyPair generateRsaKey() {
-        KeyPair keyPair;
-        try {
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-            keyPairGenerator.initialize(2048);
-            keyPair = keyPairGenerator.generateKeyPair();
-        } catch (Exception ex) {
-            throw new IllegalStateException(ex);
-        }
-        return keyPair;
-    }
-
-    private RSAPublicKey parsePublicKey(String key) throws Exception {
-        byte[] decoded = Base64.getDecoder().decode(key);
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        return (RSAPublicKey) keyFactory.generatePublic(new X509EncodedKeySpec(decoded));
-    }
-
-    private RSAPrivateKey parsePrivateKey(String key) throws Exception {
-        byte[] decoded = Base64.getDecoder().decode(key);
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        return (RSAPrivateKey) keyFactory.generatePrivate(new PKCS8EncodedKeySpec(decoded));
-    }
 }

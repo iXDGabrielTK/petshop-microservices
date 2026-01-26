@@ -1,5 +1,6 @@
 package gateway.config;
 
+import common.security.RsaKeyUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,12 +13,9 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
-
-import java.security.KeyFactory;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
-import java.util.Base64;
+
 
 @Configuration
 @EnableWebFluxSecurity
@@ -46,8 +44,8 @@ public class GatewaySecurityConfig {
                 .authorizeExchange(exchanges -> exchanges
 
                         .pathMatchers(HttpMethod.POST, "/usuarios/login", "/usuarios/register").permitAll()
-                        .pathMatchers("/usuarios/**", "/oauth2/**").permitAll()
-                        .pathMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        .pathMatchers("/usuarios/**", "/oauth2/**", "/vendas/**", "/produtos/**").permitAll()
+                        .pathMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**").permitAll()
                         .pathMatchers("/actuator/**").permitAll()
 
                         .anyExchange().authenticated()
@@ -61,14 +59,8 @@ public class GatewaySecurityConfig {
 
     @Bean
     public ReactiveJwtDecoder jwtDecoder() {
-        try {
-            byte[] decoded = Base64.getDecoder().decode(publicKeyString);
-            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-            RSAPublicKey publicKey = (RSAPublicKey) keyFactory.generatePublic(new X509EncodedKeySpec(decoded));
-            return NimbusReactiveJwtDecoder.withPublicKey(publicKey).build();
-        } catch (Exception e) {
-            throw new IllegalStateException("Erro ao configurar decodificador JWT no Gateway", e);
-        }
+        RSAPublicKey publicKey = RsaKeyUtils.parsePublicKey(publicKeyString);
+        return NimbusReactiveJwtDecoder.withPublicKey(publicKey).build();
     }
 
     @Bean
