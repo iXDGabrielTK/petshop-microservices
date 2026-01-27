@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.HtmlUtils;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.net.URI;
 import java.util.List;
@@ -23,6 +24,7 @@ public class ProdutoController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('SCOPE_pets:write') and hasRole('ADMIN')") // <--- TRAVA DE SEGURANÇA
     public ResponseEntity<ProdutoResponse> criar(
             @RequestBody @Valid ProdutoRequest request) {
 
