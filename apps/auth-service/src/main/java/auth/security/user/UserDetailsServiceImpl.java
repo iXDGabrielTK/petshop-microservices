@@ -2,8 +2,9 @@ package auth.security.user;
 
 import auth.model.Usuario;
 import auth.repository.UsuarioRepository;
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import org.jspecify.annotations.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -23,6 +24,8 @@ import java.util.stream.Collectors;
 public class UserDetailsServiceImpl implements UserDetailsService {
 
     private final UsuarioRepository usuarioRepository;
+
+    private final Logger logger = LoggerFactory.getLogger(UserDetailsServiceImpl.class);
 
     public UserDetailsServiceImpl(UsuarioRepository usuarioRepository) {
         this.usuarioRepository = usuarioRepository;
@@ -58,12 +61,12 @@ public class UserDetailsServiceImpl implements UserDetailsService {
     private Collection<? extends GrantedAuthority> getAuthorities(Usuario usuario) {
         var authorities = usuario.getRoles().stream()
                 .map(role -> {
-                    System.out.println("Atribuindo papel: " + role.getNome());
+                    logger.info("Atribuindo papel: {}", role.getNome());
                     return new SimpleGrantedAuthority("ROLE_" + role.getNome());
                 })
                 .collect(Collectors.toList());
 
-        System.out.println("Authorities finais: " + authorities);
+        logger.debug("Authorities finais: {}", authorities);
         return authorities;
     }
 

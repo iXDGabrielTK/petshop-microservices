@@ -116,18 +116,18 @@ public class RabbitMQConfig {
             if (t instanceof ListenerExecutionFailedException && causaReal != null) {
 
                 if (causaReal instanceof IllegalArgumentException) {
-                    System.err.println("❌ Erro Fatal (Dados Inválidos): " + causaReal.getMessage());
+                    logger.error("Erro Fatal no Listener (IllegalArgumentException): " + causaReal.getMessage());
                     return true;
                 }
 
                 if (causaReal instanceof NullPointerException) {
-                    System.err.println("❌ Erro Fatal (Bug de Código): " + causaReal.getMessage());
+                    logger.error("Erro Fatal no Listener (NullPointerException): " + causaReal.getMessage());
                     return true;
                 }
 
             }
 
-            System.out.println("⚠️ Erro Temporário (Vai tentar de novo): " + t.getMessage());
+            logger.error("Erro Temporário no Listener: " + t.getMessage());
             return false;
         }
     }

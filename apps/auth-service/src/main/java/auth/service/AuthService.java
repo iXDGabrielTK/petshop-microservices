@@ -16,10 +16,13 @@ import org.springframework.stereotype.Service;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.logging.Logger;
 
 @Service
 @Slf4j
 public class AuthService {
+
+    Logger logger = Logger.getLogger(AuthService.class.getName());
 
     private final UsuarioRepository usuarioRepository;
     private final auth.repository.PasswordResetTokenRepository tokenRepository;
@@ -102,8 +105,7 @@ public class AuthService {
                 RabbitMQConfig.ROUTING_KEY,
                 message
         );
-
-        System.out.println("🐇 Mensagem enviada para RabbitMQ: " + usuario.getEmail());
+        logger.info("🐇 Mensagem enviada para RabbitMQ: " + usuario.getEmail());
     }
 
     /**

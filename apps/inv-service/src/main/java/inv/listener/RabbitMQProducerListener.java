@@ -1,27 +1,42 @@
 package inv.listener;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import inv.config.RabbitMQConfig;
 import inv.event.EstoqueAtingiuMinimoEvent;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import inv.model.Outbox;
+import inv.repository.OutboxRepository;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
+
+import java.time.LocalDateTime;
 
 @Component
 public class RabbitMQProducerListener {
 
-    private final RabbitTemplate rabbitTemplate;
+    private final OutboxRepository outboxRepository;
+    private final ObjectMapper objectMapper;
 
-    public RabbitMQProducerListener(RabbitTemplate rabbitTemplate) {
-        this.rabbitTemplate = rabbitTemplate;
+    public RabbitMQProducerListener(OutboxRepository outboxRepository, ObjectMapper objectMapper) {
+        this.outboxRepository = outboxRepository;
+        this.objectMapper = objectMapper;
     }
 
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @EventListener
     public void onEstoqueBaixo(EstoqueAtingiuMinimoEvent event) {
-        rabbitTemplate.convertAndSend(
-                RabbitMQConfig.EXCHANGE_NAME,
-                RabbitMQConfig.ROUTING_KEY_LOW_STOCK,
-                event.payload()
-        );
+        try {
+            String jsonPayload = objectMapper.writeValueAsString(event.payload());
+
+            Outbox outbox = new Outbox();
+            outbox.setExchange(RabbitMQConfig.EXCHANGE_NAME);
+            outbox.setRoutingKey(RabbitMQConfig.ROUTING_KEY_LOW_STOCK);
+            outbox.setPayload(jsonPayload);
+            outbox.setEventType(event.payload().getClass().getName());
+            outbox.setCreatedAt(LocalDateTime.now());
+
+            outboxRepository.save(outbox);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Erro ao persistir evento no Outbox", e);
+        }
     }
 }

@@ -4,6 +4,7 @@ import auth.model.Role;
 import auth.model.Usuario;
 import auth.repository.RoleRepository;
 import auth.repository.UsuarioRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +23,12 @@ import java.util.UUID;
 
 @Configuration
 public class InitialSeedConfig {
+
+    @Value("${initial.client.secret}")
+    private String initialClientSecret;
+
+    @Value("${initial.admin.password}") // Valor padrão apenas para DEV
+    private String initialAdminPassword;
 
     @Bean
     public CommandLineRunner run(RegisteredClientRepository clientRepository,
@@ -61,16 +68,16 @@ public class InitialSeedConfig {
                 System.out.println("✅ Cliente OAuth2 'petshop-client' Público criado.");
             }
 
-            Usuario admin = usuarioRepository.findByEmail("admin@petshop.com")
+            Usuario admin = usuarioRepository.findByEmail(initialClientSecret)
                     .orElse(new Usuario());
 
             Role roleAdmin = roleRepository.findByNome("ADMIN")
                     .orElseGet(() -> roleRepository.save(new Role(null, "ADMIN")));
 
             admin.setNome("Administrador");
-            admin.setEmail("admin@petshop.com");
+            admin.setEmail(initialClientSecret);
             if (admin.getId() == null) {
-                admin.setSenha(passwordEncoder.encode("Senha!foda123456"));
+                admin.setSenha(passwordEncoder.encode(initialAdminPassword));
             }
             admin.setRoles(Collections.singleton(roleAdmin));
 

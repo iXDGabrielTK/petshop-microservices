@@ -10,11 +10,14 @@ import lombok.Setter;
 @Data
 public class RegisterRequest {
     @NotBlank
+    @Size(min = 3, max = 100, message = "O nome deve ter entre 3 e 100 caracteres")
+    @Pattern(regexp = "^[^<>]*$", message = "O nome não pode conter caracteres especiais como < ou >")
     private String nome;
 
     @NotBlank(message = "Email é obrigatório")
     @Email(message = "Email deve ser válido")
     @Size(max = 255, message = "Email não pode exceder 255 caracteres")
+    @Pattern(regexp = "^[^<>]*$", message = "O email não pode conter caracteres especiais como < ou >")
     private String email;
 
     @Setter

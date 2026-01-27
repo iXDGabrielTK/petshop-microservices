@@ -176,12 +176,21 @@ Responsável pelo core business (regras de negócio).
     * **Preencha o arquivo:**
     ```env
     # .env (Exemplo)
-    DB_HOST=postgres
-    DB_PORT=5432
-    DB_USER=postgres
-    DB_PASS=admin
-    DB_NAME=auth_db
    
+    # Configurações do Banco AUTH
+    DB_HOST_AUTH=postgres-auth
+    DB_PORT_AUTH=5432
+    DB_NAME_AUTH=petshop_auth
+    DB_USER_AUTH=postgres
+    DB_PASS_AUTH=postgres
+    
+    # Configurações do Banco INV
+    DB_HOST_INV=postgres-inv
+    DB_PORT_INV=5432
+    DB_NAME_INV=postgres-inv
+    DB_USER_INV=postgres
+    DB_PASS_INV=postgres
+
     # RabbitMQ
     RABBITMQ_DEFAULT_USER=guest
     RABBITMQ_DEFAULT_PASS=guest
@@ -203,6 +212,20 @@ Responsável pelo core business (regras de negócio).
     # Outras Configurações
     SERVER_FORWARD_HEADERS_STRATEGY=native
     GRAFANA_ADMIN_PASSWORD=admin
+   
+    # Cors Config
+    CORS_ALLOWED_ORIGINS=http://localhost:3000
+    CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS
+    CORS_ALLOWED_HEADERS=Authorization,Content-Type
+    CORS_ALLOW_CREDENTIALS=true
+
+    # Frontend URLs
+    FRONTEND_BASE_URL=http://localhost:3000
+    FRONTEND_DASHBOARD_URL=http://localhost:3000/dashboard
+   
+    # Segurança do Seed (Injeção de Dependência)
+    INITIAL_CLIENT_SECRET=secret123
+    INITIAL_ADMIN_PASSWORD=admin123
     ```
 4. **Suba os containers:**
     Na raiz do projeto (onde está o `docker-compose.yml`):

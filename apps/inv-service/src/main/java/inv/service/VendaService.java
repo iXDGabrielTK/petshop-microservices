@@ -42,6 +42,7 @@ public class VendaService {
 
     @Transactional
     public ReciboResponse realizarVenda(VendaRequest pedido) {
+        // 1. Buscar produtos para validar existência e pegar dados (preço, nome)
         Set<Long> idsProdutos = pedido.itens().stream()
                 .map(ItemVendaRequest::produtoId)
                 .collect(Collectors.toSet());
@@ -61,15 +62,23 @@ public class VendaService {
 
         LocalDateTime agora = LocalDateTime.now();
 
+        // 2. Processar cada item
         for (ItemVendaRequest item : pedido.itens()) {
             Produto produto = mapaProdutos.get(item.produtoId());
 
-            if (produto.getQuantidadeEstoque().compareTo(item.quantidade()) < 0) {
-                throw new BusinessException("Estoque insuficiente para: " + produto.getNome());
+            // Tenta decrementar diretamente no banco.
+            // O banco aplica lock na linha durante o update e garante a condição (estoque >= qtd).
+            int linhasAfetadas = produtoRepository.decrementarEstoque(produto.getId(), item.quantidade());
+
+            if (linhasAfetadas == 0) {
+                // Se 0, significa que o WHERE (estoque >= qtd) falhou.
+                throw new BusinessException("Estoque insuficiente (concorrência detectada) para: " + produto.getNome());
             }
 
-            produto.setQuantidadeEstoque(produto.getQuantidadeEstoque().subtract(item.quantidade()));
+            // Calculamos o novo saldo apenas para lógica de alerta (já que o estoque real já foi atualizado no banco)
+            BigDecimal novoSaldoEstimado = produto.getQuantidadeEstoque().subtract(item.quantidade());
 
+            // Registrar Movimentação
             MovimentacaoEstoque mov = new MovimentacaoEstoque();
             mov.setProduto(produto);
             mov.setTipo(TipoMovimentacao.SAIDA);
@@ -78,20 +87,23 @@ public class VendaService {
             mov.setMotivo("Venda PDV");
             movimentacoes.add(mov);
 
+            // Verificar Estoque Mínimo com o valor calculado
             if (produto.getEstoqueMinimo() != null &&
-                    produto.getQuantidadeEstoque().compareTo(produto.getEstoqueMinimo()) <= 0) {
+                    novoSaldoEstimado.compareTo(produto.getEstoqueMinimo()) <= 0) {
                 alertasParaPublicar.add(new EstoqueBaixoMessage(
                         produto.getNome(),
-                        produto.getQuantidadeEstoque(),
+                        novoSaldoEstimado,
                         produto.getEstoqueMinimo()
                 ));
             }
+
             valorTotal = valorTotal.add(produto.getPrecoVenda().multiply(item.quantidade()));
         }
 
-        produtoRepository.saveAll(produtosEncontrados);
+        // 3. Salvar apenas as movimentações
         movimentacaoRepository.saveAll(movimentacoes);
 
+        // 4. Publicar eventos
         alertasParaPublicar.forEach(msg -> eventPublisher.publishEvent(new EstoqueAtingiuMinimoEvent(msg)));
 
         return new ReciboResponse("Venda realizada com sucesso!", valorTotal, LocalDateTime.now());

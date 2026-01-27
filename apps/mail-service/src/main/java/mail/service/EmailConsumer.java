@@ -2,6 +2,8 @@ package mail.service;
 
 import mail.message.EstoqueBaixoMessage;
 import mail.message.PasswordResetMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
@@ -14,6 +16,9 @@ public class EmailConsumer {
     @Value("${frontend.base-url}")
     private String frontendBaseUrl;
 
+    private final Logger logger = LoggerFactory.getLogger(EmailConsumer.class);
+
+
     private final JavaMailSender mailSender;
 
     public EmailConsumer(JavaMailSender mailSender) {
@@ -22,12 +27,12 @@ public class EmailConsumer {
 
     @RabbitListener(queues = mail.config.RabbitMQConfig.QUEUE_NAME)
     public void receivePasswordResetMessage(PasswordResetMessage message) {
-        System.out.println("📨 Recebido pedido de reset para: " + message.getEmail());
+        logger.info("Recebido pedido de reset para: {}", message.getEmail());
 
         try {
             sendEmail(message);
         } catch (Exception e) {
-            System.err.println("❌ Erro ao enviar email: " + e.getMessage());
+            logger.error("Erro ao enviar email de redefinição de senha: {}", e.getMessage());
             throw e;
         }
     }
@@ -56,12 +61,12 @@ public class EmailConsumer {
         email.setText(texto);
 
         mailSender.send(email);
-        System.out.println("✅ Email enviado com sucesso!");
+        logger.info("Email enviado com sucesso!");
     }
 
     @RabbitListener(queues = mail.config.RabbitMQConfig.LOW_STOCK_QUEUE)
     public void receiveLowStockMessage(EstoqueBaixoMessage message) {
-        System.out.println("📉 Alerta recebido: " + message.nomeProduto());
+        logger.info("Recebido pedido de estoque: {}", message.nomeProduto());
 
         SimpleMailMessage email = new SimpleMailMessage();
         email.setTo("admin@petshop.com");
@@ -85,9 +90,10 @@ public class EmailConsumer {
 
         try {
             mailSender.send(email);
-            System.out.println("📧 E-mail de alerta enviado!");
+            logger.info("Email de estoque baixo enviado com sucesso!");
         } catch (Exception e) {
-            System.err.println("Erro ao enviar email de estoque: " + e.getMessage());
+            logger.error("❌ Falha ao enviar email de estoque (Tentando novamente...): ", e);
+            throw e;
         }
     }
 }
