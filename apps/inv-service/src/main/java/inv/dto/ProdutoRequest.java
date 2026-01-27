@@ -9,7 +9,10 @@ public record ProdutoRequest(
 
         @NotBlank(message = "O nome do produto é obrigatório")
         @Size(max = 255)
-        @Pattern(regexp = "^[^<>]*$")
+        @Pattern(
+                regexp = "^[^<>{}]*$",
+                message = "HTML não é permitido neste campo"
+        )
         String nome,
 
         @NotNull(message = "A unidade de medida é obrigatória (UN ou KG)")

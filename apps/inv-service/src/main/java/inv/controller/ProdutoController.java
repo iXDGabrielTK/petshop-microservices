@@ -24,7 +24,7 @@ public class ProdutoController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('SCOPE_pets:write') and hasRole('ADMIN')") // <--- TRAVA DE SEGURANÇA
+    @PreAuthorize("hasAuthority('SCOPE_pets:write') and hasRole('ADMIN')")
     public ResponseEntity<ProdutoResponse> criar(
             @RequestBody @Valid ProdutoRequest request) {
 

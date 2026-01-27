@@ -64,7 +64,6 @@ public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
-    // --- 1. CONFIGURAÇÃO MODERNA DO AUTH SERVER (SEM DEPRECATED) ---
     @Bean
     @Order(1)
     public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {

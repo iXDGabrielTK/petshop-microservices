@@ -41,6 +41,19 @@ public class GatewaySecurityConfig {
         http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp
+                                .policyDirectives(
+                                        "default-src 'self'; " +
+                                                "script-src 'self'; " +
+                                                "style-src 'self'; " +
+                                                "img-src 'self' data:; " +
+                                                "object-src 'none'; " +
+                                                "base-uri 'self'; " +
+                                                "frame-ancestors 'none'"
+                                )
+                        )
+                )
                 .authorizeExchange(exchanges -> exchanges
 
                         .pathMatchers(HttpMethod.POST, "/usuarios/login", "/usuarios/register").permitAll()
