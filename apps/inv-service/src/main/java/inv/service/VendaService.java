@@ -9,7 +9,6 @@ import inv.dto.VendaRequest;
 import inv.event.EstoqueAtingiuMinimoEvent;
 import inv.model.MovimentacaoEstoque;
 import inv.model.Produto;
-import inv.model.TipoMovimentacao;
 import inv.repository.MovimentacaoRepository;
 import inv.repository.ProdutoRepository;
 import org.springframework.context.ApplicationEventPublisher;
@@ -60,40 +59,34 @@ public class VendaService {
         List<EstoqueBaixoMessage> alertasParaPublicar = new ArrayList<>();
         BigDecimal valorTotal = BigDecimal.ZERO;
 
-        LocalDateTime agora = LocalDateTime.now();
-
         // 2. Processar cada item
         for (ItemVendaRequest item : pedido.itens()) {
             Produto produto = mapaProdutos.get(item.produtoId());
+            BigDecimal estoqueMinimo = produto.getEstoqueMinimo();
 
-            // Tenta decrementar diretamente no banco.
-            // O banco aplica lock na linha durante o update e garante a condição (estoque >= qtd).
-            int linhasAfetadas = produtoRepository.decrementarEstoque(produto.getId(), item.quantidade());
+            // 1. Operação Atômica no Banco
+            // Se não tiver estoque, isso retorna NULL
+            BigDecimal novoSaldoReal = produtoRepository.decrementarEretornarSaldo(produto.getId(), item.quantidade());
 
-            if (linhasAfetadas == 0) {
-                // Se 0, significa que o WHERE (estoque >= qtd) falhou.
-                throw new BusinessException("Estoque insuficiente (concorrência detectada) para: " + produto.getNome());
+            // 2. Validação de Estoque
+            if (novoSaldoReal == null) {
+                throw new BusinessException("Estoque insuficiente (concorrência) para: " + produto.getNome());
             }
 
-            // Calculamos o novo saldo apenas para lógica de alerta (já que o estoque real já foi atualizado no banco)
-            BigDecimal novoSaldoEstimado = produto.getQuantidadeEstoque().subtract(item.quantidade());
+            // 3. Engenharia Reversa (Micro-Otimização)
+            // Agora que sabemos que não é null, podemos calcular quanto TINHA no banco antes desse update exato.
+            BigDecimal saldoAnteriorCalculado = novoSaldoReal.add(item.quantidade());
 
-            // Registrar Movimentação
-            MovimentacaoEstoque mov = new MovimentacaoEstoque();
-            mov.setProduto(produto);
-            mov.setTipo(TipoMovimentacao.SAIDA);
-            mov.setQuantidade(item.quantidade());
-            mov.setDataHora(agora);
-            mov.setMotivo("Venda PDV");
-            movimentacoes.add(mov);
+            // 4. Atualiza o objeto em memória (para Nota Fiscal/Recibo)
+            produto.setQuantidadeEstoque(novoSaldoReal);
 
-            // Verificar Estoque Mínimo com o valor calculado
-            if (produto.getEstoqueMinimo() != null &&
-                    novoSaldoEstimado.compareTo(produto.getEstoqueMinimo()) <= 0) {
+            // 5. Lógica de Alerta (Usando o valor CALCULADO, não o da memória)
+            // Usamos saldoAnteriorCalculado aqui para garantir que só dispara se ESTA thread cruzou a linha
+            if (estoqueMinimo != null && cruzouLimite(saldoAnteriorCalculado, novoSaldoReal, estoqueMinimo)) {
                 alertasParaPublicar.add(new EstoqueBaixoMessage(
                         produto.getNome(),
-                        novoSaldoEstimado,
-                        produto.getEstoqueMinimo()
+                        novoSaldoReal,
+                        estoqueMinimo
                 ));
             }
 
@@ -107,5 +100,13 @@ public class VendaService {
         alertasParaPublicar.forEach(msg -> eventPublisher.publishEvent(new EstoqueAtingiuMinimoEvent(msg)));
 
         return new ReciboResponse("Venda realizada com sucesso!", valorTotal, LocalDateTime.now());
+    }
+
+    /**
+     * Verifica se houve uma TRANSIÇÃO de estado:
+     * Antes estava confortável (> min) E agora ficou crítico (<= min).
+     */
+    private boolean cruzouLimite(BigDecimal antes, BigDecimal depois, BigDecimal limite) {
+        return antes.compareTo(limite) > 0 && depois.compareTo(limite) <= 0;
     }
 }

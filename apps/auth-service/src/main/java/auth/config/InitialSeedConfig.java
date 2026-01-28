@@ -24,10 +24,10 @@ import java.util.UUID;
 @Configuration
 public class InitialSeedConfig {
 
-    @Value("${initial.client.secret}")
-    private String initialClientSecret;
+    @Value("${initial.admin.email}")
+    private String initialAdminEmail;
 
-    @Value("${initial.admin.password}") // Valor padrão apenas para DEV
+    @Value("${initial.admin.password}")
     private String initialAdminPassword;
 
     @Bean
@@ -68,14 +68,14 @@ public class InitialSeedConfig {
                 System.out.println("✅ Cliente OAuth2 'petshop-client' Público criado.");
             }
 
-            Usuario admin = usuarioRepository.findByEmail(initialClientSecret)
+            Usuario admin = usuarioRepository.findByEmail(initialAdminEmail)
                     .orElse(new Usuario());
 
             Role roleAdmin = roleRepository.findByNome("ADMIN")
                     .orElseGet(() -> roleRepository.save(new Role(null, "ADMIN")));
 
             admin.setNome("Administrador");
-            admin.setEmail(initialClientSecret);
+            admin.setEmail(initialAdminEmail);
             if (admin.getId() == null) {
                 admin.setSenha(passwordEncoder.encode(initialAdminPassword));
             }

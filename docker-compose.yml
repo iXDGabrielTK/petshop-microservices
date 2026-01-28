@@ -41,6 +41,18 @@ services:
     networks:
       - pet-network
 
+  # Banco específico para rodar os testes de integração sem apagar seus dados
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: postgres-test
+    ports:
+      - "5435:5432" # Porta 5433 para não bater com o banco oficial na 5432
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: usuario
+      POSTGRES_PASSWORD: senha
+    restart: always
+
   # --- MESSAGE BROKER (RabbitMQ) ---
   rabbitmq:
     image: rabbitmq:3-management
@@ -86,7 +98,7 @@ services:
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
       - SERVER_FORWARD_HEADERS_STRATEGY=${SERVER_FORWARD_HEADERS_STRATEGY}
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
-      - INITIAL_CLIENT_SECRET=${INITIAL_CLIENT_SECRET}
+      - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
     networks:
       - pet-network
@@ -108,6 +120,7 @@ services:
       - MAILTRAP_USER=${MAILTRAP_USER}
       - MAILTRAP_PASS=${MAILTRAP_PASS}
       - FRONTEND_DASHBOARD_URL=${FRONTEND_DASHBOARD_URL}
+      - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}
     networks:
       - pet-network
 

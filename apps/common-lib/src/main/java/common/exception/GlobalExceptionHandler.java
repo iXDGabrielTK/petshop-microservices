@@ -36,7 +36,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     // 1. Erro Genérico (500)
     @ExceptionHandler(Exception.class)
     ProblemDetail handleGeneralException(Exception ex) {
-        log.error("Erro interno não tratado capturado pelo GlobalHandler:", ex);
+        log.error("Erro interno não tratado capturado pelo GlobalHandler: {}", ex.getMessage());
         return buildProblemDetail(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 ex.getMessage(),

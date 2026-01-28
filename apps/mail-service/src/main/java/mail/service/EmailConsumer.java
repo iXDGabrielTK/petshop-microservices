@@ -16,6 +16,9 @@ public class EmailConsumer {
     @Value("${frontend.base-url}")
     private String frontendBaseUrl;
 
+    @Value("${initial.admin.email}")
+    private String adminEmail;
+
     private final Logger logger = LoggerFactory.getLogger(EmailConsumer.class);
 
 
@@ -69,7 +72,7 @@ public class EmailConsumer {
         logger.info("Recebido pedido de estoque: {}", message.nomeProduto());
 
         SimpleMailMessage email = new SimpleMailMessage();
-        email.setTo("admin@petshop.com");
+        email.setTo(adminEmail);
         email.setSubject("ALERTA: Estoque Baixo - " + message.nomeProduto());
 
         String texto = String.format("""

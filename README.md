@@ -59,7 +59,7 @@ graph LR
 ## 🚀 Tecnologias & Patterns
 * **Core:** Java 21, Spring Boot 3.4.1.
 
-* **API Gateway:** Spring Cloud Gateway, Rate Limiting (Redis) e Roteamento Dinâmico..
+* **API Gateway:** Spring Cloud Gateway, Rate Limiting (Redis) e Roteamento Dinâmico.
 
 * **Mensageria:** RabbitMQ (AMQP), Topic Exchange.
   * **Padrão:** Transactional Outbox Pattern (adaptado com Transactional Listeners).
@@ -72,24 +72,21 @@ graph LR
 * **Observabilidade:** 
   * **Métricas:** Prometheus e Grafana.
   * **Logs:** Grafana Loki, Promtail e Logback Async Appender (Non-blocking I/O).
-* **Persistência:** 
-  * **Banco de Dados:** PostgreSQL 15.
-
-  * **ORM:** Hibernate (com otimizações de Batch).
-
-  * **Migrações:** Flyway (Versionamento de Schema).
+* **Persistência:**
+    * **Banco de Dados:** PostgreSQL 15.
+    * **Advanced SQL:** Uso de features nativas como `SKIP LOCKED` e `RETURNING` para controle de concorrência.
+    * **ORM:** Hibernate (com otimizações de Batch).
+    * **Migrações:** Flyway.
   
 * **Infraestrutura:** Docker, Docker Compose.
 
 * **Qualidade & Docs:** Swagger/OpenAPI, Sanitização XSS.
 
-### ⚡ Destaques de Engenharia (High Performance)
-* **Virtual Threads (Project Loom):** O sistema roda sobre o novo modelo de concorrência leve do Java 21, maximizando o throughput de I/O.
-
-* **Event-Driven Consistency:** Garantia de integridade atômica entre Banco de Dados e RabbitMQ usando `@TransactionalEventListener`.
-
-* **Database Optimization:** Eliminação de queries N+1 e implementação de Batch Inserts para processamento de vendas em larga escala.
-
+### ⚡ Destaques de Engenharia (High Performance & Concurrency)
+* **Zero-Lock Distributed Outbox:** Implementação avançada do *Outbox Pattern* utilizando `SELECT ... FOR UPDATE SKIP LOCKED` (PostgreSQL). Isso permite que múltiplas instâncias do microsserviço processem eventos simultaneamente sem *race conditions* ou bloqueios de tabela.
+* **Atomic Inventory Management:** Eliminação total de *race conditions* na baixa de estoque. Utiliza `UPDATE ... RETURNING` para garantir consistência atômica e performance máxima, evitando o anti-pattern "Read-Modify-Write".
+* **Event-Driven Anti-Spam:** Lógica inteligente de detecção de transição de estado (`cruzouLimite`), garantindo que alertas de estoque baixo sejam disparados apenas uma vez no momento exato da quebra de limite, mesmo sob alta concorrência.
+* **Virtual Threads (Project Loom):** O sistema roda sobre o novo modelo de concorrência leve do Java 21.
 ---
 
 ## 🏛️ Arquitetura dos Serviços
@@ -104,8 +101,7 @@ graph LR
 
   * **Roteamento:** Direciona /usuarios para o Auth Service e /swagger-ui para documentação.
 
-  * **Segurança:** Filtros globais de header e proteção de rotas.
-
+  * **Segurança:** Filtros globais de header, roteamento OAuth2 estrito (rota de login legada removida para forçar fluxo OIDC) e Rate Limiting via Redis.
 ### 2. 🔐 Auth Service (Rodando)
 O coração da segurança. Não é apenas uma API de usuários, mas um servidor OAuth2 completo.
 * **Porta:** `8081`
@@ -142,7 +138,15 @@ Stack completa de monitoramento rodando em containers.
 
 * **Loki:** Agregador de Logs centralizado.
 
-### 6. 🐾 Pet Service (Próximo Passo)
+### 6. 📦 Inventory Service (Core)
+Responsável pelo controle de estoque e vendas de alta performance.
+* **Porta:** `8083`
+* **Features:**
+    * Baixa de estoque atômica (Concurrency-Safe).
+    * Processamento de eventos distribuído (Outbox Pattern com Skip Locked).
+    * Alertas de estoque em tempo real via RabbitMQ.
+  
+### 7. 🐾 Pet Service (Próximo Passo)
 Responsável pelo core business (regras de negócio).
 * **Porta:** `8082` (Previsto)
 * **Funcionalidades:** Cadastro de pets, agendamento de serviços (banho/tosa).
@@ -224,7 +228,7 @@ Responsável pelo core business (regras de negócio).
     FRONTEND_DASHBOARD_URL=http://localhost:3000/dashboard
    
     # Segurança do Seed (Injeção de Dependência)
-    INITIAL_CLIENT_SECRET=secret123
+    INITIAL_ADMIN_EMAIL=admin@petshop.com
     INITIAL_ADMIN_PASSWORD=admin123
     ```
 4. **Suba os containers:**
@@ -455,6 +459,12 @@ Para visualizar os dados, importe os seguintes IDs no Grafana:
 
 ---
 
+## 🧪 Qualidade e Testes
+O projeto inclui testes de integração focados em concorrência:
+* **OutboxConcurrencyManualRunner:** Simula múltiplas threads competindo pelo processamento da fila Outbox para garantir *Thread Safety* e ausência de *Deadlocks*.
+* **VendaServiceTest:** Valida a lógica de negócios e o disparo correto de eventos de domínio.
+---
+
 ## 🗺️ Roadmap (Próximos Passos)
 
 * [x] Auth Service: Login, Registro, JWT, Refresh Token, Logout.
@@ -474,8 +484,9 @@ Para visualizar os dados, importe os seguintes IDs no Grafana:
 
 * [x] Inventory Service:
     * [x] Catálogo de Produtos e Controle de Estoque.
-    * [x] Motor de Vendas com baixa atômica e validação de concorrência.
-    * [x] Alertas automáticos de estoque baixo via RabbitMQ e E-mail.
+    * [x] Motor de Vendas com baixa atômica (`UPDATE ... RETURNING`).
+    * [x] Alertas automáticos com lógica Anti-Spam.
+    * [x] Testes de Concorrência Extrema (Multi-threaded).
 * [ ] Pet Service: CRUD de Pets e vínculo com usuário logado.
 
 * [ ] Agendamento: Lógica de horários para Banho e Tosa.
