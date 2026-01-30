@@ -39,6 +39,8 @@ public class GatewaySecurityConfig {
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         http
+                // CSRF protection is disabled because this API is stateless and uses JWT (Bearer) authentication.
+                // It does not rely on browser session cookies, making it immune to CSRF attacks.
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .headers(headers -> headers
