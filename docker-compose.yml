@@ -41,12 +41,33 @@ services:
     networks:
       - pet-network
 
+    # --- BANCO DE DADOS 3 MAIL (PostgreSQL) ---
+  postgres-mail:
+    image: postgres:15-alpine
+    container_name: mail_db
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER_MAIL}
+      - POSTGRES_PASSWORD=${DB_PASS_MAIL}
+      - POSTGRES_DB=${DB_NAME_MAIL}
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_mail_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pet-network
+
   # Banco específico para rodar os testes de integração sem apagar seus dados
   postgres-test:
     image: postgres:15-alpine
     container_name: postgres-test
     ports:
-      - "5435:5432" # Porta 5433 para não bater com o banco oficial na 5432
+      - "5436:5432"
     environment:
       POSTGRES_DB: testdb
       POSTGRES_USER: usuario
@@ -100,6 +121,9 @@ services:
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
       - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
+      - CORS_ALLOWED_METHODS=${CORS_ALLOWED_METHODS}
+      - CORS_ALLOWED_HEADERS=${CORS_ALLOWED_HEADERS}
+      - CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS}
     networks:
       - pet-network
 
@@ -113,6 +137,11 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      - DB_HOST=${DB_HOST_MAIL}
+      - DB_PORT=${DB_PORT_MAIL}
+      - DB_NAME=${DB_NAME_MAIL}
+      - DB_USER=${DB_USER_MAIL}
+      - DB_PASS=${DB_PASS_MAIL}
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
       - MAILTRAP_HOST=${MAILTRAP_HOST}
@@ -132,7 +161,7 @@ services:
       - "8083:8083"
     depends_on:
       postgres-inv:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DB_HOST=${DB_HOST_INV}
       - DB_PORT=${DB_PORT_INV}
@@ -154,6 +183,7 @@ services:
       - auth-service
       - redis
     environment:
+      - SPRING_DOCKER_COMPOSE_ENABLED=false
       - SPRING_DATA_REDIS_HOST=${SPRING_DATA_REDIS_HOST}
       - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
       - jWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
@@ -225,5 +255,6 @@ networks:
 
 volumes:
   postgres_auth_data:
+  postgres_mail_data:
   postgres_inv_data:
   grafana_data:

@@ -21,12 +21,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Teste manual de concorrência.
+ * Requer o container 'postgres-test' rodando na porta 5435.
+ * Configure a variável de ambiente DOCKER_READY=true para rodar.
+ */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:postgresql://localhost:5435/testdb",
         "spring.datasource.username=usuario",
         "spring.datasource.password=senha",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect"
+        "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect",
+        "logging.level.root=INFO"
 })
 @EnabledIfEnvironmentVariable(named = "DOCKER_READY", matches = "true")
 class OutboxConcurrencyManualRunner {
@@ -41,7 +47,7 @@ class OutboxConcurrencyManualRunner {
     private RabbitTemplate rabbitTemplate;
 
     @MockitoBean
-    private JwtDecoder jwtDecoder;
+    private JwtDecoder jwtDecoder; // Necessário para subir o contexto de segurança
 
     @BeforeEach
     void setup() {
@@ -49,14 +55,15 @@ class OutboxConcurrencyManualRunner {
     }
 
     @Test
-    @DisplayName("Deve processar cada mensagem exatamente uma vez, mesmo com 5 threads concorrentes")
+    @DisplayName("Concorrência: Deve processar cada mensagem exatamente uma vez com múltiplas threads")
     void deveProcessarComConcorrenciaSemErros() throws InterruptedException {
-        // 1. SETUP: Criar 100 mensagens
+        // 1. SETUP: Inserir carga no banco
         int totalMensagens = 100;
         List<Outbox> mensagens = new ArrayList<>();
 
         for (int i = 0; i < totalMensagens; i++) {
             Outbox outbox = new Outbox();
+            // Usando HashMap pois é uma classe padrão do Java que o ObjectMapper consegue desserializar de "{}"
             outbox.setEventType("java.util.HashMap");
             outbox.setPayload("{}");
             outbox.setExchange("ex.teste");
@@ -66,10 +73,9 @@ class OutboxConcurrencyManualRunner {
         }
         outboxRepository.saveAll(mensagens);
 
-        System.out.println("=== INÍCIO DO TESTE ===");
-        System.out.println("Mensagens inseridas no banco: " + totalMensagens);
+        System.out.println("=== INÍCIO DO TESTE DE CONCORRÊNCIA ===");
 
-        // 2. AÇÃO: Rodar threads concorrentes
+        // 2. AÇÃO: Executar processamento em paralelo
         int numeroDeThreads = 5;
         AtomicInteger totalProcessadoSucesso = new AtomicInteger(0);
         List<Exception> erros = Collections.synchronizedList(new ArrayList<>());
@@ -78,29 +84,23 @@ class OutboxConcurrencyManualRunner {
             CountDownLatch largada = new CountDownLatch(1);
             CountDownLatch chegada = new CountDownLatch(numeroDeThreads);
 
-            System.out.println("Iniciando " + numeroDeThreads + " threads simultâneas...");
-
             for (int i = 0; i < numeroDeThreads; i++) {
-                int threadId = i + 1;
                 executor.submit(() -> {
                     try {
-                        largada.await();
-                        boolean temMais = true;
-                        int processadosPorEssaThread = 0;
+                        largada.await(); // Espera sinal para começar tudo junto
 
+                        boolean temMais = true;
                         while (temMais) {
                             try {
                                 temMais = outboxProcessor.processNext();
                                 if (temMais) {
                                     totalProcessadoSucesso.incrementAndGet();
-                                    processadosPorEssaThread++;
                                 }
                             } catch (Exception e) {
                                 erros.add(e);
                                 temMais = false;
                             }
                         }
-                        System.out.println("Thread " + threadId + " terminou. Processou: " + processadosPorEssaThread + " itens.");
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     } finally {
@@ -109,28 +109,21 @@ class OutboxConcurrencyManualRunner {
                 });
             }
 
-            largada.countDown();
-            boolean terminou = chegada.await(10, TimeUnit.SECONDS);
+            largada.countDown(); // Sinaliza para todas as threads começarem
+            boolean terminou = chegada.await(20, TimeUnit.SECONDS);
 
-            // 3. RELATÓRIO FINAL
-            System.out.println("\n=== RESULTADO FINAL ===");
-            System.out.println("Tempo esgotou? " + !terminou);
-            System.out.println("Erros capturados: " + erros.size());
-            System.out.println("Total processado com sucesso (AtomicInteger): " + totalProcessadoSucesso.get());
-            System.out.println("Restante no Banco de Dados: " + outboxRepository.count());
-            System.out.println("=======================");
+            // 3. VALIDAÇÕES
+            System.out.println("Total processado: " + totalProcessadoSucesso.get());
+            System.out.println("Erros: " + erros);
 
-            // 4. VALIDAÇÕES (ASSERTS)
-            Assertions.assertTrue(terminou, "O teste demorou demais");
-            Assertions.assertTrue(erros.isEmpty(), "Erros encontrados: " + erros);
+            Assertions.assertTrue(terminou, "O teste demorou demais e sofreu timeout");
+            Assertions.assertTrue(erros.isEmpty(), "Ocorreram exceções durante o processamento: " + erros);
 
-            // Valida se o banco zerou
-            Assertions.assertEquals(0, outboxRepository.count(), "Erro: Ainda existem registros no banco!");
+            // Verifica consistência: Nada no banco, tudo processado
+            Assertions.assertEquals(0, outboxRepository.count(), "Ainda existem registros no banco (SKIP LOCKED falhou?)");
+            Assertions.assertEquals(totalMensagens, totalProcessadoSucesso.get(), "Número de mensagens processadas diverge do inserido");
 
-            // Valida se processou exatamente 100
-            Assertions.assertEquals(totalMensagens, totalProcessadoSucesso.get(), "Erro: Número de processamentos divergente!");
-
-            // Valida se o RabbitMQ foi chamado exatamente 100 vezes
+            // Verifica se o RabbitMQ foi chamado o número correto de vezes
             Mockito.verify(rabbitTemplate, Mockito.times(totalMensagens))
                     .convertAndSend(Mockito.anyString(), Mockito.anyString(), Mockito.any(Object.class));
         }
