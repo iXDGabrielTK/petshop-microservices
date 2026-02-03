@@ -95,6 +95,8 @@ public class AuthService {
         tokenRepository.save(token);
 
         PasswordResetMessage message = new PasswordResetMessage(
+                1,
+                UUID.randomUUID().toString(),
                 usuario.getEmail(),
                 tokenGerado,
                 usuario.getNome()
@@ -105,6 +107,7 @@ public class AuthService {
                 RabbitMQConfig.ROUTING_KEY,
                 message
         );
+
         logger.info("🐇 Mensagem enviada para RabbitMQ: " + usuario.getEmail());
     }
 

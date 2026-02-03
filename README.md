@@ -17,43 +17,61 @@ Este projeto é um sistema distribuído baseado em **microsserviços** para gere
 
 O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autenticação é desacoplada das regras de negócio.
 ```mermaid
-graph LR
-    User["User / Front-end"]
+graph TD
 
-    subgraph Docker["Ambiente Docker"]
-        direction TB
+%% --- Estilos ---
+    classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#333;
+    classDef gateway fill:#6c5ce7,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef authService fill:#0984e3,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef coreService fill:#00b894,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef consumerService fill:#e17055,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef infra fill:#2d3436,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef database fill:#fdcb6e,stroke:#333,stroke-width:2px,color:#333;
+    classDef broker fill:#d63031,stroke:#fff,stroke-width:2px,color:#fff;
 
-        Auth["Auth Service<br>(Authorization Server / IdP)<br>[Spring Authorization Server]"]
-        Gateway["API Gateway<br>(OAuth2 Resource Server)<br>[JWT + RSA]"]
-        Pet["Pet Service<br>(OAuth2 Resource Server)"]
-        Mail["Mail Service<br>(Consumer)"]
-
-        AuthDB["PostgreSQL<br>(Users, Clients, Tokens)"]
-        Redis["Redis<br>(Rate Limit)"]
-        Rabbit["RabbitMQ"]
-
-        User -- "1. Authorization Code Flow" --> Auth
-        Auth -- "2. JWT Assinado" --> User
-
-        User -- "3. Request + Bearer Token" --> Gateway
-        Gateway -- "5. Proxy / Roteamento" --> Pet
-
-        Auth -- "Evento: Reset de Senha" --> Rabbit
-        Rabbit --> Mail
-
-        Auth <--> AuthDB
-        Gateway <--> Redis
+%% --- Client Layer ---
+    subgraph ClientLayer [Client Layer]
+        User((User)):::client
+        Browser[SPA React Dashboard]:::client
     end
 
-    classDef gateway fill:#e16b16,stroke:#fff,stroke-width:2px,color:white
-    classDef auth fill:#800080,stroke:#fff,stroke-width:2px,color:white
-    classDef service fill:#2da44e,stroke:#fff,stroke-width:2px,color:white
-    classDef infra fill:#0366d6,stroke:#fff,stroke-width:2px,color:white
+%% --- Edge Layer ---
+    subgraph EdgeLayer [Edge and Security]
+        Gateway[API Gateway]:::gateway
+        Redis[(Redis Cache and Rate Limit)]:::infra
+    end
 
-    class Gateway gateway
-    class Auth auth
-    class Pet,Mail service
-    class AuthDB,Redis,Rabbit infra
+%% --- Services ---
+    subgraph ServiceLayer [Microservices Cluster]
+        Auth[Auth Service OAuth2 OIDC]:::authService
+        Inv[Inventory Service Core Domain]:::coreService
+        Mail[Mail Service Consumer]:::consumerService
+    end
+
+%% --- Data and Events ---
+    subgraph DataLayer [Persistence and Messaging]
+        AuthDB[(Auth DB Users and Roles)]:::database
+        InvDB[(Inventory DB Stock and Outbox)]:::database
+        MailDB[(Mail DB Idempotency)]:::database
+        Rabbit[RabbitMQ Event Broker]:::broker
+    end
+
+%% --- Flows ---
+    User --> Browser
+    Browser --> Gateway
+    Gateway --> Redis
+
+    Gateway --> Auth
+    Gateway --> Inv
+
+    Auth --> AuthDB
+    Inv --> InvDB
+    Mail --> MailDB
+
+    Auth -.-> Rabbit
+    Inv -.-> Rabbit
+
+    Rabbit --> Mail
 
 ```
 ## 🚀 Tecnologias & Patterns
@@ -61,9 +79,11 @@ graph LR
 
 * **API Gateway:** Spring Cloud Gateway, Rate Limiting (Redis) e Roteamento Dinâmico.
 
-* **Mensageria:** RabbitMQ (AMQP), Topic Exchange.
-  * **Padrão:** Transactional Outbox Pattern (adaptado com Transactional Listeners).
-  * **Resiliência:** Retries automáticos + Dead Letter Queues (DLQ).
+* **Mensageria & Integração:** RabbitMQ (AMQP), Topic Exchange.
+    * **Transactional Outbox Pattern:** Garantia de atomicidade entre banco e broker (ACID).
+    * **Idempotent Consumer Pattern:** Deduplicação de mensagens no consumo para garantir *exactly-once processing* lógico.
+    * **Schema Evolution:** Versionamento de eventos para garantir compatibilidade retroativa (Backward Compatibility).
+    * **Resiliência:** Retries automáticos + Dead Letter Queues (DLQ).
 * **Segurança (OAuth2):**
   * **Spring Authorization Server:** Implementação de OpenID Connect 1.0.
   * **Assinatura RSA:** Chaves assimétricas (Pública/Privada) rotacionáveis.
@@ -72,6 +92,7 @@ graph LR
 * **Observabilidade:** 
   * **Métricas:** Prometheus e Grafana.
   * **Logs:** Grafana Loki, Promtail e Logback Async Appender (Non-blocking I/O).
+  * **Tracing:** Rastreabilidade distribuída via `eventId`.
 * **Persistência:**
     * **Banco de Dados:** PostgreSQL 15.
     * **Advanced SQL:** Uso de features nativas como `SKIP LOCKED` e `RETURNING` para controle de concorrência.
@@ -82,11 +103,12 @@ graph LR
 
 * **Qualidade & Docs:** Swagger/OpenAPI, Sanitização XSS.
 
-### ⚡ Destaques de Engenharia (High Performance & Concurrency)
-* **Zero-Lock Distributed Outbox:** Implementação avançada do *Outbox Pattern* utilizando `SELECT ... FOR UPDATE SKIP LOCKED` (PostgreSQL). Isso permite que múltiplas instâncias do microsserviço processem eventos simultaneamente sem *race conditions* ou bloqueios de tabela.
-* **Atomic Inventory Management:** Eliminação total de *race conditions* na baixa de estoque. Utiliza `UPDATE ... RETURNING` para garantir consistência atômica e performance máxima, evitando o anti-pattern "Read-Modify-Write".
-* **Event-Driven Anti-Spam:** Lógica inteligente de detecção de transição de estado (`cruzouLimite`), garantindo que alertas de estoque baixo sejam disparados apenas uma vez no momento exato da quebra de limite, mesmo sob alta concorrência.
-* **Virtual Threads (Project Loom):** O sistema roda sobre o novo modelo de concorrência leve do Java 21.
+### ⚡ Destaques de Engenharia (Enterprise Grade)
+* **🛡️ Idempotência Defensiva:** O sistema não confia na rede. Os consumidores implementam o padrão de *Idempotent Receiver* utilizando uma tabela de controle (`processed_events`) para garantir que mensagens duplicadas (comuns em falhas de ACK) sejam descartadas silenciosamente, prevenindo efeitos colaterais indesejados (ex: envio duplo de e-mail).
+* **🔄 Event Schema Evolution:** A arquitetura suporta evolução de contratos de mensagem sem *downtime*. Os eventos possuem versionamento explícito (`v1`, `v2`), permitindo que consumidores utilizem estratégias de *fallback* para processar ou adaptar mensagens antigas enquanto novas versões são implantadas.
+* **🔒 Zero-Lock Distributed Outbox:** Implementação avançada do *Outbox Pattern* utilizando `SELECT ... FOR UPDATE SKIP LOCKED` (PostgreSQL). Isso permite que múltiplas instâncias do microsserviço processem eventos simultaneamente sem *race conditions* ou bloqueios de tabela.
+* **⚛️ Atomic Inventory Management:** Eliminação total de *race conditions* na baixa de estoque. Utiliza `UPDATE ... RETURNING` para garantir consistência atômica e performance máxima, evitando o anti-pattern "Read-Modify-Write".
+* **🚫 Event-Driven Anti-Spam:** Lógica inteligente de detecção de transição de estado, garantindo que alertas de estoque baixo sejam disparados apenas uma vez no momento exato da quebra de limite, mesmo sob alta concorrência.
 ---
 
 ## 🏛️ Arquitetura dos Serviços
@@ -459,38 +481,49 @@ Para visualizar os dados, importe os seguintes IDs no Grafana:
 
 ---
 
-## 🧪 Qualidade e Testes
-O projeto inclui testes de integração focados em concorrência:
-* **OutboxConcurrencyManualRunner:** Simula múltiplas threads competindo pelo processamento da fila Outbox para garantir *Thread Safety* e ausência de *Deadlocks*.
-* **VendaServiceTest:** Valida a lógica de negócios e o disparo correto de eventos de domínio.
+## 🧪 Quality Assurance & Testes de Concorrência
+
+Este projeto inclui testes de integração avançados para garantir a robustez em cenários de *High Concurrency*.
+
+### ✅ O que testamos?
+1.  **Race Conditions de Estoque:** Simulação de múltiplas threads tentando comprar o mesmo último item simultaneamente.
+2.  **Outbox Locking:** Garantia de que múltiplas instâncias do scheduler não processem o mesmo evento duas vezes (`SKIP LOCKED`).
+3.  **Idempotência:** Teste de envio duplicado de mensagens para garantir que apenas um e-mail seja disparado.
+
+### Como Rodar os Testes
+Os testes de integração sobem containers Docker temporários (Testcontainers) para isolamento total.
+
+```bash
+# Rodar todos os testes (Unitários + Integração)
+./mvnw test
+
+# Rodar apenas o teste de concorrência do Outbox
+./mvnw -Dtest=OutboxConcurrencyManualRunner test
+```
 ---
 
 ## 🗺️ Roadmap (Próximos Passos)
 
 * [x] Auth Service: Login, Registro, JWT, Refresh Token, Logout.
-
 * [x] Segurança: Criptografia de senhas, proteção XSS e Recuperação de Senha.
-
 * [x] Docker: Containerização do Banco e API.
-
 * [x] Mensageria: Integração com RabbitMQ (Producer/Consumer).
-
 * [x] Resiliência: Implementação de DLQ (Dead Letter Queue) e Retries.
-
 * [x] Observabilidade Completa:
-    *[x] Métricas (Prometheus/Grafana)
-    *[x] Logs Centralizados (Loki/Promtail)
+    * [x] Métricas (Prometheus/Grafana)
+    * [x] Logs Centralizados (Loki/Promtail)
 * [x] Mail Service: Microserviço dedicado para notificações.
-
+* [x] **Enterprise Hardening:**
+    * [x] Implementação de Idempotência no Consumidor (Mail Service).
+    * [x] Versionamento de Eventos (Schema Evolution) no Outbox.
+    * [x] Rastreabilidade End-to-End com `eventId`.
 * [x] Inventory Service:
     * [x] Catálogo de Produtos e Controle de Estoque.
     * [x] Motor de Vendas com baixa atômica (`UPDATE ... RETURNING`).
     * [x] Alertas automáticos com lógica Anti-Spam.
     * [x] Testes de Concorrência Extrema (Multi-threaded).
 * [ ] Pet Service: CRUD de Pets e vínculo com usuário logado.
-
 * [ ] Agendamento: Lógica de horários para Banho e Tosa.
-
 * [ ] Front-end: Interface em React.
 ---
 ## 📄 Licença

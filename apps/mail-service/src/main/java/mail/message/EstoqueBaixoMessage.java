@@ -1,4 +1,11 @@
 package mail.message;
 
 import java.math.BigDecimal;
-public record EstoqueBaixoMessage(String nomeProduto, BigDecimal estoqueAtual, BigDecimal estoqueMinimo) {}
+
+public record EstoqueBaixoMessage(
+        int version,
+        String eventId,
+        String nomeProduto,
+        BigDecimal estoqueAtual,
+        BigDecimal estoqueMinimo
+) {}

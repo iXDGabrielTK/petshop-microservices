@@ -9,6 +9,8 @@ import java.io.Serializable;
 @AllArgsConstructor
 @NoArgsConstructor
 public class PasswordResetMessage implements Serializable {
+    private int version;
+    private String eventId;
     private String email;
     private String token;
     private String nomeUsuario;

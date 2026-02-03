@@ -17,9 +17,13 @@ public class MovimentacaoEstoque {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "produto_id", nullable = false)
     private Produto produto;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "venda_id")
+    private Venda venda;
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
@@ -31,5 +35,5 @@ public class MovimentacaoEstoque {
     @Column(nullable = false)
     private LocalDateTime dataHora;
 
-    private String motivo;
+    private String observacao;
 }

@@ -28,6 +28,9 @@ public class Outbox {
     @Column(nullable = false)
     private String eventType;
 
+    @Column(nullable = false, columnDefinition = "INT DEFAULT 1")
+    private int version;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 }

@@ -18,6 +18,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     Optional<Produto> findByCodigoBarras(String codigoBarras);
 
+    @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEstoque <= p.estoqueMinimo")
+    long countProdutosComEstoqueBaixo();
+
     Page<Produto> findByNomeContainingIgnoreCase(String nome, Pageable pageable);
 
     // A mágica do SQL: Tenta atualizar E devolve o novo saldo na mesma query.
