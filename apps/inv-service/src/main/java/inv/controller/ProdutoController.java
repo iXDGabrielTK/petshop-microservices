@@ -5,13 +5,15 @@ import inv.dto.ProdutoResponse;
 import inv.model.Produto;
 import inv.service.ProdutoService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.HtmlUtils;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.net.URI;
-import java.util.List;
 
 @RestController
 @RequestMapping("/produtos")
@@ -47,11 +49,17 @@ public class ProdutoController {
 
 
     @GetMapping
-    public ResponseEntity<List<Produto>> listar(@RequestParam(required = false) String busca) {
+    public ResponseEntity<Page<Produto>> listar(
+            @RequestParam(required = false) String busca,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        Pageable pageable = PageRequest.of(page, size);
+
         if (busca != null && !busca.isBlank()) {
-            return ResponseEntity.ok(produtoService.buscarPorNome(busca));
+            return ResponseEntity.ok(produtoService.buscarPorNome(busca, pageable));
         }
-        return ResponseEntity.ok(produtoService.listarTodos());
+        return ResponseEntity.ok(produtoService.listarTodos(pageable));
     }
 
     @GetMapping("/{id}")

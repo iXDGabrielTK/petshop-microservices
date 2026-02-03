@@ -4,11 +4,11 @@ import inv.dto.ProdutoRequest;
 import inv.model.Produto;
 import inv.repository.ProdutoRepository;
 import common.exception.BusinessException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import common.exception.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 public class ProdutoService {
@@ -37,12 +37,12 @@ public class ProdutoService {
         return produtoRepository.save(produto);
     }
 
-    public List<Produto> listarTodos() {
-        return produtoRepository.findAll();
+    public Page<Produto> listarTodos(Pageable pageable) {
+        return produtoRepository.findAll(pageable);
     }
 
-    public List<Produto> buscarPorNome(String termo) {
-        return produtoRepository.findByNomeContainingIgnoreCase(termo);
+    public Page<Produto> buscarPorNome(String termo, Pageable pageable) {
+        return produtoRepository.findByNomeContainingIgnoreCase(termo, pageable);
     }
 
     public Produto buscarPorId(Long id) {
