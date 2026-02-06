@@ -1,5 +1,7 @@
 package auth.config;
 
+import auth.security.filter.CookieRefreshTokenRequestFilter;
+import auth.security.filter.RefreshTokenCookieFilter;
 import auth.security.user.UserDetailsImpl;
 import auth.security.user.UserDetailsImplMixin;
 import com.fasterxml.jackson.databind.Module;
@@ -31,6 +33,7 @@ import org.springframework.security.oauth2.server.authorization.*;
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
@@ -77,7 +80,15 @@ public class SecurityConfig {
     @Value("${cors.allow-credentials}")
     private Boolean corsAllowCredentials;
 
+    private final CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter;
+    private final RefreshTokenCookieFilter refreshTokenCookieFilter;
+
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
+    public SecurityConfig(CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter, RefreshTokenCookieFilter refreshTokenCookieFilter) {
+        this.cookieRefreshTokenRequestFilter = cookieRefreshTokenRequestFilter;
+        this.refreshTokenCookieFilter = refreshTokenCookieFilter;
+    }
 
     @Bean
     @Order(1)
@@ -95,6 +106,26 @@ public class SecurityConfig {
                         authorizationServer
                                 .oidc(Customizer.withDefaults())
                 );
+
+        http.with(authorizationServerConfigurer, authorizationServer ->
+                authorizationServer.oidc(Customizer.withDefaults())
+        );
+
+        // --- FILTROS CORRETAMENTE POSICIONADOS ---
+
+        // 1. Request Filter: Deve rodar ANTES do processamento do Token Endpoint
+        // para injetar o parâmetro refresh_token vindo do cookie.
+        http.addFilterBefore(
+                cookieRefreshTokenRequestFilter,
+                OAuth2TokenEndpointFilter.class
+        );
+
+        // 2. Response Filter: Deve rodar DEPOIS do processamento
+        // para interceptar a resposta, criar o cookie e limpar o JSON.
+        http.addFilterAfter(
+                refreshTokenCookieFilter,
+                OAuth2TokenEndpointFilter.class
+        );
 
         http
                 .exceptionHandling(exceptions -> exceptions
