@@ -46,15 +46,15 @@ public class ProdutoController {
                 .body(response);
     }
 
-
-
     @GetMapping
     public ResponseEntity<Page<Produto>> listar(
             @RequestParam(required = false) String busca,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size
     ) {
-        Pageable pageable = PageRequest.of(page, size);
+        int tamanhoSeguro = Math.min(size, 50);
+
+        Pageable pageable = PageRequest.of(page, tamanhoSeguro);
 
         if (busca != null && !busca.isBlank()) {
             return ResponseEntity.ok(produtoService.buscarPorNome(busca, pageable));

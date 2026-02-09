@@ -42,7 +42,7 @@ public class ProdutoService {
     }
 
     public Page<Produto> buscarPorNome(String termo, Pageable pageable) {
-        return produtoRepository.findByNomeContainingIgnoreCase(termo, pageable);
+        return produtoRepository.buscarPorNomeOuCodigo(termo, pageable);
     }
 
     public Produto buscarPorId(Long id) {
