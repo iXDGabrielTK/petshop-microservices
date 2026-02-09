@@ -2,6 +2,7 @@ package auth.config;
 
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
+import auth.security.handler.CookieClearingLogoutHandler;
 import auth.security.user.UserDetailsImpl;
 import auth.security.user.UserDetailsImplMixin;
 import com.fasterxml.jackson.databind.Module;
@@ -12,6 +13,7 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import common.security.RsaKeyUtils;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -82,12 +84,13 @@ public class SecurityConfig {
 
     private final CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter;
     private final RefreshTokenCookieFilter refreshTokenCookieFilter;
-
+    private final CookieClearingLogoutHandler cookieClearingLogoutHandler;
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
-    public SecurityConfig(CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter, RefreshTokenCookieFilter refreshTokenCookieFilter) {
+    public SecurityConfig(CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter, RefreshTokenCookieFilter refreshTokenCookieFilter, CookieClearingLogoutHandler cookieClearingLogoutHandler) {
         this.cookieRefreshTokenRequestFilter = cookieRefreshTokenRequestFilter;
         this.refreshTokenCookieFilter = refreshTokenCookieFilter;
+        this.cookieClearingLogoutHandler = cookieClearingLogoutHandler;
     }
 
     @Bean
@@ -106,10 +109,6 @@ public class SecurityConfig {
                         authorizationServer
                                 .oidc(Customizer.withDefaults())
                 );
-
-        http.with(authorizationServerConfigurer, authorizationServer ->
-                authorizationServer.oidc(Customizer.withDefaults())
-        );
 
         // --- FILTROS CORRETAMENTE POSICIONADOS ---
 
@@ -147,7 +146,8 @@ public class SecurityConfig {
                                 "/usuarios/register",
                                 "/oauth2/**",
                                 "/api/**",
-                                "/actuator/**"
+                                "/actuator/**",
+                                "/logout"
                         )
                 )
 
@@ -158,12 +158,21 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers("/actuator/**", "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/usuarios/register", "/usuarios/forgot-password", "/error").permitAll()
+                        .requestMatchers("/logout").permitAll()
                         .anyRequest().authenticated()
                 )
+
                 .formLogin(form -> form
                         .loginPage("/login")
                         .permitAll()
                         .successHandler(customAuthenticationSuccessHandler())
+                )
+
+                .logout(logout -> logout
+                        .logoutUrl("/logout")
+                        .addLogoutHandler(cookieClearingLogoutHandler)
+                        .deleteCookies("JSESSIONID")
+                        .logoutSuccessHandler((req, res, auth) -> res.setStatus(HttpServletResponse.SC_OK))
                 );
 
         return http.build();
