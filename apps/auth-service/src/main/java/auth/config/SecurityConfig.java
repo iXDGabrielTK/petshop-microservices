@@ -33,13 +33,13 @@ import org.springframework.security.oauth2.server.authorization.*;
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
-import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 import org.springframework.security.web.savedrequest.RequestCache;
@@ -113,19 +113,15 @@ public class SecurityConfig {
 
         // --- FILTROS CORRETAMENTE POSICIONADOS ---
 
-        // 1. Request Filter: Deve rodar ANTES do processamento do Token Endpoint
-        // para injetar o parâmetro refresh_token vindo do cookie.
-        http.addFilterBefore(
-                cookieRefreshTokenRequestFilter,
-                OAuth2TokenEndpointFilter.class
-        );
+        // 1. INPUT: Converte Cookie -> Parâmetro
+        // Roda ANTES do SecurityContextHolderFilter para normalizar a request cedo.
+        http.addFilterBefore(cookieRefreshTokenRequestFilter, SecurityContextHolderFilter.class);
 
-        // 2. Response Filter: Deve rodar DEPOIS do processamento
-        // para interceptar a resposta, criar o cookie e limpar o JSON.
-        http.addFilterAfter(
-                refreshTokenCookieFilter,
-                OAuth2TokenEndpointFilter.class
-        );
+        // 2. OUTPUT: Envelopa a Resposta (Wrapper)
+        // Roda DEPOIS do SecurityContextHolderFilter.
+        // Como o SecurityContext já rodou, a ordem fica garantida:
+        // [CookieFilter] -> [ContextFilter] -> [ResponseFilter] -> ... -> [TokenEndpoint]
+        http.addFilterAfter(refreshTokenCookieFilter, SecurityContextHolderFilter.class);
 
         http
                 .exceptionHandling(exceptions -> exceptions
