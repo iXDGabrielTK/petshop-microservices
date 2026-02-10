@@ -1,13 +1,13 @@
 package auth.controller;
 
+import auth.dto.request.UserSettingsRequest;
 import auth.dto.response.UserResponse;
+import auth.model.Usuario;
 import auth.service.UsuarioService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/usuarios")
@@ -31,4 +31,19 @@ public class UsuarioController {
 
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Atualiza as configurações do usuário autenticado.
+     * Endpoint usado pelo Frontend para salvar preferências do usuário.
+     */
+    @PatchMapping("/settings")
+    public ResponseEntity<Void> updateSettings(
+            @RequestBody UserSettingsRequest request,
+            @AuthenticationPrincipal Usuario usuario
+    ) {
+        usuarioService.updateSettings(usuario.getId(), request);
+
+        return ResponseEntity.noContent().build();
+    }
+
 }

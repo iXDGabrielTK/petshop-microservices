@@ -1,5 +1,6 @@
 package auth.service;
 
+import auth.dto.request.UserSettingsRequest;
 import auth.dto.response.UserResponse;
 import auth.model.Role;
 import auth.model.Usuario;
@@ -32,7 +33,23 @@ public class UsuarioService {
                 usuario.getId(),
                 usuario.getNome(),
                 usuario.getEmail(),
-                roles
+                roles,
+                usuario.getTheme().name()
         );
     }
+
+    @Transactional
+    public void updateSettings(Long userId, UserSettingsRequest request) {
+        Usuario usuario = usuarioRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+
+        if (request.theme() != null) {
+            try {
+                usuario.setTheme(request.theme());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Tema não suportado: " + request.theme());
+            }
+        }
+    }
+
 }

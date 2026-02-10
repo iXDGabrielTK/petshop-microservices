@@ -29,6 +29,10 @@ public class Usuario {
     @Column(name = "SENHA", nullable = false)
     private String senha;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Theme theme;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "usuario_roles",
