@@ -13,8 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.HashSet;
-import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -52,21 +50,22 @@ public class AuthService {
      * @return Usuario recém-criado
      */
     public Usuario register(auth.dto.request.RegisterRequest request) {
-    if (usuarioRepository.findByEmail(request.getEmail()).isPresent()) {
-        throw new BusinessException("Email já cadastrado");
-    }
+        if (usuarioRepository.findByEmail(request.getEmail()).isPresent()) {
+            throw new BusinessException("Email já cadastrado");
+        }
 
-    Usuario novoUsuario = new Usuario();
-    novoUsuario.setNome(request.getNome());
-    novoUsuario.setEmail(request.getEmail());
-    novoUsuario.setSenha(passwordEncoder.encode(request.getSenha()));
+        Usuario novoUsuario = new Usuario(
+                request.getNome(),
+                request.getEmail(),
+                passwordEncoder.encode(request.getSenha())
+        );
 
-    auth.model.Role roleUser = roleRepository.findByNome("USER")
-            .orElseGet(() -> roleRepository.save(new auth.model.Role(null, "USER")));
+        auth.model.Role roleUser = roleRepository.findByNome("USER")
+                .orElseGet(() -> roleRepository.save(new auth.model.Role(null, "USER")));
 
-        novoUsuario.setRoles(new HashSet<>(Set.of(roleUser)));
+        novoUsuario.adicionarRole(roleUser);
 
-    return usuarioRepository.save(novoUsuario);
+        return usuarioRepository.save(novoUsuario);
     }
 
     /**
@@ -137,7 +136,7 @@ public class AuthService {
 
         Usuario usuario = resetToken.getUsuario();
 
-        usuario.setSenha(passwordEncoder.encode(request.getNewPassword()));
+        usuario.alterarSenha(passwordEncoder.encode(request.getNewPassword()));
         usuarioRepository.save(usuario);
 
         tokenRepository.delete(resetToken);

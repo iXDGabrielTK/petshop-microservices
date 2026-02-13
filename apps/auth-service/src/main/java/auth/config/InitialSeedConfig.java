@@ -18,7 +18,6 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 
 import java.time.Duration;
-import java.util.Collections;
 import java.util.UUID;
 
 @Configuration
@@ -68,21 +67,24 @@ public class InitialSeedConfig {
                 System.out.println("✅ Cliente OAuth2 'petshop-client' Público criado.");
             }
 
-            Usuario admin = usuarioRepository.findByEmail(initialAdminEmail)
-                    .orElse(new Usuario());
+            if (usuarioRepository.findByEmail(initialAdminEmail).isEmpty()) {
 
-            Role roleAdmin = roleRepository.findByNome("ADMIN")
-                    .orElseGet(() -> roleRepository.save(new Role(null, "ADMIN")));
+                Role roleAdmin = roleRepository.findByNome("ADMIN")
+                        .orElseGet(() -> roleRepository.save(new Role(null, "ADMIN")));
 
-            admin.setNome("Administrador");
-            admin.setEmail(initialAdminEmail);
-            if (admin.getId() == null) {
-                admin.setSenha(passwordEncoder.encode(initialAdminPassword));
+                Usuario admin = new Usuario(
+                        "Administrador",
+                        initialAdminEmail,
+                        passwordEncoder.encode(initialAdminPassword)
+                );
+
+                admin.adicionarRole(roleAdmin);
+
+                usuarioRepository.save(admin);
+                System.out.println("✅ Usuário Admin criado com sucesso.");
+            } else {
+                System.out.println("ℹ️ Usuário Admin já existe. Pulando criação.");
             }
-            admin.setRoles(Collections.singleton(roleAdmin));
-
-            usuarioRepository.save(admin);
-            System.out.println("✅ Usuário Admin garantido no banco.");
         };
     }
 }
