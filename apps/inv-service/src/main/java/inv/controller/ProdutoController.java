@@ -13,8 +13,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.HtmlUtils;
 import org.springframework.security.access.prepost.PreAuthorize;
 
-import java.net.URI;
-
 @RestController
 @RequestMapping("/produtos")
 public class ProdutoController {
@@ -26,7 +24,7 @@ public class ProdutoController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('SCOPE_pets:write') and hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ProdutoResponse> criar(
             @RequestBody @Valid ProdutoRequest request) {
 
@@ -41,9 +39,7 @@ public class ProdutoController {
                 produto.getPrecoVenda()
         );
 
-        return ResponseEntity
-                .created(URI.create("/produtos/" + produto.getId()))
-                .body(response);
+       return ResponseEntity.ok(response);
     }
 
     @GetMapping
