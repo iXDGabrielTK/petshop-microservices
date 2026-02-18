@@ -5,6 +5,7 @@ import inv.dto.ProdutoResponse;
 import inv.model.Produto;
 import inv.service.ProdutoService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -42,19 +43,31 @@ public class ProdutoController {
        return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/ean/{ean}")
+    public ResponseEntity<Produto> buscarPorEan(
+            @PathVariable
+            @Pattern(regexp = "\\d{8,14}", message = "O EAN deve conter entre 8 e 14 dígitos numéricos")
+            String ean
+    ) {
+        return ResponseEntity.ok(produtoService.buscarPorEan(ean));
+    }
+
     @GetMapping
     public ResponseEntity<Page<Produto>> listar(
+            @RequestParam(required = false) String nome,
             @RequestParam(required = false) String busca,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size
     ) {
         int tamanhoSeguro = Math.min(size, 50);
-
         Pageable pageable = PageRequest.of(page, tamanhoSeguro);
 
-        if (busca != null && !busca.isBlank()) {
-            return ResponseEntity.ok(produtoService.buscarPorNome(busca, pageable));
+        String termoBusca = (nome != null && !nome.isBlank()) ? nome : busca;
+
+        if (termoBusca != null && !termoBusca.isBlank()) {
+            return ResponseEntity.ok(produtoService.buscarPorNome(termoBusca, pageable));
         }
+
         return ResponseEntity.ok(produtoService.listarTodos(pageable));
     }
 

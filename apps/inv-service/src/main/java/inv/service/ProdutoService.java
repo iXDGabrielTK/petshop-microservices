@@ -4,9 +4,9 @@ import inv.dto.ProdutoRequest;
 import inv.model.Produto;
 import inv.repository.ProdutoRepository;
 import common.exception.BusinessException;
+import common.exception.ResourceNotFoundException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import common.exception.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,8 +41,13 @@ public class ProdutoService {
         return produtoRepository.findAll(pageable);
     }
 
-    public Page<Produto> buscarPorNome(String termo, Pageable pageable) {
-        return produtoRepository.buscarPorNomeOuCodigo(termo, pageable);
+    public Page<Produto> buscarPorNome(String nome, Pageable pageable) {
+        return produtoRepository.findByNomeContainingIgnoreCase(nome, pageable);
+    }
+
+    public Produto buscarPorEan(String ean) {
+        return produtoRepository.findByCodigoBarras(ean)
+                .orElseThrow(() -> new ResourceNotFoundException("Produto não encontrado com EAN: " + ean));
     }
 
     public Produto buscarPorId(Long id) {

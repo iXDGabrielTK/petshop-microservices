@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 
 @Repository
 public interface ProdutoRepository extends JpaRepository<Produto, Long> {
@@ -18,14 +19,9 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     @Query("SELECT COUNT(p) FROM Produto p WHERE p.quantidadeEstoque <= p.estoqueMinimo")
     long countProdutosComEstoqueBaixo();
 
-    // Usa o índice do código de barras se for match exato
-    // Usa o índice funcional lower(nome) para busca textual
-    @Query("""
-        SELECT p FROM Produto p 
-        WHERE LOWER(p.nome) LIKE LOWER(CONCAT('%', :termo, '%')) 
-           OR p.codigoBarras = :termo
-    """)
-    Page<Produto> buscarPorNomeOuCodigo(@Param("termo") String termo, Pageable pageable);
+    Optional<Produto> findByCodigoBarras(String codigoBarras);
+
+    Page<Produto> findByNomeContainingIgnoreCase(String nome, Pageable pageable);
 
     // A mágica do SQL: Tenta atualizar E devolve o novo saldo na mesma query.
     // Se a condição (quantidade_estoque >= :qtd) falhar, não atualiza e retorna null.
