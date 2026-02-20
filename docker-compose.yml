@@ -169,6 +169,8 @@ services:
       - DB_USER=${DB_USER_INV}
       - DB_PASS=${DB_PASS_INV}
       - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - SPRING_DATA_REDIS_HOST=${SPRING_DATA_REDIS_HOST}
+      - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
     networks:
       - pet-network
 

@@ -5,8 +5,10 @@ import java.util.List;
 
 public record DashboardStats(
         BigDecimal totalRevenue,
+        BigDecimal revenueGrowth,
         long salesCount,
         long lowStockCount,
+        long activityCount,
         List<RecentSaleDTO> recentSales,
         List<ChartDataDTO> chartData
 ) {

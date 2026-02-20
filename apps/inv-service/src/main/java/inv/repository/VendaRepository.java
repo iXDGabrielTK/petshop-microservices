@@ -13,10 +13,11 @@ import java.util.List;
 @Repository
 public interface VendaRepository extends JpaRepository<Venda, Long> {
 
-    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataHora BETWEEN :inicio AND :fim")
+    @Query("SELECT COALESCE(SUM(v.valorTotal), 0) FROM Venda v WHERE v.dataHora >= :inicio AND v.dataHora < :fim")
     BigDecimal somarReceitaNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
-    long countByDataHoraBetween(LocalDateTime inicio, LocalDateTime fim);
+    @Query("SELECT COUNT(v) FROM Venda v WHERE v.dataHora >= :inicio AND v.dataHora < :fim")
+    long countVendasNoPeriodo(@Param("inicio") LocalDateTime inicio, @Param("fim") LocalDateTime fim);
 
     List<Venda> findTop5ByOrderByDataHoraDesc();
 
