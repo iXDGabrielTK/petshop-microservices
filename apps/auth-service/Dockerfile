@@ -1,5 +1,5 @@
 # Usa uma imagem leve do Java 21
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 
 # Define a pasta de trabalho dentro do container
 WORKDIR /app
