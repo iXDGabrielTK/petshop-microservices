@@ -1,0 +1,155 @@
+name: CI/CD Pipeline - Petshop Microservices
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ main, develop ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '21'
+  REGISTRY: ghcr.io
+
+jobs:
+  # --------------------------------------------------------
+  # ETAPA 1: Linting e Validação do POM / XML
+  # --------------------------------------------------------
+  validate-code:
+    name: 1. Validate & Code Style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Validar estrutura dos POMs
+        run: mvn validate
+
+  # --------------------------------------------------------
+  # ETAPA 2: Testes Unitários e de Integração
+  # --------------------------------------------------------
+  unit-tests:
+    name: 2. Run Tests & Coverage
+    needs: validate-code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Compilar common-lib e rodar testes
+        run: mvn clean test -DfailIfNoTests=false
+
+  # --------------------------------------------------------
+  # ETAPA 3: Análise de Segurança (SAST / CVEs)
+  # --------------------------------------------------------
+  security-scan:
+    name: 3. Security Vulnerability Scan
+    needs: validate-code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Varredura de Vulnerabilidades no Código (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  # --------------------------------------------------------
+  # ETAPA 4: Build e Push das Imagens Docker (Em Matriz)
+  # --------------------------------------------------------
+  build-and-push-docker:
+    name: 4. Build Docker (${{ matrix.service }})
+    needs: [unit-tests, security-scan]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, auth-service, inv-service, mail-service]
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Autenticar no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Definir Tags da Imagem
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=git-
+            type=semver,pattern={{version}}
+
+      - name: Build e Push da Imagem Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./apps/${{ matrix.service }}/Dockerfile
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # --------------------------------------------------------
+  # ETAPA 5: CD - Implantação Automatizada no Servidor
+  # TODO: Habilitar quando houver servidor/infraestrutura de deploy configurada
+  # --------------------------------------------------------
+  # deploy:
+  #   name: 5. Deploy via Docker Compose
+  #   needs: build-and-push-docker
+  #   if: github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - name: Executar Deploy via SSH
+  #       uses: appleboy/ssh-action@v1.0.3
+  #       with:
+  #         host: ${{ secrets.SERVER_HOST }}
+  #         username: ${{ secrets.SERVER_USER }}
+  #         key: ${{ secrets.SSH_PRIVATE_KEY }}
+  #         script: |
+  #           cd /var/www/petshop-microservices
+  #           git pull origin main
+  #           docker compose pull
+  #           docker compose up -d --remove-orphans
