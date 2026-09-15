@@ -69,9 +69,9 @@ services:
     ports:
       - "5436:5432"
     environment:
-      POSTGRES_DB: testdb
-      POSTGRES_USER: usuario
-      POSTGRES_PASSWORD: senha
+      - POSTGRES_DB=${DB_NAME_TEST}
+      - POSTGRES_USER=${DB_USER_TEST}
+      - POSTGRES_PASSWORD=${DB_PASS_TEST}
     restart: always
 
   # --- MESSAGE BROKER (RabbitMQ) ---
@@ -98,7 +98,9 @@ services:
 
   # --- MICROSERVIÇO 1 (Auth - Produtor) ---
   auth-service:
-    build: ./apps/auth-service
+    build:
+      context: .
+      dockerfile: ./apps/auth-service/Dockerfile
     container_name: auth-service
     ports:
       - "8081:8081"
@@ -129,7 +131,9 @@ services:
 
   # --- MICROSERVIÇO 2 (Mail - Consumidor) ---
   mail-service:
-    build: ./apps/mail-service
+    build:
+      context: .
+      dockerfile: ./apps/mail-service/Dockerfile
     container_name: mail-service
     ports:
       - "8082:8082"
@@ -155,7 +159,9 @@ services:
 
   # --- MICROSERVIÇO 3 (Inventory Service) ---
   inv-service:
-    build: ./apps/inv-service
+    build:
+      context: .
+      dockerfile: ./apps/inv-service/Dockerfile
     container_name: inv-service
     ports:
       - "8083:8083"
@@ -168,6 +174,8 @@ services:
       - DB_NAME=${DB_NAME_INV}
       - DB_USER=${DB_USER_INV}
       - DB_PASS=${DB_PASS_INV}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
       - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
       - SPRING_DATA_REDIS_HOST=${SPRING_DATA_REDIS_HOST}
       - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
@@ -177,7 +185,9 @@ services:
 
     # --- API GATEWAY ---
   api-gateway:
-    build: ./apps/api-gateway
+    build:
+      context: .
+      dockerfile: ./apps/api-gateway/Dockerfile
     container_name: api-gateway
     ports:
       - "8080:8080"
