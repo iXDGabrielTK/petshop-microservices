@@ -1,7 +1,8 @@
 package inv.scheduler;
 
-import inv.model.Outbox;
-import inv.repository.OutboxRepository;
+import inv.shared.outbox.model.Outbox;
+import inv.shared.outbox.repository.OutboxRepository;
+import inv.shared.outbox.scheduler.OutboxProcessor;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mockito.Mockito;
@@ -22,9 +23,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Teste manual de concorrência.
- * Requer o container 'postgres-test' rodando na porta 5435.
- * Configure a variável de ambiente DOCKER_READY=true para rodar.
+ * Runner de diagnóstico manual local de concorrência.
+ *
+ * GOVERNANÇA / CI:
+ * Esta classe é intencionalmente mantida com nome fora do padrão *Test.java para NÃO ser coletada
+ * pelo Maven Surefire nem bloquear a esteira de CI/CD, servindo exclusivamente como utilitário
+ * manual para desenvolvedores testarem concorrência contra instâncias pré-existentes locais
+ * (PostgreSQL na porta 5435 via DOCKER_READY=true).
+ *
+ * O teste automatizado oficial para validação do ADR-0004 integrado ao CI/CD com Testcontainers
+ * gerenciados (PostgreSQL 15 + RabbitMQ 3) é o {@link inv.shared.outbox.OutboxConcorrenciaIntegrationTest}.
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:postgresql://localhost:5435/testdb",

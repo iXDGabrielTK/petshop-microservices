@@ -1,10 +1,12 @@
 package inv.service;
 
 import common.exception.BusinessException;
-import inv.model.ItemVenda;
-import inv.model.Produto;
-import inv.model.Venda;
-import inv.repository.VendaRepository;
+import inv.checkout.usecase.VendaService;
+import inv.inventory.usecase.EstoqueService;
+import inv.checkout.domain.model.ItemVenda;
+import inv.inventory.domain.model.Produto;
+import inv.checkout.domain.model.Venda;
+import inv.checkout.infrastructure.persistence.VendaRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -67,8 +69,8 @@ class VendaServiceCancelamentoTest {
         verify(vendaRepository, times(1)).save(vendaSpy);
 
         // VERIFICAÇÃO 2: Contrato do loop de itens (Estorno de reservas)
-        verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto1), eq(new BigDecimal("5")), eq(vendaSpy));
-        verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto2), eq(new BigDecimal("3")), eq(vendaSpy));
+        verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto1), eq(new BigDecimal("5")), eq(vendaId));
+        verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto2), eq(new BigDecimal("3")), eq(vendaId));
 
         // VERIFICAÇÃO 3: Nenhuma ação paralela indevida
         verifyNoInteractions(eventPublisher);

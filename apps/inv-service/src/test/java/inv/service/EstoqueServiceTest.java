@@ -1,13 +1,13 @@
 package inv.service;
 
-import inv.dto.EstoqueBaixoMessage;
-import inv.event.EstoqueAtingiuMinimoEvent;
-import inv.model.MovimentacaoEstoque;
-import inv.model.Produto;
-import inv.model.TipoMovimentacao;
-import inv.model.Venda;
-import inv.repository.MovimentacaoRepository;
-import inv.repository.ProdutoRepository;
+import inv.inventory.infrastructure.messaging.EstoqueBaixoMessage;
+import inv.inventory.infrastructure.messaging.EstoqueAtingiuMinimoEvent;
+import inv.inventory.domain.model.MovimentacaoEstoque;
+import inv.inventory.domain.model.Produto;
+import inv.inventory.domain.model.TipoMovimentacao;
+import inv.inventory.usecase.EstoqueService;
+import inv.inventory.infrastructure.persistence.MovimentacaoRepository;
+import inv.inventory.infrastructure.persistence.ProdutoRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,8 +38,6 @@ class EstoqueServiceTest {
     void deveReservarEstoqueEDispararEventoAoCruzarLimite() {
         // CENÁRIO
         BigDecimal qtdReserva = new BigDecimal("2");
-        Venda vendaMock = mock(Venda.class);
-        when(vendaMock.getId()).thenReturn(100L);
 
         Produto produtoSpy = spy(new Produto());
         produtoSpy.setId(1L);
@@ -47,17 +45,15 @@ class EstoqueServiceTest {
         produtoSpy.setEstoqueDisponivel(new BigDecimal("11"));
         produtoSpy.setEstoqueMinimo(new BigDecimal("10"));
 
-        doAnswer(invocation -> {
-            produtoSpy.setEstoqueDisponivel(new BigDecimal("9"));
-            return null;
-        }).when(produtoSpy).reservar(qtdReserva);
+        when(produtoRepository.reservarEstoqueAtomo(1L, qtdReserva)).thenReturn(new BigDecimal("9"));
 
         // AÇÃO
-        estoqueService.reservarEstoqueParaVenda(produtoSpy, qtdReserva, vendaMock);
+        estoqueService.reservarEstoqueParaVenda(produtoSpy, qtdReserva, 100L);
 
         // VERIFICAÇÃO 1: Contrato de Domínio e Persistência
-        verify(produtoSpy, times(1)).reservar(qtdReserva);
-        verify(produtoRepository, times(1)).save(produtoSpy);
+        verify(produtoSpy, never()).reservar(any());
+        verify(produtoRepository, times(1)).reservarEstoqueAtomo(1L, qtdReserva);
+        verify(produtoRepository, never()).save(produtoSpy);
 
         // VERIFICAÇÃO 2: Histórico de Movimentação (Auditoria)
         ArgumentCaptor<MovimentacaoEstoque> movCaptor = ArgumentCaptor.forClass(MovimentacaoEstoque.class);
@@ -68,7 +64,7 @@ class EstoqueServiceTest {
                 () -> assertEquals(TipoMovimentacao.RESERVA, movimentacaoSalva.getTipo()),
                 () -> assertEquals(qtdReserva, movimentacaoSalva.getQuantidade()),
                 () -> assertEquals(produtoSpy, movimentacaoSalva.getProduto()),
-                () -> assertEquals(vendaMock, movimentacaoSalva.getVenda()),
+                () -> assertEquals(100L, movimentacaoSalva.getVendaId()),
                 () -> assertTrue(movimentacaoSalva.getObservacao().contains("#100"))
         );
 
@@ -86,23 +82,20 @@ class EstoqueServiceTest {
     void deveReservarEstoqueSemDispararEventoSeJaEstavaBaixo() {
         // CENÁRIO
         BigDecimal qtdReserva = new BigDecimal("2");
-        Venda vendaMock = mock(Venda.class);
 
         Produto produtoSpy = spy(new Produto());
+        produtoSpy.setId(2L);
         produtoSpy.setEstoqueDisponivel(new BigDecimal("9"));
         produtoSpy.setEstoqueMinimo(new BigDecimal("10"));
 
-        doAnswer(invocation -> {
-            produtoSpy.setEstoqueDisponivel(new BigDecimal("7"));
-            return null;
-        }).when(produtoSpy).reservar(qtdReserva);
+        when(produtoRepository.reservarEstoqueAtomo(2L, qtdReserva)).thenReturn(new BigDecimal("7"));
 
         // AÇÃO
-        estoqueService.reservarEstoqueParaVenda(produtoSpy, qtdReserva, vendaMock);
+        estoqueService.reservarEstoqueParaVenda(produtoSpy, qtdReserva, 100L);
 
         // VERIFICAÇÃO
-        verify(produtoSpy).reservar(qtdReserva);
-        verify(produtoRepository).save(produtoSpy);
+        verify(produtoRepository, times(1)).reservarEstoqueAtomo(2L, qtdReserva);
+        verify(produtoRepository, never()).save(produtoSpy);
         verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
 
         verifyNoInteractions(eventPublisher);
@@ -113,15 +106,18 @@ class EstoqueServiceTest {
     void deveConfirmarBaixaDefinitivaDoEstoque() {
         // CENÁRIO
         BigDecimal qtdBaixa = new BigDecimal("5");
-        Venda vendaMock = mock(Venda.class);
         Produto produtoSpy = spy(new Produto());
+        produtoSpy.setId(3L);
+
+        when(produtoRepository.confirmarBaixaEstoqueAtomo(3L, qtdBaixa)).thenReturn(new BigDecimal("0"));
 
         // AÇÃO
-        estoqueService.confirmarBaixaEstoque(produtoSpy, qtdBaixa, vendaMock);
+        estoqueService.confirmarBaixaEstoque(produtoSpy, qtdBaixa, 100L);
 
         // VERIFICAÇÃO
-        verify(produtoSpy, times(1)).confirmarReserva(qtdBaixa);
-        verify(produtoRepository, times(1)).save(produtoSpy);
+        verify(produtoSpy, never()).confirmarReserva(any());
+        verify(produtoRepository, times(1)).confirmarBaixaEstoqueAtomo(3L, qtdBaixa);
+        verify(produtoRepository, never()).save(produtoSpy);
 
         // Valida se a movimentação correta foi registrada
         ArgumentCaptor<MovimentacaoEstoque> movCaptor = ArgumentCaptor.forClass(MovimentacaoEstoque.class);
@@ -137,15 +133,18 @@ class EstoqueServiceTest {
     void deveEstornarReservaDeEstoque() {
         // CENÁRIO
         BigDecimal qtdEstorno = new BigDecimal("3");
-        Venda vendaMock = mock(Venda.class);
         Produto produtoSpy = spy(new Produto());
+        produtoSpy.setId(4L);
+
+        when(produtoRepository.estornarReservaEstoqueAtomo(4L, qtdEstorno)).thenReturn(new BigDecimal("5"));
 
         // AÇÃO
-        estoqueService.estornarReservaEstoque(produtoSpy, qtdEstorno, vendaMock);
+        estoqueService.estornarReservaEstoque(produtoSpy, qtdEstorno, 100L);
 
         // VERIFICAÇÃO
-        verify(produtoSpy, times(1)).cancelarReserva(qtdEstorno);
-        verify(produtoRepository, times(1)).save(produtoSpy);
+        verify(produtoSpy, never()).cancelarReserva(any());
+        verify(produtoRepository, times(1)).estornarReservaEstoqueAtomo(4L, qtdEstorno);
+        verify(produtoRepository, never()).save(produtoSpy);
 
         // Valida se a movimentação correta foi registrada
         ArgumentCaptor<MovimentacaoEstoque> movCaptor = ArgumentCaptor.forClass(MovimentacaoEstoque.class);
