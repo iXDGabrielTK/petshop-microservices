@@ -55,6 +55,66 @@ CREATE TABLE outbox (
                         created_at TIMESTAMP NOT NULL
 );
 
--- 6. Índices de Performance (Aqueles que você queria)
+-- 6. Tabela LANCAMENTOS-FINANCEIROS
+CREATE TABLE lancamentos_financeiros (
+                                         id BIGSERIAL PRIMARY KEY,
+                                         venda_id BIGINT NOT NULL,
+                                         referencia UUID NOT NULL,
+                                         tipo VARCHAR(20) NOT NULL,
+                                         valor NUMERIC(10, 2) NOT NULL,
+                                         data_hora TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                         CONSTRAINT fk_lancamento_venda FOREIGN KEY (venda_id) REFERENCES vendas(id),
+                                         CONSTRAINT uk_lancamento_referencia UNIQUE (referencia)
+);
+
+-- 7. Tabela FINANCIAL_PROJECTION_VENDA
+CREATE TABLE financial_projection_venda (
+                                            venda_id BIGINT PRIMARY KEY,
+                                            saldo NUMERIC(10,2) NOT NULL DEFAULT 0,
+                                            total_creditos NUMERIC(10,2) NOT NULL DEFAULT 0,
+                                            total_estornos NUMERIC(10,2) NOT NULL DEFAULT 0,
+                                            ultima_atualizacao TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. Tabela FINANCIAL_PROJECTION_CHECKPOINT
+CREATE TABLE financial_projection_checkpoint (
+                                                 lancamento_id BIGINT PRIMARY KEY,
+                                                 processado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 status VARCHAR(20) NOT NULL DEFAULT 'OK'
+);
+
+-- 9. Tabela FINANCIAL_RECONCILIATION_CHECKPOINT
+CREATE TABLE financial_reconciliation_checkpoint (
+                                                     id SERIAL PRIMARY KEY,
+                                                     ultimo_lancamento_id BIGINT NOT NULL,
+                                                     verificado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                     CONSTRAINT uk_recon_watermark UNIQUE (ultimo_lancamento_id)
+);
+
+-- 10. Tabela PROJECTION_RETRY_QUEUE
+CREATE TABLE projection_retry_queue (
+                                        id BIGSERIAL PRIMARY KEY,
+                                        lancamento_id BIGINT NOT NULL,
+                                        payload JSONB NOT NULL,
+                                        erro TEXT,
+                                        tentativas INT DEFAULT 0,
+                                        status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE',
+                                        proxima_execucao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                        CONSTRAINT uk_retry_lancamento UNIQUE (lancamento_id)
+);
+
+-- 11. Tabela FECHAMENTO_CAIXA_DIARIO
+CREATE TABLE fechamento_caixa_diario (
+                                         data_referencia DATE PRIMARY KEY,
+                                         saldo_inicial NUMERIC(10,2) NOT NULL,
+                                         total_creditos NUMERIC(10,2) NOT NULL,
+                                         total_debitos NUMERIC(10,2) NOT NULL,
+                                         saldo_final NUMERIC(10,2) NOT NULL,
+                                         ultimo_lancamento_id BIGINT NOT NULL,
+                                         processado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 12. Índices de Performance
 CREATE INDEX IF NOT EXISTS idx_produto_codigo_barras ON produtos (codigo_barras);
 CREATE INDEX IF NOT EXISTS idx_produto_nome_lower ON produtos (lower(nome));
+CREATE INDEX idx_lancamento_venda_id ON lancamentos_financeiros(venda_id);
