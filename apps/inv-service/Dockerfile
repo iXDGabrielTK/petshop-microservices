@@ -3,16 +3,20 @@ FROM maven:3.9.9-eclipse-temurin-21 AS builder
 
 WORKDIR /build
 
+# Copia os arquivos POM para o Maven resolver a estrutura multi-módulos
 COPY pom.xml .
-COPY .mvn .mvn
-COPY mvnw .
+COPY apps/common-lib/pom.xml ./apps/common-lib/
+COPY apps/inv-service/pom.xml ./apps/inv-service/
+COPY apps/auth-service/pom.xml ./apps/auth-service/
+COPY apps/api-gateway/pom.xml ./apps/api-gateway/
+COPY apps/mail-service/pom.xml ./apps/mail-service/
 
-RUN ./mvnw dependency:go-offline -B
+# Copia os códigos-fonte necessários
+COPY apps/common-lib/src ./apps/common-lib/src
+COPY apps/inv-service/src ./apps/inv-service/src
 
-COPY common-lib ./common-lib
-COPY src ./src
-
-RUN ./mvnw clean package -DskipTests
+# Compila common-lib e inv-service
+RUN mvn clean package -pl apps/inv-service -am -DskipTests
 
 # -------- STAGE 2: Runtime --------
 FROM eclipse-temurin:21-jre-alpine
@@ -22,7 +26,7 @@ WORKDIR /app
 # Segurança: não rodar como root
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-COPY --from=builder /build/target/inv-service-1.0-SNAPSHOT.jar app.jar
+COPY --from=builder /build/apps/inv-service/target/*.jar app.jar
 
 USER appuser
 

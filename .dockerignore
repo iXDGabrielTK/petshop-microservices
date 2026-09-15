@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.vscode
+target/
+**/target/
+**/build/
+docs/
+infra/
+*.md
+.env
+.trivyignore
