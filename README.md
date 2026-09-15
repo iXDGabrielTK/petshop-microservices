@@ -11,11 +11,41 @@
 ![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?style=flat&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?style=flat&logo=grafana&logoColor=white)
 
-Este projeto é um sistema distribuído baseado em **microsserviços** para gerenciamento de um **Pet Shop**. O objetivo é demonstrar uma arquitetura robusta, segura e escalável utilizando Java e Docker.
+Este projeto é um sistema distribuído empresarial para gerenciamento de um **Pet Shop & PDV**, combinando **Microsserviços de Borda/Segurança** (`api-gateway`, `auth-service`, `mail-service`) com um **Monólito Modular orientado a DDD** no núcleo de negócio (`inv-service`: Checkout, Financeiro e Estoque).
+
+---
+
+## 🏛️ Hub Central de Documentação Técnica
+
+Toda a arquitetura, regras de negócio e decisões de engenharia estão catalogadas na pasta [`docs/`](docs):
+
+### 📚 Guias Arquiteturais e de Domínio
+* 🏛️ **[Visão Geral do Sistema (C4 Containers & Migrações)](docs/architecture/system-overview.md)**
+* 💰 **[Motor Financeiro & Contábil (Ledger Append-Only, CQRS e D+0)](docs/domains/finance.md)**
+* 🛒 **[Domínio de Checkout (Máquinas de Estado, Webhooks e Long Polling)](docs/domains/checkout.md)**
+* 📦 **[Domínio de Inventário (Estoque Atômico e Alertas Anti-Spam)](docs/domains/inventory.md)**
+* 🔐 **[Segurança & Gestão de Identidade (OIDC, RSA e Rate Limiting)](docs/domains/security.md)**
+
+---
+
+## 📑 Catálogo de Decisões de Arquitetura (ADRs)
+
+| ID | Título do ADR | Status | Bounded Contexts | Destaque Técnico |
+| :--- | :--- | :--- | :--- | :--- |
+| **[ADR-0001](docs/adr/0001-modular-monolith-bounded-contexts.md)** | Monólito Modular com Bounded Contexts | `Aceito` | Core / Inv-Service | Eliminação de nano-serviços e redução de latência no PDV. |
+| **[ADR-0002](docs/adr/0002-atomic-sql-inventory-and-hybrid-locking.md)** | Controle Híbrido de Concorrência & Estoque Atômico | `Aceito` | Inventory, Checkout | `UPDATE ... RETURNING`, `@Retryable` e Lock Pessimista na Liquidação. |
+| **[ADR-0003](docs/adr/0003-async-long-polling-pos-deferred-result.md)** | Long Polling Não-Bloqueante com `DeferredResult` | `Aceito` | Checkout | *Request Parking* assíncrono para PDV aguardando Webhooks. |
+| **[ADR-0004](docs/adr/0004-transactional-outbox-with-skip-locked.md)** | Transactional Outbox com `FOR UPDATE SKIP LOCKED` | `Aceito` | Shared, Checkout | Despacho AMQP sem 2PC e sem colisões entre réplicas. |
+| **[ADR-0005](docs/adr/0005-append-only-financial-ledger-and-idempotency.md)** | Ledger Financeiro Imutável com UUID | `Aceito` | Finance | Journaling contábil imutável e eliminação de saldo mutável. |
+| **[ADR-0006](docs/adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)** | Projeções CQRS Assíncronas e Auto-Cura | `Aceito` | Finance | Projeção pós-commit com fila de retry e scheduler auto-curável. |
+| **[ADR-0007](docs/adr/0007-d0-daily-cash-closing-and-high-watermark.md)** | Fechamento D+0 com High Watermark | `Aceito` | Finance | Processamento incremental $O(\Delta)$ e reconciliação de divergências. |
+| **[ADR-0008](docs/adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)** | Consumidor Idempotente e Schema Evolution | `Aceito` | Mail, Shared | Deduplicação com `processed_events` e fallback V1/V2. |
+| **[ADR-0009](docs/adr/0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)** | Spring Auth Server OIDC e RSA 2048-bit | `Aceito` | Auth, Gateway | Resource Servers stateless validados localmente em memória. |
+
+---
 
 ## 🏛️ Arquitetura do Sistema
 
-O sistema segue o padrão de **Arquitetura de Microsserviços**, onde a autenticação é desacoplada das regras de negócio.
 ```mermaid
 graph TD
 
@@ -32,27 +62,26 @@ graph TD
 %% --- Client Layer ---
     subgraph ClientLayer [Client Layer]
         User((User)):::client
-        Browser[SPA React Dashboard]:::client
+        Browser[SPA React Dashboard / PDV]:::client
     end
 
 %% --- Edge Layer ---
     subgraph EdgeLayer [Edge and Security]
-        Gateway[API Gateway]:::gateway
+        Gateway[API Gateway :8080]:::gateway
         Redis[(Redis Cache and Rate Limit)]:::infra
     end
 
 %% --- Services ---
     subgraph ServiceLayer [Microservices Cluster]
-        Auth[Auth Service OAuth2 OIDC]:::authService
-        Inv[Inventory Service Core Domain]:::coreService
-        Mail[Mail Service Consumer]:::consumerService
+        Auth[Auth Service :8081 - OAuth2 / OIDC]:::authService
+        Inv[Inv Service :8083 - Monólito Modular]:::coreService
+        Mail[Mail Service :8082 - Consumer]:::consumerService
     end
 
 %% --- Data and Events ---
     subgraph DataLayer [Persistence and Messaging]
-        AuthDB[(Auth DB Users and Roles)]:::database
-        InvDB[(Inventory DB Stock and Outbox)]:::database
-        MailDB[(Mail DB Idempotency)]:::database
+        AuthDB[(Auth DB: Users and Sessions)]:::database
+        InvDB[(Inv DB: Core, Ledger and Outbox)]:::database
         Rabbit[RabbitMQ Event Broker]:::broker
     end
 
@@ -66,112 +95,39 @@ graph TD
 
     Auth --> AuthDB
     Inv --> InvDB
-    Mail --> MailDB
 
     Auth -.-> Rabbit
-    Inv -.-> Rabbit
+    Inv -.->|Transactional Outbox| Rabbit
 
     Rabbit --> Mail
-
 ```
-## 🚀 Tecnologias & Patterns
-* **Core:** Java 21, Spring Boot 3.4.1.
 
-* **API Gateway:** Spring Cloud Gateway, Rate Limiting (Redis) e Roteamento Dinâmico.
-
-* **Mensageria & Integração:** RabbitMQ (AMQP), Topic Exchange.
-    * **Transactional Outbox Pattern:** Garantia de atomicidade entre banco e broker (ACID).
-    * **Idempotent Consumer Pattern:** Deduplicação de mensagens no consumo para garantir *exactly-once processing* lógico.
-    * **Schema Evolution:** Versionamento de eventos para garantir compatibilidade retroativa (Backward Compatibility).
-    * **Resiliência:** Retries automáticos + Dead Letter Queues (DLQ).
-* **Segurança (OAuth2):**
-  * **Spring Authorization Server:** Implementação de OpenID Connect 1.0.
-  * **Assinatura RSA:** Chaves assimétricas (Pública/Privada) rotacionáveis.
-  * **Stateful Security:** Persistência JDBC de tokens e consentimentos (PostgreSQL).
-  * **Resource Server:** Validação JWT Stateless nos microsserviços.
-* **Observabilidade:** 
-  * **Métricas:** Prometheus e Grafana.
-  * **Logs:** Grafana Loki, Promtail e Logback Async Appender (Non-blocking I/O).
-  * **Tracing:** Rastreabilidade distribuída via `eventId`.
-* **Persistência:**
-    * **Banco de Dados:** PostgreSQL 15.
-    * **Advanced SQL:** Uso de features nativas como `SKIP LOCKED` e `RETURNING` para controle de concorrência.
-    * **ORM:** Hibernate (com otimizações de Batch).
-    * **Migrações:** Flyway.
-  
-* **Infraestrutura:** Docker, Docker Compose.
-
-* **Qualidade & Docs:** Swagger/OpenAPI, Sanitização XSS.
-
-### ⚡ Destaques de Engenharia (Enterprise Grade)
-* **🛡️ Idempotência Defensiva:** O sistema não confia na rede. Os consumidores implementam o padrão de *Idempotent Receiver* utilizando uma tabela de controle (`processed_events`) para garantir que mensagens duplicadas (comuns em falhas de ACK) sejam descartadas silenciosamente, prevenindo efeitos colaterais indesejados (ex: envio duplo de e-mail).
-* **🔄 Event Schema Evolution:** A arquitetura suporta evolução de contratos de mensagem sem *downtime*. Os eventos possuem versionamento explícito (`v1`, `v2`), permitindo que consumidores utilizem estratégias de *fallback* para processar ou adaptar mensagens antigas enquanto novas versões são implantadas.
-* **🔒 Zero-Lock Distributed Outbox:** Implementação avançada do *Outbox Pattern* utilizando `SELECT ... FOR UPDATE SKIP LOCKED` (PostgreSQL). Isso permite que múltiplas instâncias do microsserviço processem eventos simultaneamente sem *race conditions* ou bloqueios de tabela.
-* **⚛️ Atomic Inventory Management:** Eliminação total de *race conditions* na baixa de estoque. Utiliza `UPDATE ... RETURNING` para garantir consistência atômica e performance máxima, evitando o anti-pattern "Read-Modify-Write".
-* **🚫 Event-Driven Anti-Spam:** Lógica inteligente de detecção de transição de estado, garantindo que alertas de estoque baixo sejam disparados apenas uma vez no momento exato da quebra de limite, mesmo sob alta concorrência.
 ---
 
-## 🏛️ Arquitetura dos Serviços
+## 📂 Estrutura do Projeto (Modular DDD)
 
-### 1. ⛩️ API Gateway (Borda)
-   O ponto de entrada único do sistema.
-
-* **Porta:** `8080` 
-
-* **Features:**
-  * **Rate Limiting:** Proteção contra DDOS usando Redis (Bucket Token Algorithm).
-
-  * **Roteamento:** Direciona /usuarios para o Auth Service e /swagger-ui para documentação.
-
-  * **Segurança:** Filtros globais de header, roteamento OAuth2 estrito (rota de login legada removida para forçar fluxo OIDC) e Rate Limiting via Redis.
-### 2. 🔐 Auth Service (Rodando)
-O coração da segurança. Não é apenas uma API de usuários, mas um servidor OAuth2 completo.
-* **Porta:** `8081`
-* **Endpoints OAuth2:**
-    * `/oauth2/authorize` - Autorização.
-    * `/oauth2/token` - Emissão de Tokens (Access + Refresh).
-    * `/oauth2/jwks` - Chaves Públicas (RSA) para validação de JWT.
-* **Endpoints de Gestão:** Registro de usuário, recuperação de senha.
-
-* **Segurança:** Chaves RSA 2048-bit carregadas via variáveis de ambiente.
-
-### 3. 📨 Mail Service (Consumer)
-   Responsável pelo envio de notificações transacionais.
-
-* **Porta:** `8082`
-
-* **Features:** Ouve a fila auth.v1.password-reset.send-email e dispara e-mails via SMTP (Mailtrap).
-
-* **Resiliência:** Configurado com Retries Automáticos e Dead Letter Queue (DLQ). 
-
-### 4. 🐰 RabbitMQ (Broker)
-   O coração da comunicação assíncrona.
-
-* **Porta AMQP:** `5672`
-
-* **Dashboard:** `15672` 
-
-### 5. 🔭 Observabilidade (Infra)
-Stack completa de monitoramento rodando em containers.
-
-* **Grafana:** http://localhost:3000 (Dashboards e Logs)
-
-* **Prometheus:** http://localhost:9090 (Métricas)
-
-* **Loki:** Agregador de Logs centralizado.
-
-### 6. 📦 Inventory Service (Core)
-Responsável pelo controle de estoque e vendas de alta performance.
-* **Porta:** `8083`
-* **Features:**
-    * Baixa de estoque atômica (Concurrency-Safe).
-    * Processamento de eventos distribuído (Outbox Pattern com Skip Locked).
-    * Alertas de estoque em tempo real via RabbitMQ.
-  
-### 7. 🐾 Pet Service (Próximo Passo)
-Responsável pelo core business (regras de negócio).
-* **Porta:** `8082` (Previsto)
-* **Funcionalidades:** Cadastro de pets, agendamento de serviços (banho/tosa).
+```plaintext
+petshop-microservices/
+├── docs/                               # Hub de Governança & Arquitetura
+│   ├── architecture/                   # System Overview e Observabilidade
+│   ├── domains/                        # Deep Dives dos Bounded Contexts
+│   └── adr/                            # 9 Architecture Decision Records (MADR 3.0)
+│
+├── apps/
+│   ├── api-gateway/                    # Spring Cloud Gateway + Redis Token Bucket
+│   ├── auth-service/                   # Spring Authorization Server (OIDC / RSA)
+│   ├── mail-service/                   # Consumidor Idempotente de E-mails
+│   ├── common-lib/                     # Utilitários Compartilhados (Exceções, RSA Utils)
+│   └── inv-service/                    # Monólito Modular de Vendas, Estoque e Finanças
+│       └── src/main/java/inv/
+│           ├── checkout/               # Vendas, Pagamentos, Webhooks e Long Polling
+│           ├── finance/                # Ledger Append-Only, CQRS, High Watermark e D+0
+│           ├── inventory/              # Baixas Atômicas, Reserva e Alertas Anti-Spam
+│           └── shared/                 # Transactional Outbox (SKIP LOCKED) e Configurações
+│
+├── infra/                              # Stack de Observabilidade (Prometheus, Grafana, Loki)
+└── docker-compose.yml                  # Orquestração local de containers
+```
 
 ---
 
@@ -179,362 +135,77 @@ Responsável pelo core business (regras de negócio).
 
 ### Pré-requisitos
 * Docker e Docker Compose instalados.
-* Java 21 (Opcional, apenas se quiser rodar fora do Docker).
+* Java 21 (Opcional, caso queira rodar diretamente na IDE).
 
-### Passo a Passo
+### 1. Configurar Variáveis de Ambiente
+Crie um arquivo `.env` na raiz do projeto conforme o exemplo:
 
-1. **Clone o repositório:**
-    ```bash
-    git clone [https://github.com/iXDGabrielTK/petshop-microservices.git](https://github.com/iXDGabrielTK/petshop-microservices.git)
-    cd petshop-microservices
-    ```
+```env
+# Bancos de Dados
+DB_HOST_AUTH=postgres-auth
+DB_PORT_AUTH=5432
+DB_NAME_AUTH=petshop_auth
+DB_USER_AUTH=postgres
+DB_PASS_AUTH=postgres
 
-2. **Gere os executáveis (.jar):**
-    * No IntelliJ: Aba Maven > `auth-service` > `Lifecycle` > `clean` e `package`.
-    * Ou via terminal na pasta do serviço:
-        ```bash
-        cd apps/auth-service
-        ./mvnw clean package
-        ```
-3. **Configuração de Segurança**
-    * **Crie um arquivo chamado `.env`  na raiz.**
-    * Gere as chaves **RSA** e converta o conteúdo **PEM** para **Base64** (linha única).
-    * **Preencha o arquivo:**
-    ```env
-    # .env (Exemplo)
-   
-    # Configurações do Banco AUTH
-    DB_HOST_AUTH=postgres-auth
-    DB_PORT_AUTH=5432
-    DB_NAME_AUTH=petshop_auth
-    DB_USER_AUTH=postgres
-    DB_PASS_AUTH=postgres
-    
-    # Configurações do Banco INV
-    DB_HOST_INV=postgres-inv
-    DB_PORT_INV=5432
-    DB_NAME_INV=postgres-inv
-    DB_USER_INV=postgres
-    DB_PASS_INV=postgres
+DB_HOST_INV=postgres-inv
+DB_PORT_INV=5432
+DB_NAME_INV=postgres-inv
+DB_USER_INV=postgres
+DB_PASS_INV=postgres
 
-    # RabbitMQ
-    RABBITMQ_DEFAULT_USER=guest
-    RABBITMQ_DEFAULT_PASS=guest
-   
-    # Chaves RSA em Base64 (Sem quebras de linha!)
-    JWT_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAJD...
-    JWT_PUBLIC_KEY=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkO...
+# RabbitMQ
+RABBITMQ_DEFAULT_USER=guest
+RABBITMQ_DEFAULT_PASS=guest
 
-    # Mailtrap
-    MAILTRAP_HOST=smtp.mailtrap.io
-    MAILTRAP_PORT=2525
-    MAILTRAP_USER=seu_user
-    MAILTRAP_PASS=sua_senha
-   
-    # Redis
-    SPRING_DATA_REDIS_HOST=petshop-redis
-    SPRING_DATA_REDIS_PORT=6379
-    
-    # Outras Configurações
-    SERVER_FORWARD_HEADERS_STRATEGY=native
-    GRAFANA_ADMIN_PASSWORD=admin
-   
-    # Cors Config
-    CORS_ALLOWED_ORIGINS=http://localhost:3000
-    CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS
-    CORS_ALLOWED_HEADERS=Authorization,Content-Type
-    CORS_ALLOW_CREDENTIALS=true
+# Chaves RSA em Base64 (Linha única)
+JWT_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAJD...
+JWT_PUBLIC_KEY=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkO...
 
-    # Frontend URLs
-    FRONTEND_BASE_URL=http://localhost:3000
-    FRONTEND_DASHBOARD_URL=http://localhost:3000/dashboard
-   
-    # Segurança do Seed (Injeção de Dependência)
-    INITIAL_ADMIN_EMAIL=admin@petshop.com
-    INITIAL_ADMIN_PASSWORD=admin123
-    ```
-4. **Suba os containers:**
-    Na raiz do projeto (onde está o `docker-compose.yml`):
-    ```bash
-    docker-compose up --build
-    ```
+# Mailtrap
+MAILTRAP_HOST=smtp.mailtrap.io
+MAILTRAP_PORT=2525
+MAILTRAP_USER=seu_user
+MAILTRAP_PASS=sua_senha
 
-5. **Acesse a Documentação Unificada:**
-    http://localhost:8080/swagger-ui/index.html
+# Redis & Frontend
+SPRING_DATA_REDIS_HOST=petshop-redis
+SPRING_DATA_REDIS_PORT=6379
+FRONTEND_BASE_URL=http://localhost:3000
+
+# Seed Inicial de Administrador
+INITIAL_ADMIN_EMAIL=admin@petshop.com
+INITIAL_ADMIN_PASSWORD=admin_super_secret
+```
+
+### 2. Subir o Cluster
+```bash
+docker-compose up --build
+```
+
+### 3. Acessar Swagger / OpenAPI Unificado
+* Documentação das APIs: [http://localhost:8080/swagger-ui/index.html](http://localhost:8080/swagger-ui/index.html)
+* Grafana: [http://localhost:3000](http://localhost:3000) (`admin` / `admin`)
+* Prometheus: [http://localhost:9090](http://localhost:9090)
+* RabbitMQ Management: [http://localhost:15672](http://localhost:15672) (`guest` / `guest`)
 
 ---
 
-## 🧪 Payloads e Fluxos de Autenticação (OAuth2)
+## 🧪 Estratégia de Testes de Concorrência (Testcontainers)
 
-> ⚠️ O projeto utiliza **OAuth2 com JWT**.  
-> Não existe mais login via endpoint REST (`/usuarios/login`).
-> A autenticação é feita exclusivamente pelo Authorization Server.
+Os testes de estresse validam os pontos críticos de concorrência com containers reais PostgreSQL e RabbitMQ:
 
----
-
-## 🔐 1. Obter Token – Client Credentials Flow
-
-Fluxo utilizado para:
-- Testes no Postman
-- Comunicação máquina-a-máquina
-- Endpoints sem usuário final
-
-### Endpoint
-POST http://localhost:8081/oauth2/token
-
-### Autenticação
-**Basic Auth**
-```bash
-Username: petshop-client
-Password: secret123
-```
-### Body (x-www-form-urlencoded)
-```bash
-grant_type=client_credentials
-scope=pets:read
-```
-### Resposta (exemplo)
-```json
-{
-  "access_token": "SEU_ACCESS_TOKEN_AQUI",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "scope": "pets:read"
-}
-```
-📌 Utilize o token nos endpoints protegidos:
-
-`Authorization: Bearer SEU_ACCESS_TOKEN_AQUI`
-
-## 🔑 2. Login de Usuário – Authorization Code Flow (Front-end)
-
-Este fluxo é utilizado pelo Front-end e ocorre via redirecionamento no navegador.
-
-### 2.1 Acessar no navegador
-```
-http://localhost:8081/oauth2/authorize?response_type=code&client_id=petshop-client&scope=openid profile&redirect_uri=http://127.0.0.1:8080/authorized
-```
-
-### 2.2 Login
-Faça login com um usuário cadastrado (ex: `user1` / `password1`)
+1. **Race Conditions de Estoque ([ADR-0002](docs/adr/0002-atomic-sql-inventory-and-hybrid-locking.md)):** 50 threads concorrentes disputando as últimas 5 unidades de produto.
+2. **Workers Paralelos de Outbox ([ADR-0004](docs/adr/0004-transactional-outbox-with-skip-locked.md)):** Múltiplas instâncias executando `SELECT ... FOR UPDATE SKIP LOCKED` simultaneamente sem duplicações ou deadlocks.
+3. **Auto-Cura CQRS ([ADR-0006](docs/adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)):** Injeção de falha na projeção assíncrona e reprocessamento com consistência garantida.
+4. **Idempotência de Entrega ([ADR-0008](docs/adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)):** Rajada de 10 mensagens duplicadas no broker garantindo disparo único de notificação.
 
 ```bash
-Email: admin@petshop.com
-Senha: admin123
-```
-
-### 2.3 Callback com Authorization Code
-Após o login, o usuário será redirecionado para:
-
-```
-http://127.0.0.1:8080/authorized?code=AUTHORIZATION_CODE
-```
-
-### 2.4 Trocar Authorization Code por Tokens
-Faça uma requisição POST para:
-```
-POST http://localhost:8081/oauth2/token
-```
-### Autenticação
-**Basic Auth**
-
-```bash
-Username: petshop-client
-Password: secret123
-```
-
-### Body (x-www-form-urlencoded)
-```bash
-grant_type=authorization_code
-code=AUTHORIZATION_CODE
-redirect_uri=http://127.0.0.1:8080/authorized
-```
-
-### Resposta (exemplo)
-```json
-{
-  "access_token": "SEU_ACCESS_TOKEN_AQUI",
-  "refresh_token": "SEU_REFRESH_TOKEN_AQUI",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "scope": "openid profile"
-}
-```
-
-## 👤 3. Endpoints de Usuário (REST)
-### 3.1 Registrar Novo Usuário
-
-```
-POST /usuarios/register
-```
-
-```json
-{
-  "nome": "Seu Nome",
-  "email": "teste@email.com",
-  "senha": "SenhaForte123!"
-}
-```
-
-#### 🔐 Regras da senha
-
-* Mínimo 8 caracteres
-
-* Letra maiúscula
-
-* Letra minúscula
-
-* Número
-
-* Caractere especial
-
-3.2 Recuperar Senha – Solicitação (Público)
-
-```
-POST /usuarios/forgot-password
-```
-
-```json
-{
-  "email": "teste@email.com"
-}
-```
-
-📌 Um email será enviado com instruções para redefinição da senha.
----
-
-### 🚫 Endpoints Removidos
-Os endpoints abaixo não existem mais e não devem ser utilizados:
-
-* ❌ POST /usuarios/login
-
-* ❌ POST /usuarios/refresh-token
-
-* ❌ POST /usuarios/logout
-
----
-
-## 📂 Estrutura do Projeto
-```
-petshop-microservices/
-├── apps/
-│   ├── auth-service/       # [Provider] Autenticação (OAuth2 + OIDC)
-│   │   ├── src/main/java/auth/
-│   │   │   ├── config/     # SecurityConfig, RabbitMQConfig
-│   │   │   ├── controller/ # Endpoints de Login/Token
-│   │   │   ├── security/   # UserDetails, JWK Source
-│   │   │   └── service/    # Regras de Auth
-│   │   └── Dockerfile
-│   │
-│   ├── inv-service/        # [Core] Gestão de Estoque e Vendas (Novo!)
-│   │   ├── src/main/java/inv/
-│   │   │   ├── config/     # SecurityConfig
-│   │   │   ├── controller/ # Endpoints de Produto/Venda
-│   │   │   ├── dto/        # Records (VendaRequest, etc)
-│   │   │   ├── event/      # Eventos de Domínio (EstoqueBaixoEvent)
-│   │   │   ├── listener/   # Transactional Event Listeners
-│   │   │   └── service/    # Regras de Baixa Atômica
-│   │   └── Dockerfile
-│   │
-│   ├── mail-service/       # [Consumer] Envio de E-mails
-│   │   ├── src/main/java/mail/
-│   │   │   ├── config/     # RabbitMQConfig (Bindings)
-│   │   │   ├── message/    # DTOs de Mensagem
-│   │   │   └── service/    # Consumidores (RabbitListener)
-│   │   └── Dockerfile
-│   │ 
-│   ├── api-gateway/        # API Gateway (Spring Cloud Gateway)
-│   │   ├── src/main/java/gateway/
-│   │   │   └── config/     # RateLimiting, Rotas e Segurança
-│   │   └── Dockerfile
-│   │
-│   └── common-lib/         # Biblioteca Compartilhada
-│       ├── src/main/java/common/
-│       │   ├── exception/  # GlobalExceptionHandler
-│       │   └── security/   # Utilitários RSA/JWT
-│       ├── src/main/resources/
-│       │   └── logback-shared.xml # Configuração Async de Logs
-│       └── Dockerfile
-│
-├── infra/                  # Stack de Observabilidade
-│   ├── prometheus/         # Coleta de métricas
-│   ├── grafana/            # Dashboards
-│   └── promtail/           # Coleta de logs para o Loki
-│
-└── docker-compose.yml      # Orquestração de todos os containers
-```
-
-## 📊 Observabilidade e Monitoramento
-
-O projeto possui uma stack completa de monitoramento configurada via Docker.
-
-| Ferramenta     | URL                                              | Credenciais (Padrão) | Descrição                              |
-|:---------------|:-------------------------------------------------|:---------------------|:---------------------------------------|
-| **Grafana**    | [http://localhost:3000](http://localhost:3000)   | `admin` / `admin`    | Visualização de métricas e Dashboards. |
-| **Prometheus** | [http://localhost:9090](http://localhost:9090)   | N/A                  | Coletor de métricas (Time Series DB).  |
-| **RabbitMQ**   | [http://localhost:15672](http://localhost:15672) | `guest` / `guest`    | Gestão de filas e exchanges.           |
-
-### Dashboards Recomendados (Grafana)
-Para visualizar os dados, importe os seguintes IDs no Grafana:
-* **Spring Boot Statistics:** ID `11378` ou `19004` (Métricas de JVM, CPU, Requisições HTTP e Erros).
-* **RabbitMQ Overview:** ID `4279` (Métricas de Filas, Conexões e Consumidores).
-
----
-
-## 🧪 Quality Assurance & Testes de Concorrência
-
-Este projeto inclui testes de integração avançados para garantir a robustez em cenários de *High Concurrency*.
-
-### ✅ O que testamos?
-1.  **Race Conditions de Estoque:** Simulação de múltiplas threads tentando comprar o mesmo último item simultaneamente.
-2.  **Outbox Locking:** Garantia de que múltiplas instâncias do scheduler não processem o mesmo evento duas vezes (`SKIP LOCKED`).
-3.  **Idempotência:** Teste de envio duplicado de mensagens para garantir que apenas um e-mail seja disparado.
-
-### Como Rodar os Testes
-Os testes de integração sobem containers Docker temporários (Testcontainers) para isolamento total.
-
-```bash
-# Rodar todos os testes (Unitários + Integração)
+# Executar a suíte de testes completa
 ./mvnw test
-
-# Rodar apenas o teste de concorrência do Outbox
-./mvnw -Dtest=OutboxConcurrencyManualRunner test
 ```
+
 ---
 
-## 🗺️ Roadmap (Próximos Passos)
-
-* [x] Auth Service: Login, Registro, JWT, Refresh Token, Logout.
-* [x] Segurança: Criptografia de senhas, proteção XSS e Recuperação de Senha.
-* [x] Docker: Containerização do Banco e API.
-* [x] Mensageria: Integração com RabbitMQ (Producer/Consumer).
-* [x] Resiliência: Implementação de DLQ (Dead Letter Queue) e Retries.
-* [x] Observabilidade Completa:
-    * [x] Métricas (Prometheus/Grafana)
-    * [x] Logs Centralizados (Loki/Promtail)
-* [x] Mail Service: Microserviço dedicado para notificações.
-* [x] **Enterprise Hardening:**
-    * [x] Implementação de Idempotência no Consumidor (Mail Service).
-    * [x] Versionamento de Eventos (Schema Evolution) no Outbox.
-    * [x] Rastreabilidade End-to-End com `eventId`.
-* [x] Inventory Service:
-    * [x] Catálogo de Produtos e Controle de Estoque.
-    * [x] Motor de Vendas com baixa atômica (`UPDATE ... RETURNING`).
-    * [x] Alertas automáticos com lógica Anti-Spam.
-    * [x] Testes de Concorrência Extrema (Multi-threaded).
-* [ ] Pet Service: CRUD de Pets e vínculo com usuário logado.
-* [ ] Agendamento: Lógica de horários para Banho e Tosa.
-* [ ] Front-end: Interface em React.
----
 ## 📄 Licença
-
 Este projeto está sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
-
----
-
-## 📬 Contato
-Gostou do projeto? Entre em contato!
-
-* **LinkedIn:** https://www.linkedin.com/in/gabriel-tanaka-b1669b175/
-
-* **Email:** gabrielferraritanaka@gmail.com
