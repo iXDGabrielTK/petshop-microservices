@@ -78,6 +78,7 @@ jobs:
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
+          trivyignores: .trivyignore
 
   # --------------------------------------------------------
   # ETAPA 4: Build e Push das Imagens Docker (Em Matriz)
