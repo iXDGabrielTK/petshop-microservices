@@ -1,13 +1,15 @@
 package inv.service;
 
 import common.exception.BusinessException;
-import inv.event.VendaConcluidaEvent;
-import inv.model.ItemVenda;
-import inv.model.Pagamento;
-import inv.model.Produto;
-import inv.model.Venda;
-import inv.repository.PagamentoRepository;
-import inv.repository.VendaRepository;
+import inv.checkout.usecase.VendaService;
+import inv.checkout.infrastructure.messaging.event.VendaConcluidaEvent;
+import inv.inventory.usecase.EstoqueService;
+import inv.checkout.domain.model.ItemVenda;
+import inv.checkout.domain.model.Pagamento;
+import inv.inventory.domain.model.Produto;
+import inv.checkout.domain.model.Venda;
+import inv.checkout.infrastructure.persistence.PagamentoRepository;
+import inv.checkout.infrastructure.persistence.VendaRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,13 +35,15 @@ class VendaServicePagamentoTest {
     @Mock private VendaRepository vendaRepository;
     @Mock private EstoqueService estoqueService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private inv.shared.outbox.repository.OutboxRepository outboxRepository;
+    @Mock private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @InjectMocks
     private VendaService vendaService;
 
     @Test
-    @DisplayName("DEVE confirmar pagamento, baixar estoque definitivo e publicar evento quando venda for quitada")
-    void deveConcluirVendaQuandoPagamentoForIntegral() {
+    @DisplayName("DEVE confirmar pagamento, baixar estoque definitivo e publicar evento na outbox quando venda for quitada")
+    void deveConcluirVendaQuandoPagamentoForIntegral() throws Exception {
         // CENÁRIO
         Long vendaId = 100L;
         Long pagamentoId = 50L;
@@ -47,6 +51,7 @@ class VendaServicePagamentoTest {
         // Venda (Spy)
         Venda vendaSpy = spy(new Venda());
         doReturn(vendaId).when(vendaSpy).getId();
+        org.springframework.test.util.ReflectionTestUtils.setField(vendaSpy, "status", inv.checkout.domain.model.StatusVenda.AGUARDANDO_PAGAMENTO);
         doReturn(true).when(vendaSpy).estaPaga();
 
         // Produto (Mock)
@@ -61,10 +66,12 @@ class VendaServicePagamentoTest {
 
         // Pagamento (Mock)
         Pagamento pagamentoMock = mock(Pagamento.class);
+        when(pagamentoMock.getValorRecebido()).thenReturn(new BigDecimal("100.00"));
 
         // Repositórios
         when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(vendaSpy));
         when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamentoMock));
+        when(objectMapper.writeValueAsString(any())).thenReturn("{\"id\":100}");
 
         // AÇÃO
         vendaService.processarPagamento(vendaId, pagamentoId);
@@ -75,13 +82,15 @@ class VendaServicePagamentoTest {
         verify(vendaRepository, times(1)).save(vendaSpy);
 
         // VERIFICAÇÃO 2: Contrato com EstoqueService (baixa definitiva)
-        verify(estoqueService, times(1)).confirmarBaixaEstoque(eq(produtoMock), eq(new BigDecimal("2")), eq(vendaSpy));
+        verify(estoqueService, times(1)).confirmarBaixaEstoque(eq(produtoMock), eq(new BigDecimal("2")), eq(vendaId));
 
-        // VERIFICAÇÃO 3: Publicação de eventos (Side-effects controlados)
-        ArgumentCaptor<VendaConcluidaEvent> eventCaptor = ArgumentCaptor.forClass(VendaConcluidaEvent.class);
-        verify(eventPublisher, times(1)).publishEvent(eventCaptor.capture());
+        // VERIFICAÇÃO 3: Publicação de eventos na Outbox (Transactional Outbox)
+        ArgumentCaptor<inv.shared.outbox.model.Outbox> outboxCaptor = ArgumentCaptor.forClass(inv.shared.outbox.model.Outbox.class);
+        verify(outboxRepository, times(1)).save(outboxCaptor.capture());
 
-        assertEquals(vendaId, eventCaptor.getValue().id(), "O evento deve carregar o ID da venda correta");
+        assertEquals(VendaConcluidaEvent.class.getName(), outboxCaptor.getValue().getEventType(), "O evento salvo na outbox deve ser VendaConcluidaEvent com FQN");
+        assertEquals("{\"id\":100}", outboxCaptor.getValue().getPayload(), "O payload salvo deve corresponder ao serializado");
+        verifyNoInteractions(eventPublisher); // Confirma que não usa mais eventPublisher direto
     }
 
     @Test
@@ -89,10 +98,11 @@ class VendaServicePagamentoTest {
     void deveRegistrarPagamentoParcialSemConcluir() {
         // CENÁRIO
         Venda vendaSpy = spy(new Venda());
-        doReturn(100L).when(vendaSpy).getId();
+        org.springframework.test.util.ReflectionTestUtils.setField(vendaSpy, "status", inv.checkout.domain.model.StatusVenda.AGUARDANDO_PAGAMENTO);
         doReturn(false).when(vendaSpy).estaPaga();
 
         Pagamento pagamentoMock = mock(Pagamento.class);
+        when(pagamentoMock.getValorRecebido()).thenReturn(new BigDecimal("50.00"));
 
         when(vendaRepository.findByIdWithLock(100L)).thenReturn(Optional.of(vendaSpy));
         when(pagamentoRepository.findById(50L)).thenReturn(Optional.of(pagamentoMock));
