@@ -1,12 +1,31 @@
-# Usa uma imagem leve do Java 21
+# -------- STAGE 1: Build --------
+FROM maven:3.9.9-eclipse-temurin-21 AS builder
+
+WORKDIR /build
+
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+
+RUN ./mvnw dependency:go-offline -B
+
+COPY common-lib ./common-lib
+COPY src ./src
+
+RUN ./mvnw clean package -DskipTests
+
+# -------- STAGE 2: Runtime --------
 FROM eclipse-temurin:21-jre-alpine
 
-# Define a pasta de trabalho dentro do container
 WORKDIR /app
 
-# Copia o .jar que você gerou no build para dentro do container
-# O nome do jar pode variar, o asterisco (*) ajuda a pegar qualquer versão
-COPY target/*.jar app.jar
+# Segurança: não rodar como root
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Comando para rodar o app
-ENTRYPOINT ["java", "-jar", "app.jar"]
+COPY --from=builder /build/target/api-gateway-1.0-SNAPSHOT.jar app.jar
+
+USER appuser
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
