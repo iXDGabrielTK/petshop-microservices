@@ -1,4 +1,4 @@
-package inv.checkout.domain.model;
+package inv.shared.domain;
 
 import lombok.Getter;
 
@@ -14,5 +14,4 @@ public enum MetodoPagamento {
     MetodoPagamento(boolean exigeProcessamento) {
         this.exigeProcessamento = exigeProcessamento;
     }
-
 }

@@ -1,6 +1,6 @@
 package inv.checkout.infrastructure.web.dto;
 
-import inv.checkout.domain.model.MetodoPagamento;
+import inv.shared.domain.MetodoPagamento;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 

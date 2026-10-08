@@ -26,10 +26,10 @@ public class VendaPagaEventListener {
                 TipoLancamento.CREDITO,
                 event.valorRecebido()
         );
-        lancamentoRepository.save(lancamento);
+        lancamento = lancamentoRepository.save(lancamento);
 
         eventPublisher.publishEvent(new LancamentoRegistradoEvent(
-                event.vendaId(),
+                lancamento.getId(),
                 lancamento.getVendaId(),
                 lancamento.getValor(),
                 lancamento.getTipo()

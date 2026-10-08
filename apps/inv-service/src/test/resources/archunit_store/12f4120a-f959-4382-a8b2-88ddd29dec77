@@ -1,0 +1,3 @@
+Constructor <inv.finance.usecase.DashboardService.<init>(inv.checkout.infrastructure.persistence.VendaRepository, inv.inventory.infrastructure.persistence.ProdutoRepository, org.springframework.data.redis.core.StringRedisTemplate)> has parameter of type <inv.inventory.infrastructure.persistence.ProdutoRepository> in (DashboardService.java:0)
+Field <inv.finance.usecase.DashboardService.produtoRepository> has type <inv.inventory.infrastructure.persistence.ProdutoRepository> in (DashboardService.java:0)
+Method <inv.finance.usecase.DashboardService.getStats()> calls method <inv.inventory.infrastructure.persistence.ProdutoRepository.countProdutosComEstoqueBaixo()> in (DashboardService.java:64)

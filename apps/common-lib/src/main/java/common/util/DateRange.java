@@ -1,12 +1,16 @@
 package common.util;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 public record DateRange(
         LocalDateTime inicio,
         LocalDateTime fim
 ) {
+
+    public static final ZoneId DEFAULT_ZONE = ZoneId.of("America/Sao_Paulo");
 
     public DateRange {
         if (inicio == null || fim == null) {
@@ -19,38 +23,56 @@ public record DateRange(
     }
 
     public static DateRange hoje() {
-        LocalDateTime inicio = LocalDate.now().atStartOfDay();
+        return hoje(Clock.system(DEFAULT_ZONE));
+    }
+
+    public static DateRange hoje(Clock clock) {
+        LocalDateTime inicio = LocalDate.now(clock).atStartOfDay();
         return new DateRange(inicio, inicio.plusDays(1));
     }
 
     public static DateRange ontem() {
-        LocalDateTime inicio = LocalDate.now().minusDays(1).atStartOfDay();
+        return ontem(Clock.system(DEFAULT_ZONE));
+    }
+
+    public static DateRange ontem(Clock clock) {
+        LocalDateTime inicio = LocalDate.now(clock).minusDays(1).atStartOfDay();
         return new DateRange(inicio, inicio.plusDays(1));
     }
 
     public static DateRange mesAtual() {
-        LocalDateTime inicio = LocalDate.now()
+        return mesAtual(Clock.system(DEFAULT_ZONE));
+    }
+
+    public static DateRange mesAtual(Clock clock) {
+        LocalDateTime inicio = LocalDate.now(clock)
                 .withDayOfMonth(1)
                 .atStartOfDay();
-
         return new DateRange(inicio, inicio.plusMonths(1));
     }
 
     public static DateRange mesPassado() {
-        LocalDateTime inicio = LocalDate.now()
+        return mesPassado(Clock.system(DEFAULT_ZONE));
+    }
+
+    public static DateRange mesPassado(Clock clock) {
+        LocalDateTime inicio = LocalDate.now(clock)
                 .minusMonths(1)
                 .withDayOfMonth(1)
                 .atStartOfDay();
-
         return new DateRange(inicio, inicio.plusMonths(1));
     }
 
     public static DateRange ultimosDias(int dias) {
+        return ultimosDias(dias, Clock.system(DEFAULT_ZONE));
+    }
+
+    public static DateRange ultimosDias(int dias, Clock clock) {
         if (dias <= 0) {
             throw new IllegalArgumentException("dias deve ser maior que zero");
         }
 
-        LocalDateTime fim = LocalDate.now()
+        LocalDateTime fim = LocalDate.now(clock)
                 .plusDays(1)
                 .atStartOfDay();
 
@@ -58,5 +80,4 @@ public record DateRange(
 
         return new DateRange(inicio, fim);
     }
-
 }

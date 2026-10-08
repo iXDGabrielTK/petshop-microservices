@@ -49,7 +49,7 @@ public class FinancialProjectionListener {
     public void processarComIdempotencia(LancamentoRegistradoEvent event) {
         try {
             projectionTxTemplate.executeWithoutResult(status -> {
-                jdbcTemplate.update("INSERT INTO financial_projection_checkpoint (lancamento_id) VALUES (?)", event.lancamentoId());
+                jdbcTemplate.update("INSERT INTO financial_projection_checkpoint_v2 (lancamento_id) VALUES (?)", event.lancamentoId());
                 BigDecimal credito = event.tipo() == TipoLancamento.CREDITO ? event.valorAssinado().abs() : BigDecimal.ZERO;
                 BigDecimal estorno = event.tipo() == TipoLancamento.ESTORNO ? event.valorAssinado().abs() : BigDecimal.ZERO;
                 projectionRepository.upsertProjection(event.vendaId(), event.valorAssinado(), credito, estorno);

@@ -21,7 +21,7 @@ public class ReconciliacaoService {
 
     // Executa em uma nova transação para não impactar o fechamento caso gere logs massivos
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void executarReconciliacaoIncremental(long ultimoReconhecido, long novoMaxId) {
+    public List<DivergenciaResult> executarReconciliacaoIncremental(long ultimoReconhecido, long novoMaxId) {
 
         List<DivergenciaResult> divergencias = reconRepository.auditarDivergencias(ultimoReconhecido, novoMaxId);
 
@@ -43,5 +43,6 @@ public class ReconciliacaoService {
 
         reconRepository.save(new ReconciliacaoCheckpoint(novoMaxId));
         log.info("🔍 Reconciliação O(Δ) concluída até o ID {}", novoMaxId);
+        return divergencias;
     }
 }
