@@ -150,6 +150,17 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <annotationProcessorPaths combine.self="override"/>
+                            <compilerArgs>
+                                <arg>-proc:none</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
