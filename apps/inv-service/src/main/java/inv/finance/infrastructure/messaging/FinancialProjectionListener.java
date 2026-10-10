@@ -5,6 +5,8 @@ import inv.finance.domain.model.ProjectionRetry;
 import inv.finance.domain.model.TipoLancamento;
 import inv.finance.infrastructure.persistence.FinancialProjectionRepository;
 import inv.finance.infrastructure.persistence.ProjectionRetryRepository;
+import inv.finance.infrastructure.persistence.ProjecaoReceitaDiariaRepository;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,18 +28,24 @@ public class FinancialProjectionListener {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate projectionTxTemplate;
     private final ObjectMapper objectMapper;
+    private final ProjecaoReceitaDiariaRepository projecaoDiariaRepository;
+    private final boolean projecaoDiariaHabilitada;
 
     public FinancialProjectionListener(
             FinancialProjectionRepository projectionRepository,
             ProjectionRetryRepository retryRepository,
             JdbcTemplate jdbcTemplate,
             @Qualifier("projectionTxTemplate") TransactionTemplate projectionTxTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            ProjecaoReceitaDiariaRepository projecaoDiariaRepository,
+            @Value("${finance.projection.diaria.enabled:true}") boolean projecaoDiariaHabilitada) {
         this.projectionRepository = projectionRepository;
         this.retryRepository = retryRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.projectionTxTemplate = projectionTxTemplate;
         this.objectMapper = objectMapper;
+        this.projecaoDiariaRepository = projecaoDiariaRepository;
+        this.projecaoDiariaHabilitada = projecaoDiariaHabilitada;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -53,6 +61,9 @@ public class FinancialProjectionListener {
                 BigDecimal credito = event.tipo() == TipoLancamento.CREDITO ? event.valorAssinado().abs() : BigDecimal.ZERO;
                 BigDecimal estorno = event.tipo() == TipoLancamento.ESTORNO ? event.valorAssinado().abs() : BigDecimal.ZERO;
                 projectionRepository.upsertProjection(event.vendaId(), event.valorAssinado(), credito, estorno);
+                if (projecaoDiariaHabilitada) {
+                    projecaoDiariaRepository.aplicar(event.lancamentoId());
+                }
             });
             log.debug("✅ Projeção CQRS atualizada. Lançamento ID: {}", event.lancamentoId());
 

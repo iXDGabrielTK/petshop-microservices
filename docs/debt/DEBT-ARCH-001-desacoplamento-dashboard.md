@@ -8,8 +8,8 @@
 
 - [x] **E0** — Rede de segurança (Testes de caracterização + Catraca FreezingArchRule)
 - [x] **E1** — Correções bloqueantes (F1, F3, F7)
-- [ ] **E2** — APIs de query Checkout e Inventory (V5 migration + JdbcVendaQueryService)
-- [ ] **E3** — Projeção diária Finance (V4 migration + listener + catch-up)
+- [x] **E2** — APIs de query Checkout e Inventory (V5 migration + JdbcVendaQueryService)
+- [x] **E3** — Projeção diária Finance (V4 migration + listener + catch-up)
 - [ ] **E4** — Módulo inv.dashboard + Shadow mode (dashboard.engine)
 - [ ] **E5** — Cutover (Carga sintética 7d + 100% reconciliação)
 - [ ] **E6** — Descomissionamento do legado + Remoção da catraca
@@ -642,12 +642,25 @@ mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest -Dsurefire.failIfNoSpec
 - **Rollback:** reverter o código. O `checkpoint_v2` fica órfão, sem efeito. O reparo é idempotente e pode rodar de novo.
 
 ### E2 — APIs de query do Checkout e do Inventory (aditivo, ainda sem uso)
+> **Estado atual:** **Concluída.**
+> - **Contratos e Implementações:** `checkout.api.*` (`VendaQueryService`, `VendaRecenteView`, `FaturamentoDiarioView`) e `inventory.api.*` (`EstoqueQueryService`, `ResumoEstoque`) criados como Published Language pura (interfaces e records, sem acoplamento a entidades ou JPA); `JdbcVendaQueryService` e `JpaEstoqueQueryService` criados com visibilidade package-private (`class ...`) nas camadas `infrastructure.query`.
+> - **Decisão Q3:** Constante `StatusVenda.FATURADAS = List.of(CONCLUIDA, CANCELAMENTO_SOLICITADO)` adicionada ao domínio do Checkout e utilizada nas queries de `listarRecentes` e `contarVendasConcluidas`; métodos transitórios de paridade (`somarFaturamentoConcluido` e `faturamentoDiarioConcluido`) preservam filtro estrito em `CONCLUIDA`.
+> - **Migration V5:** Criada `V5__indices_dashboard.sql` com índices parciais concorrentes (`idx_vendas_concluidas`, `idx_itens_venda_venda`, `idx_produtos_abaixo_min`) e `V5__indices_dashboard.sql.conf` com `executeInTransaction=false`. Configurado `spring.flyway.postgresql.transactional-lock=false` e `spring.flyway.out-of-order=true` em `application.properties` para viabilizar execução de `CREATE INDEX CONCURRENTLY` sem deadlock e permitir a futura `V4` na E3.
+> - **Testes e Gate:** `JdbcVendaQueryServiceIT` (12 testes) e `JpaEstoqueQueryServiceIT` (5 testes) cobrindo venda sem itens, múltiplos itens, ordenação, limites/clamping, bordas de meia-noite, filtro Q3, estoque_minimo nulo, validação de `pg_index.indisvalid = true`, validação de invariantes dos records de view, parâmetros nulos, intervalos invertidos, banco vazio e planos `EXPLAIN` confirmando o uso de todos os 3 índices da V5 (`idx_vendas_concluidas`, `idx_itens_venda_venda`, `idx_produtos_abaixo_min`). `ArquiteturaTest` (6 regras, incluindo R9 de pureza de Published Language e R10 de confinamento de implementações de query) verde com 0 violações e catraca inalterada.
+
 - **Artefatos:** `checkout.api.*`, `inventory.api.*`, `JdbcVendaQueryService`, `JpaEstoqueQueryService` e a migration de índices `V5` (`CONCURRENTLY`).
 - **Testes:** `JdbcVendaQueryServiceIT` (venda sem itens, venda com vários itens, limite e ordenação, só `CONCLUIDA` na contagem, borda de meia-noite) e `JpaEstoqueQueryServiceIT` (`estoque_minimo NULL` não é contado, igual ao legado). `EXPLAIN` das queries usando os índices.
 - **Aceite:** testes verdes. O `ArquiteturaTest` continua verde (catraca inalterada).
 - **Rollback:** código sem consumidores, basta revert. Os índices podem ser removidos com `DROP INDEX CONCURRENTLY`.
 
 ### E3 — Projeção diária do Finance (ADR-0006 estendida)
+> **Estado atual:** **Concluída.**
+> - **Migration V4:** `V4__projecao_receita_diaria.sql` criada com tabelas aditivas `financial_projection_diaria` (grão diário) e `financial_projection_diaria_checkpoint` (idempotência física por `lancamento_id`).
+> - **Repositório e Listener:** `ProjecaoReceitaDiariaRepository` implementado com CTE atômica em PostgreSQL (`aplicar` e `aplicarFaixa`), garantindo idempotência e tolerância a retries tardios; `FinancialProjectionListener` estendido para gravar a projeção diária na mesma transação atômica do checkpoint v2, sob feature flag `finance.projection.diaria.enabled=true`.
+> - **Catch-up e Backfill:** `ProjecaoDiariaCatchUpJob` implementado com execução periódica (`@Scheduled`), tolerância a janelas concorrentes e método de backfill completo particionado em lotes de 5.000 IDs.
+> - **Decisão Q1 (Regime de Caixa e Troco):** `VendaEventHandler` corrigido para calcular o valor retido líquido (`valorRecebido - troco`) antes da publicação do `VendaPagaEvent`, assegurando que o ledger (`lancamentos_financeiros`) e a projeção diária registrem estritamente a receita retida em caixa.
+> - **Published Language e Query Service:** Contratos puros em `finance.api.*` (`ReceitaQueryService`, `PeriodoContabil`, `ResumoReceita`, `ReceitaDiariaView`, `FechamentoCaixaView`, `FrescorProjecao`) e implementação package-private `ProjecaoReceitaQueryService` com `JdbcClient` (gerando série densa via `generate_series`).
+> - **Testes e Gate:** `ProjecaoReceitaDiariaIT` com 15 testes de integração cobrindo idempotência (1x após 3 execuções), injeção de falha transitória com auto-cura via `projection_retry_queue`, corrida concorrente entre listener e backfill simultâneo com latch, separação de lançamentos perto da meia-noite (23:59:59 vs 00:00:01), série densa com dias sem movimento zerados, retenção estrita de valor líquido em pagamentos com troco (Q1), pagamentos múltiplos misturando cartão e dinheiro com troco, estornos/débitos (redução de receita e saldo líquido negativo), catch-up de lançamentos defasados, short-circuit de catch-up sem lag (`maxCheckpointId >= maxLedgerId`), backfill completo multi-dias particionado em lotes com transações autônomas, consulta ao fechamento D+0, invariantes de `PeriodoContabil` e `FrescorProjecao`, validações de nulos e períodos vazios. `ArquiteturaTest` (6 regras, incluindo R9 com condição de contratos puros `beInterfacesRecordsOrEnums` e R10) 100% verde com catraca inalterada.
 - **Artefatos:** `V4__projecao_receita_diaria.sql`, `ProjecaoReceitaDiariaRepository`, extensão do listener (flag), `ProjecaoDiariaCatchUpJob` (`@Scheduled`, janela dos últimos N mil IDs, `SKIP LOCKED`-safe por ser idempotente), comando de backfill completo e `finance.api.*` + `ProjecaoReceitaQueryService`.
 - **Sequência de deploy:** (1) migration + código com flag **ligada**, em rolling deploy. Instâncias antigas não escrevem a projeção diária, o que é aceitável. (2) Após o rollout, rodar o **backfill completo** `aplicarFaixa(0, max)` em lotes de 5.000. Os checkpoints garantem que nada é contado duas vezes, mesmo em concorrência com o listener. (3) O catch-up periódico corrige qualquer lacuna residual.
 - **Testes:** `ProjecaoReceitaDiariaIT`: idempotência (o mesmo lançamento 2× conta 1×); falha e retry (reaproveita o padrão do `ProjecaoRetryIntegrationTest`); **corrida entre listener e backfill** (`CountDownLatch` + 2 threads, a soma bate com o ledger); lançamento perto da meia-noite cai no dia correto; série densa com dias zerados.
