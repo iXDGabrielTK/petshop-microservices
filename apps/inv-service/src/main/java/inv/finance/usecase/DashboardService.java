@@ -21,6 +21,8 @@ import java.time.format.TextStyle;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import common.telemetry.TelemetriaKeys;
+
 @Service
 public class DashboardService {
 
@@ -28,7 +30,7 @@ public class DashboardService {
     private final ProdutoRepository produtoRepository;
     private final StringRedisTemplate redisTemplate;
 
-    private static final String ACTIVITY_KEY = "system:activity:ts";
+    private static final String ACTIVITY_KEY = TelemetriaKeys.ATIVIDADE_ZSET;
 
     public DashboardService(
             VendaRepository vendaRepository,
