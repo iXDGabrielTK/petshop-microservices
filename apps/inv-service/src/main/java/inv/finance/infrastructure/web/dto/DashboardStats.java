@@ -1,8 +1,11 @@
 package inv.finance.infrastructure.web.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.math.BigDecimal;
 import java.util.List;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record DashboardStats(
         BigDecimal totalRevenue,
         BigDecimal revenueGrowth,

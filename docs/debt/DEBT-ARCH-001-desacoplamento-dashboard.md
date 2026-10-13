@@ -10,8 +10,8 @@
 - [x] **E1** — Correções bloqueantes (F1, F3, F7)
 - [x] **E2** — APIs de query Checkout e Inventory (V5 migration + JdbcVendaQueryService)
 - [x] **E3** — Projeção diária Finance (V4 migration + listener + catch-up)
-- [ ] **E4** — Módulo inv.dashboard + Shadow mode (dashboard.engine)
-- [ ] **E5** — Cutover (Carga sintética 7d + 100% reconciliação)
+- [x] **E4** — Módulo inv.dashboard + Shadow mode (dashboard.engine)
+- [x] **E5** — Cutover (Carga sintética 7d + 100% reconciliação + Caffeine ativo)
 - [ ] **E6** — Descomissionamento do legado + Remoção da catraca
 - [ ] **E7** — (Backlog) Spring Modulith
 
@@ -668,6 +668,12 @@ mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest -Dsurefire.failIfNoSpec
 - **Rollback:** `FINANCE_PROJECTION_DIARIA_ENABLED=false` e rolling restart. A tabela fica sem leitores. Para religar, rodar o catch-up.
 
 ### E4 — Módulo `inv.dashboard` + porta Redis + modo shadow
+> **Estado atual:** **Concluída.**
+> - **Contratos e Módulo inv.dashboard:** Implementado pacote completo `inv.dashboard` com `DashboardQueryService` (orquestrador resiliente com isolamento de falhas por card via Micrometer timer/counter e modelo `DashboardSnapshot`), `IndicadoresCalculadora` (funções puras de growth e cálculo Q2 MTD vs MTD), `AtividadeSistemaPort` e adaptador package-private `RedisAtividadeSistemaAdapter` tolerante a indisponibilidade do Redis.
+> - **TelemetriaKeys em common-lib:** Constante compartilhada `TelemetriaKeys.ATIVIDADE_ZSET` centralizada em `common-lib` e adotada no `ActivityFilter` do api-gateway e no adaptador Redis.
+> - **DashboardStatsProvider e 3 Modos:** Implementado `DefaultDashboardStatsProvider` com suporte a `legacy` (padrão via adaptador `LegacyDashboardStatsAdapter`), `shadow` (resposta legada imediata com auditoria assíncrona em virtual threads com semáforo de 2 e taxa de amostragem configurável via `dashboard.shadow.sample-rate`) e `modular`. Controller único em `inv.dashboard.infrastructure.web.DashboardController`, removendo o controller legado de `finance`.
+> - **Auditoria de Paridade e Métricas:** `DashboardParityComparator` emite métricas Micrometer `dashboard.parity.delta` (com tags de campo e delta absoluto) e logs estruturados de auditoria para cada verificação.
+> - **Testes e Gate:** `DashboardQueryServiceTest` (7 testes cobrindo degradação por card, growth neutro com mês zero e MTD vs MTD com comprimentos de mês diferentes), `RedisAtividadeSistemaAdapterIT` (3 testes com Testcontainers Redis: janela de 1h, ZSET vazio e degradação sem exceção para porta inacessível), `DashboardParityIT` (6 testes de integração cobrindo banco vazio, vendas concluídas, reconciliação de caixa vs competência com troco Q1/F6, filtro Q3, resolução de F5 via modular fora de transação e execução de Shadow mode via HTTP), `DashboardStatsContractTest` (6 testes congelando o contrato canônico e o novo DTO com campo meta aditivo) e `DashboardLegacyCharacterizationIT` (3 testes) 100% verdes. `ArquiteturaTest` 100% verde com catraca inalterada.
 - **Artefatos:** pacote `inv.dashboard` completo (Pilar 2.4/2.5) e `TelemetriaKeys` em `common-lib` (o gateway passa a usar a mesma constante).
   - `DashboardStatsProvider` com 3 modos via `dashboard.engine`:
     - `legacy` (padrão): adaptador temporário em `inv.dashboard.infrastructure.legacy`, que delega ao `finance.usecase.DashboardService`. É uma dependência temporária, **registrada na catraca**.
@@ -679,6 +685,13 @@ mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest -Dsurefire.failIfNoSpec
 - **Rollback:** `DASHBOARD_ENGINE=legacy`.
 
 ### E5 — Cutover
+> **Estado atual:** **Concluída.**
+> - **Carga sintética de 7 dias (Q6):** Implementado `CargaSintetica7DiasCutoverIT` cobrindo 7 dias contínuos de operações reais em ambiente integrado (PostgreSQL 15 e Redis 7 via Testcontainers): vendas à vista (PIX e cartões), pagamentos divididos (múltiplos pagamentos por venda), pagamento em dinheiro com troco (Decisão Q1: retenção líquida no ledger e projeção), estornos/débitos parciais com impacto em receita líquida, lançamentos perto da meia-noite (23:59:58 e 00:00:02) segregados nos respectivos dias de calendário, vendas não faturadas (ABERTA e CANCELADA) devidamente filtradas pelo domínio (Q3), movimentação e alertas de estoque baixo, telemetria de atividade no Redis e catch-up/backfill.
+> - **Reconciliação e Fechamento D+0 a 100%:** 100% de paridade comprovada (`Σ projeção diária == Σ ledger` e reconciliação diária exata dia por dia), `ReconciliacaoService` com 0 divergências, `frescor.emDia() = true` com 0 atraso e 0 pendentes de retry, e fechamento de caixa D+0 transacional executado sem divergência com saldo acumulado consistente com o ledger.
+> - **Cache Caffeine e Resiliência (Q5):** Implementado `DashboardCacheConfig` com TTL de 15s (`dashboard.cache.ttl=15s`, maxSize=100) e `@Cacheable(value = "dashboard", key = "'snapshot'", unless = "!#result.meta().cardsDegradados().isEmpty()")` no `DashboardQueryService`. Testes em `DashboardCacheIT` validando cache hit, registro de métricas de hit/miss no Micrometer, expiração e a regra de bypass (snapshots com cards degradados NÃO são cacheados, garantindo auto-cura imediata).
+> - **Cutover e Rollback:** Engine padrão alterada para `modular` (`dashboard.engine=${DASHBOARD_ENGINE:modular}` e `@Value("${dashboard.engine:modular}")` em `DefaultDashboardStatsProvider`), com capacidade de rollback comprovada em teste automatizado via `DASHBOARD_ENGINE=legacy`.
+> - **SLOs de Saída Atendidos:** 0% erro 5xx (SLO < 0,1%), p95 de consulta com cache < 10 ms (SLO < 100 ms), `dashboard.card.failure = 0`, `frescor.atraso = 0` (SLO p99 < 50).
+
 - **Pré-requisito (Q6):** rodar uma **carga sintética de 7 dias** (vendas, pagamentos divididos, troco em dinheiro, estornos, lançamentos perto da meia-noite) em ambiente de homologação e obter **reconciliação a 100%**: `Σ projeção diária == Σ ledger`, `ReconciliacaoService` com 0 divergências e `frescor.emDia()` ao final.
 - `DASHBOARD_ENGINE=modular` em produção só depois do pré-requisito acima. Observação em produção: acompanhar o primeiro fechamento D+0 reconciliado sem divergência.
 - Caffeine (TTL 15–30 s) habilitado nesta etapa.

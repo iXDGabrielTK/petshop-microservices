@@ -64,6 +64,31 @@ public class ArquiteturaTest {
             .andShould(beInterfacesRecordsOrEnums())
             .as("APIs públicas devem ser contratos puros dependendo apenas de java, common ou outras APIs e ser interfaces, records ou enums");
 
+    // Regra 7 (R5): Ninguém depende do módulo de composição inv.dashboard
+    @ArchTest
+    static final ArchRule ninguemDependeDoDashboard = noClasses()
+            .that().resideOutsideOfPackage("inv.dashboard..")
+            .should().dependOnClassesThat().resideInAPackage("inv.dashboard..")
+            .as("Nenhum módulo fora de inv.dashboard deve depender de classes de inv.dashboard");
+
+    // Regra 8 (R6): Dashboard só consome as APIs públicas (*.api) dos contextos (exceto adaptador legado transitório)
+    @ArchTest
+    static final ArchRule dashboardSoConsomeApis = noClasses()
+            .that().resideInAPackage("inv.dashboard..")
+            .and().resideOutsideOfPackage("inv.dashboard.infrastructure.legacy..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "inv.checkout.domain..", "inv.checkout.usecase..", "inv.checkout.infrastructure..",
+                    "inv.finance.domain..",  "inv.finance.usecase..",  "inv.finance.infrastructure..",
+                    "inv.inventory.domain..","inv.inventory.usecase..","inv.inventory.infrastructure..")
+            .as("Dashboard deve depender apenas das APIs públicas (*.api) dos Bounded Contexts (exceto adaptador legado transitório)");
+
+    // Regra 9 (R12): Shared Kernel não depende de nenhum Bounded Context
+    @ArchTest
+    static final ArchRule sharedNaoConheceContextos = noClasses()
+            .that().resideInAPackage("inv.shared..")
+            .should().dependOnClassesThat().resideInAnyPackage("inv.checkout..", "inv.finance..", "inv.inventory..", "inv.dashboard..")
+            .as("Shared Kernel não deve depender de nenhum Bounded Context");
+
     private static com.tngtech.archunit.lang.ArchCondition<com.tngtech.archunit.core.domain.JavaClass> beInterfacesRecordsOrEnums() {
         return new com.tngtech.archunit.lang.ArchCondition<>("ser interfaces, records ou enums") {
             @Override
