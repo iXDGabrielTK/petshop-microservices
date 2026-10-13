@@ -151,8 +151,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <fork>true</fork>
-                    <executable>C:\Program Files\Java\corretto-21.0.12.1\bin\javac.exe</executable>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>
