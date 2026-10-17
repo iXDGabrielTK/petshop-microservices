@@ -1,6 +1,5 @@
 package inv.checkout.infrastructure.query;
 
-import inv.checkout.api.FaturamentoDiarioView;
 import inv.checkout.api.VendaQueryService;
 import inv.checkout.api.VendaRecenteView;
 import inv.checkout.domain.model.StatusVenda;
@@ -8,8 +7,6 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -77,58 +74,5 @@ class JdbcVendaQueryService implements VendaQueryService {
             .single();
         return count != null ? count : 0L;
     }
-
-    @Override
-    public BigDecimal somarFaturamentoConcluido(LocalDateTime inicioInclusivo, LocalDateTime fimExclusivo) {
-        Objects.requireNonNull(inicioInclusivo, "inicioInclusivo");
-        Objects.requireNonNull(fimExclusivo, "fimExclusivo");
-        if (fimExclusivo.isBefore(inicioInclusivo)) {
-            return BigDecimal.ZERO;
-        }
-        return jdbc.sql("""
-                SELECT COALESCE(SUM(valor_total), 0)
-                  FROM vendas
-                 WHERE status = 'CONCLUIDA'
-                   AND data_hora_conclusao >= :inicio
-                   AND data_hora_conclusao < :fim
-                """)
-            .param("inicio", inicioInclusivo)
-            .param("fim", fimExclusivo)
-            .query(BigDecimal.class)
-            .optional()
-            .orElse(BigDecimal.ZERO);
-    }
-
-    @Override
-    public List<FaturamentoDiarioView> faturamentoDiarioConcluido(LocalDate inicio, LocalDate fim) {
-        Objects.requireNonNull(inicio, "inicio");
-        Objects.requireNonNull(fim, "fim");
-        if (fim.isBefore(inicio)) {
-            throw new IllegalArgumentException("fim < inicio");
-        }
-        return jdbc.sql("""
-                SELECT g.dia::date AS data,
-                       COALESCE(v.total, 0) AS total
-                  FROM generate_series(CAST(:inicio AS date), CAST(:fim AS date), INTERVAL '1 day') AS g(dia)
-                  LEFT JOIN (
-                       SELECT data_hora_conclusao::date AS dia,
-                              SUM(valor_total) AS total
-                         FROM vendas
-                        WHERE status = 'CONCLUIDA'
-                          AND data_hora_conclusao >= :inicioTimestamp
-                          AND data_hora_conclusao < :fimTimestamp
-                        GROUP BY data_hora_conclusao::date
-                  ) v ON v.dia = g.dia::date
-                 ORDER BY g.dia
-                """)
-            .param("inicio", inicio)
-            .param("fim", fim)
-            .param("inicioTimestamp", inicio.atStartOfDay())
-            .param("fimTimestamp", fim.plusDays(1).atStartOfDay())
-            .query((rs, rowNum) -> new FaturamentoDiarioView(
-                    rs.getObject("data", LocalDate.class),
-                    rs.getBigDecimal("total")
-            ))
-            .list();
-    }
 }
+

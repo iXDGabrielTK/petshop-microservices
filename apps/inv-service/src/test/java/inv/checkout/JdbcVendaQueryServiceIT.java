@@ -1,10 +1,8 @@
 package inv.checkout;
 
 import inv.InvServiceApplication;
-import inv.checkout.api.FaturamentoDiarioView;
 import inv.checkout.api.VendaQueryService;
 import inv.checkout.api.VendaRecenteView;
-import inv.checkout.domain.model.StatusVenda;
 import inv.inventory.domain.model.Produto;
 import inv.inventory.domain.model.UnidadeMedida;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
@@ -57,7 +55,6 @@ class JdbcVendaQueryServiceIT {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", redis::getFirstMappedPort);
         registry.add("spring.flyway.postgresql.transactional-lock", () -> "false");
-        registry.add("dashboard.engine", () -> "legacy");
     }
 
     @MockitoBean
@@ -205,7 +202,7 @@ class JdbcVendaQueryServiceIT {
     }
 
     @Test
-    @DisplayName("contarVendasConcluidas e somarFaturamentoConcluido devem ter precisão exata na borda da meia-noite [inicio, fim)")
+    @DisplayName("contarVendasConcluidas deve ter precisão exata na borda da meia-noite [inicio, fim)")
     void deveRespeitarPrecisaoExataDeMeiaNoite() {
         LocalDateTime inicioMeiaNoite = LocalDate.of(2026, 10, 8).atStartOfDay();
         LocalDateTime fimMeiaNoite = LocalDate.of(2026, 10, 9).atStartOfDay();
@@ -227,67 +224,6 @@ class JdbcVendaQueryServiceIT {
 
         long contagem = vendaQueryService.contarVendasConcluidas(inicioMeiaNoite, fimMeiaNoite);
         assertThat(contagem).isEqualTo(3);
-
-        BigDecimal faturamento = vendaQueryService.somarFaturamentoConcluido(inicioMeiaNoite, fimMeiaNoite);
-        assertThat(faturamento).isEqualByComparingTo("90.00"); // 20 + 30 + 40
-    }
-
-    @Test
-    @DisplayName("somarFaturamentoConcluido (transitório) deve somar apenas CONCLUIDA mantendo paridade com o legado")
-    void deveSomarFaturamentoConcluidoMantendoParidadeLegada() {
-        LocalDateTime agora = LocalDateTime.now();
-        LocalDateTime inicio = agora.minusHours(5);
-        LocalDateTime fim = agora.plusHours(1);
-
-        inserirVenda("CONCLUIDA", new BigDecimal("120.00"), inicio, agora.minusHours(3));
-        inserirVenda("CONCLUIDA", new BigDecimal("80.50"), inicio, agora.minusHours(1));
-        // CANCELAMENTO_SOLICITADO não deve entrar no somarFaturamentoConcluido para manter paridade com legado (Q3)
-        inserirVenda("CANCELAMENTO_SOLICITADO", new BigDecimal("500.00"), inicio, agora.minusHours(2));
-
-        BigDecimal faturamento = vendaQueryService.somarFaturamentoConcluido(inicio, fim);
-        assertThat(faturamento).isEqualByComparingTo("200.50");
-    }
-
-    @Test
-    @DisplayName("faturamentoDiarioConcluido (transitório) deve retornar série densa ordenada, preenchendo dias vazios com zero")
-    void deveRetornarSerieDiariaDensaComZeroParaDiasSemVenda() {
-        LocalDate d1 = LocalDate.of(2026, 10, 1);
-        LocalDate d2 = LocalDate.of(2026, 10, 2);
-        LocalDate d3 = LocalDate.of(2026, 10, 3);
-        LocalDate d4 = LocalDate.of(2026, 10, 4);
-        LocalDate d5 = LocalDate.of(2026, 10, 5);
-
-        // Vendas no dia 1 (100.00)
-        inserirVenda("CONCLUIDA", new BigDecimal("100.00"), d1.atTime(8, 0), d1.atTime(10, 0));
-
-        // Dia 2: sem vendas
-
-        // Vendas no dia 3 (50.00 + 25.50 = 75.50)
-        inserirVenda("CONCLUIDA", new BigDecimal("50.00"), d3.atTime(9, 0), d3.atTime(11, 0));
-        inserirVenda("CONCLUIDA", new BigDecimal("25.50"), d3.atTime(14, 0), d3.atTime(16, 0));
-
-        // Dia 4: sem vendas
-
-        // Venda no dia 5 (200.00)
-        inserirVenda("CONCLUIDA", new BigDecimal("200.00"), d5.atTime(10, 0), d5.atTime(18, 0));
-
-        List<FaturamentoDiarioView> serie = vendaQueryService.faturamentoDiarioConcluido(d1, d5);
-
-        assertThat(serie).hasSize(5);
-        assertThat(serie.get(0).data()).isEqualTo(d1);
-        assertThat(serie.get(0).total()).isEqualByComparingTo("100.00");
-
-        assertThat(serie.get(1).data()).isEqualTo(d2);
-        assertThat(serie.get(1).total()).isEqualByComparingTo("0");
-
-        assertThat(serie.get(2).data()).isEqualTo(d3);
-        assertThat(serie.get(2).total()).isEqualByComparingTo("75.50");
-
-        assertThat(serie.get(3).data()).isEqualTo(d4);
-        assertThat(serie.get(3).total()).isEqualByComparingTo("0");
-
-        assertThat(serie.get(4).data()).isEqualTo(d5);
-        assertThat(serie.get(4).total()).isEqualByComparingTo("200.00");
     }
 
     @Test
@@ -346,26 +282,13 @@ class JdbcVendaQueryServiceIT {
                 .isInstanceOf(NullPointerException.class);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> vendaQueryService.contarVendasConcluidas(agora, null))
                 .isInstanceOf(NullPointerException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> vendaQueryService.somarFaturamentoConcluido(null, agora))
-                .isInstanceOf(NullPointerException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> vendaQueryService.somarFaturamentoConcluido(agora, null))
-                .isInstanceOf(NullPointerException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> vendaQueryService.faturamentoDiarioConcluido(null, LocalDate.now()))
-                .isInstanceOf(NullPointerException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> vendaQueryService.faturamentoDiarioConcluido(LocalDate.now(), null))
-                .isInstanceOf(NullPointerException.class);
 
         // Intervalo invertido (fim antes de início)
         assertThat(vendaQueryService.contarVendasConcluidas(agora.plusDays(1), agora)).isZero();
-        assertThat(vendaQueryService.somarFaturamentoConcluido(agora.plusDays(1), agora)).isEqualByComparingTo(BigDecimal.ZERO);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                vendaQueryService.faturamentoDiarioConcluido(LocalDate.now().plusDays(1), LocalDate.now()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("fim < inicio");
     }
 
     @Test
-    @DisplayName("Invariantes: VendaRecenteView e FaturamentoDiarioView devem validar restrições estruturais")
+    @DisplayName("Invariantes: VendaRecenteView deve validar restrições estruturais")
     void deveValidarInvariantesDosRecordsDeView() {
         LocalDateTime agora = LocalDateTime.now();
 
@@ -381,29 +304,15 @@ class JdbcVendaQueryServiceIT {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 new VendaRecenteView(1L, "Ração", 1, BigDecimal.TEN, null))
                 .isInstanceOf(NullPointerException.class);
-
-        // FaturamentoDiarioView: data e total não podem ser nulos
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                new FaturamentoDiarioView(null, BigDecimal.TEN))
-                .isInstanceOf(NullPointerException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                new FaturamentoDiarioView(LocalDate.now(), null))
-                .isInstanceOf(NullPointerException.class);
     }
 
     @Test
     @DisplayName("Comportamento com banco vazio: queries devem retornar coleções vazias ou zeros sem falhas")
     void deveRetornarValoresPadraoQuandoBancoEstiverCompletamenteVazio() {
         LocalDateTime agora = LocalDateTime.now();
-        LocalDate hoje = LocalDate.now();
 
         assertThat(vendaQueryService.listarRecentes(10)).isEmpty();
         assertThat(vendaQueryService.contarVendasConcluidas(agora.minusDays(1), agora)).isZero();
-        assertThat(vendaQueryService.somarFaturamentoConcluido(agora.minusDays(1), agora)).isEqualByComparingTo(BigDecimal.ZERO);
-
-        List<FaturamentoDiarioView> serie = vendaQueryService.faturamentoDiarioConcluido(hoje.minusDays(2), hoje);
-        assertThat(serie).hasSize(3);
-        assertThat(serie).allMatch(dia -> dia.total().compareTo(BigDecimal.ZERO) == 0);
     }
 
     private long inserirVenda(String status, BigDecimal valorTotal, LocalDateTime abertaEm, LocalDateTime concluidaEm) {
@@ -433,3 +342,4 @@ class JdbcVendaQueryServiceIT {
         return produtoRepository.save(p);
     }
 }
+

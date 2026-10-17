@@ -4,6 +4,9 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.CompositeArchRule;
+
+import java.util.Arrays;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
@@ -11,7 +14,7 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 
 /**
- * Regras de fronteira entre Bounded Contexts do inv-service.
+ * Regras de fronteira entre Bounded Contexts do inv-service (Pilar 5 — DEBT-ARCH-001 E6).
  * <p>
  * Classes de teste são excluídas da análise: fixtures de integração podem montar cenários
  * cruzando contextos sem que isso represente acoplamento de produção (DEBT-ARCH-001 / achado F2).
@@ -19,44 +22,78 @@ import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 @AnalyzeClasses(packages = "inv", importOptions = ImportOption.DoNotIncludeTests.class)
 public class ArquiteturaTest {
 
-    // Regra 1: Checkout NÃO deve acessar Finance diretamente (Ativa e passando como rede de segurança no CI)
+    private static final String[] CONTEXTOS = {"checkout", "finance", "inventory"};
+
+    // Regra 1: Checkout NÃO deve acessar Finance diretamente
     @ArchTest
     static final ArchRule checkoutNaoDeveDependerDeFinance = noClasses()
             .that().resideInAPackage("..checkout..")
             .should().dependOnClassesThat().resideInAPackage("..finance..")
             .as("Checkout não deve depender diretamente de Finance");
 
-    // Regra 2: Finance NÃO deve acessar Checkout.
-    // DEBT-ARCH-001 (E0): catraca — violações conhecidas ficam no archunit_store; qualquer violação NOVA quebra o build.
+    // Regra 2: Finance NÃO deve acessar Checkout (DEBT-ARCH-001 E6: catraca removida definitivamente)
     @ArchTest
-    static final ArchRule financeNaoDeveDependerDeCheckout = freeze(noClasses()
+    static final ArchRule financeNaoDeveDependerDeCheckout = noClasses()
             .that().resideInAPackage("..finance..")
             .should().dependOnClassesThat().resideInAPackage("..checkout..")
-            .as("Finance não deve depender diretamente de Checkout"));
+            .as("Finance não deve depender diretamente de Checkout");
 
-    // Regra 3: Finance NÃO deve acessar Inventory.
-    // DEBT-ARCH-001 (E0): catraca — violações conhecidas ficam no archunit_store; qualquer violação NOVA quebra o build.
+    // Regra 3: Finance NÃO deve acessar Inventory (DEBT-ARCH-001 E6: catraca removida definitivamente)
     @ArchTest
-    static final ArchRule financeNaoDeveDependerDeInventory = freeze(noClasses()
+    static final ArchRule financeNaoDeveDependerDeInventory = noClasses()
             .that().resideInAPackage("..finance..")
             .should().dependOnClassesThat().resideInAPackage("..inventory..")
-            .as("Finance não deve depender diretamente de Inventory"));
+            .as("Finance não deve depender diretamente de Inventory");
 
-    // Regra 4: Sem ciclos entre módulos de topo (desbloqueada pela resolução de F3 na Etapa 1)
+    // R4 — Sem ciclos entre módulos de topo (requer F3 resolvido)
     @ArchTest
     static final ArchRule semCiclosEntreModulos = slices()
             .matching("inv.(*)..")
             .should().beFreeOfCycles()
             .as("Não deve haver ciclos de dependência entre os módulos de topo de inv");
 
-    // Regra 5 (R10): Implementações de query não devem ser públicas (forçam injeção pelas interfaces da API)
+    // R5 — Ninguém depende do módulo de composição inv.dashboard
     @ArchTest
-    static final ArchRule implementacoesDeQueryNaoPublicas = classes()
-            .that().resideInAPackage("inv..infrastructure.query..")
-            .should().notBePublic()
-            .as("Implementações de query não devem ser públicas (forçam injeção pelas interfaces da API)");
+    static final ArchRule ninguemDependeDoDashboard = noClasses()
+            .that().resideOutsideOfPackage("inv.dashboard..")
+            .should().dependOnClassesThat().resideInAPackage("inv.dashboard..")
+            .as("Nenhum módulo fora de inv.dashboard deve depender de classes de inv.dashboard");
 
-    // Regra 6 (R9): Contratos em inv.*.api.. devem depender apenas de java, common ou outras APIs e ser interfaces/records/enums
+    // R6 — Dashboard só enxerga *.api dos contextos (nunca domain/usecase/infrastructure alheios)
+    @ArchTest
+    static final ArchRule dashboardSoConsomeApis = noClasses()
+            .that().resideInAPackage("inv.dashboard..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "inv.checkout.domain..", "inv.checkout.usecase..", "inv.checkout.infrastructure..",
+                    "inv.finance.domain..",  "inv.finance.usecase..",  "inv.finance.infrastructure..",
+                    "inv.inventory.domain..","inv.inventory.usecase..","inv.inventory.infrastructure..")
+            .as("Dashboard deve depender apenas das APIs públicas (*.api) dos Bounded Contexts");
+
+    // R7 — Repositórios Spring Data só são acessados dentro do próprio contexto
+    // (inventory embrulhado em freeze devido ao achado F8 / DEBT-ARCH-002: Checkout acessa ProdutoRepository)
+    @ArchTest
+    static final ArchRule repositoriosConfinadosAoContexto =
+            CompositeArchRule.of(Arrays.stream(CONTEXTOS).map(ctx -> {
+                ArchRule rule = classes().that().areAssignableTo(org.springframework.data.repository.Repository.class)
+                        .and().resideInAPackage("inv." + ctx + "..")
+                        .should().onlyBeAccessed().byAnyPackage("inv." + ctx + "..")
+                        .as("Repositórios de " + ctx + " são internos ao contexto");
+                return "inventory".equals(ctx) ? freeze(rule) : rule;
+            }).toList());
+
+    // R8 — Entidades JPA não atravessam fronteiras
+    // (inventory embrulhado em freeze devido ao achado F8 / DEBT-ARCH-002: Checkout acessa Produto)
+    @ArchTest
+    static final ArchRule entidadesConfinadasAoContexto =
+            CompositeArchRule.of(Arrays.stream(CONTEXTOS).map(ctx -> {
+                ArchRule rule = classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
+                        .and().resideInAPackage("inv." + ctx + "..")
+                        .should().onlyBeAccessed().byAnyPackage("inv." + ctx + "..")
+                        .as("Entidades JPA de " + ctx + " são internas ao contexto");
+                return "inventory".equals(ctx) ? freeze(rule) : rule;
+            }).toList());
+
+    // R9 — Pureza da Published Language
     @ArchTest
     static final ArchRule apisSaoContratosPuros = classes()
             .that().resideInAPackage("inv..api..")
@@ -64,25 +101,24 @@ public class ArquiteturaTest {
             .andShould(beInterfacesRecordsOrEnums())
             .as("APIs públicas devem ser contratos puros dependendo apenas de java, common ou outras APIs e ser interfaces, records ou enums");
 
-    // Regra 7 (R5): Ninguém depende do módulo de composição inv.dashboard
+    // R10 — Implementações de query não são públicas (forçam injeção pela interface)
     @ArchTest
-    static final ArchRule ninguemDependeDoDashboard = noClasses()
-            .that().resideOutsideOfPackage("inv.dashboard..")
-            .should().dependOnClassesThat().resideInAPackage("inv.dashboard..")
-            .as("Nenhum módulo fora de inv.dashboard deve depender de classes de inv.dashboard");
+    static final ArchRule implementacoesDeQueryNaoPublicas = classes()
+            .that().resideInAPackage("inv..infrastructure.query..")
+            .should().notBePublic()
+            .as("Implementações de query não devem ser públicas (forçam injeção pelas interfaces da API)");
 
-    // Regra 8 (R6): Dashboard só consome as APIs públicas (*.api) dos contextos (exceto adaptador legado transitório)
+    // R11 — Clientes de infraestrutura (Redis/AMQP) só em ..infrastructure.., config ou outbox
     @ArchTest
-    static final ArchRule dashboardSoConsomeApis = noClasses()
-            .that().resideInAPackage("inv.dashboard..")
-            .and().resideOutsideOfPackage("inv.dashboard.infrastructure.legacy..")
+    static final ArchRule infraSoEmInfraestrutura = noClasses()
+            .that().resideOutsideOfPackage("..infrastructure..")
+            .and().resideOutsideOfPackage("inv.shared.config..")
+            .and().resideOutsideOfPackage("inv.shared.outbox..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "inv.checkout.domain..", "inv.checkout.usecase..", "inv.checkout.infrastructure..",
-                    "inv.finance.domain..",  "inv.finance.usecase..",  "inv.finance.infrastructure..",
-                    "inv.inventory.domain..","inv.inventory.usecase..","inv.inventory.infrastructure..")
-            .as("Dashboard deve depender apenas das APIs públicas (*.api) dos Bounded Contexts (exceto adaptador legado transitório)");
+                    "org.springframework.data.redis..", "org.springframework.amqp..")
+            .as("Clientes de infraestrutura (Redis/AMQP) só devem ser acessados na camada de infraestrutura");
 
-    // Regra 9 (R12): Shared Kernel não depende de nenhum Bounded Context
+    // R12 — Shared Kernel não conhece contextos
     @ArchTest
     static final ArchRule sharedNaoConheceContextos = noClasses()
             .that().resideInAPackage("inv.shared..")
@@ -101,4 +137,5 @@ public class ArquiteturaTest {
             }
         };
     }
-}
+}
+

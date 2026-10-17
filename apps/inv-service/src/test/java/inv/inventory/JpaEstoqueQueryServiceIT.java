@@ -52,7 +52,6 @@ class JpaEstoqueQueryServiceIT {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", redis::getFirstMappedPort);
         registry.add("spring.flyway.postgresql.transactional-lock", () -> "false");
-        registry.add("dashboard.engine", () -> "legacy");
     }
 
     @MockitoBean

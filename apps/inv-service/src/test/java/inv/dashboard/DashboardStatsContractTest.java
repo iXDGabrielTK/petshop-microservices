@@ -1,8 +1,10 @@
 package inv.dashboard;
 
-import inv.finance.infrastructure.web.dto.DashboardStats;
-import inv.finance.infrastructure.web.dto.DashboardStats.ChartDataDTO;
-import inv.finance.infrastructure.web.dto.DashboardStats.RecentSaleDTO;
+import inv.dashboard.infrastructure.web.dto.DashboardStats;
+import inv.dashboard.infrastructure.web.dto.DashboardStats.ChartDataDTO;
+import inv.dashboard.infrastructure.web.dto.DashboardStats.FrescorDTO;
+import inv.dashboard.infrastructure.web.dto.DashboardStats.MetaDTO;
+import inv.dashboard.infrastructure.web.dto.DashboardStats.RecentSaleDTO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,13 +17,14 @@ import org.springframework.test.context.ContextConfiguration;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Teste de contrato congelando os nomes e tipos dos campos do JSON retornado por /dashboard/stats.
- * Garante que nenhuma refatoração subsequente (E1 a E6 do DEBT-ARCH-001) altere o contrato consumido pelo frontend.
+ * Garante que o DTO canônico de inv.dashboard mantenha compatibilidade total com o contrato consumido pelo frontend.
  */
 @JsonTest
 @ContextConfiguration(classes = {JacksonAutoConfiguration.class, JsonTestersAutoConfiguration.class})
@@ -29,9 +32,6 @@ class DashboardStatsContractTest {
 
     @Autowired
     private JacksonTester<DashboardStats> json;
-
-    @Autowired
-    private JacksonTester<inv.dashboard.infrastructure.web.dto.DashboardStats> modularJson;
 
     @Test
     @DisplayName("Deve serializar DashboardStats garantindo conformidade estrita com os tipos e chaves do contrato frontend")
@@ -88,6 +88,7 @@ class DashboardStatsContractTest {
         assertThat(result).extractingJsonPathNumberValue("$.chartData[0].total").isEqualTo(1500.00);
         assertThat(result).extractingJsonPathStringValue("$.chartData[1].name").isEqualTo("ter.");
         assertThat(result).extractingJsonPathNumberValue("$.chartData[1].total").isEqualTo(2300.00);
+
         // Validação estrita contra contrato JSON congelado (Golden Master do contrato)
         assertThat(result).isEqualToJson("""
                 {
@@ -238,72 +239,16 @@ class DashboardStatsContractTest {
     }
 
     @Test
-    @DisplayName("Deve serializar o DTO modular inv.dashboard.infrastructure.web.dto.DashboardStats de forma 100% idêntica ao contrato canônico quando meta for nulo")
-    void deveSerializarModularDashboardStatsComMesmoContratoJsonQuandoMetaForNulo() throws IOException {
-        inv.dashboard.infrastructure.web.dto.DashboardStats stats = new inv.dashboard.infrastructure.web.dto.DashboardStats(
-                new BigDecimal("12500.50"),
-                new BigDecimal("15.25"),
-                42L,
-                5L,
-                120L,
-                List.of(
-                        new inv.dashboard.infrastructure.web.dto.DashboardStats.RecentSaleDTO("1", "Ração Golden Especial 15kg", new BigDecimal("189.90"), "14:32"),
-                        new inv.dashboard.infrastructure.web.dto.DashboardStats.RecentSaleDTO("2", "Brinquedo Mordedor + outros", new BigDecimal("45.00"), "14:15")
-                ),
-                List.of(
-                        new inv.dashboard.infrastructure.web.dto.DashboardStats.ChartDataDTO("seg.", new BigDecimal("1500.00")),
-                        new inv.dashboard.infrastructure.web.dto.DashboardStats.ChartDataDTO("ter.", new BigDecimal("2300.00"))
-                )
-        );
-
-        JsonContent<inv.dashboard.infrastructure.web.dto.DashboardStats> result = modularJson.write(stats);
-
-        assertThat(result).isEqualToJson("""
-                {
-                    "totalRevenue": 12500.50,
-                    "revenueGrowth": 15.25,
-                    "salesCount": 42,
-                    "lowStockCount": 5,
-                    "activityCount": 120,
-                    "recentSales": [
-                        {
-                            "id": "1",
-                            "productName": "Ração Golden Especial 15kg",
-                            "amount": 189.90,
-                            "time": "14:32"
-                        },
-                        {
-                            "id": "2",
-                            "productName": "Brinquedo Mordedor + outros",
-                            "amount": 45.00,
-                            "time": "14:15"
-                        }
-                    ],
-                    "chartData": [
-                        {
-                            "name": "seg.",
-                            "total": 1500.00
-                        },
-                        {
-                            "name": "ter.",
-                            "total": 2300.00
-                        }
-                    ]
-                }
-                """);
-    }
-
-    @Test
-    @DisplayName("Deve serializar o DTO modular com campo 'meta' aditivo mantendo retrocompatibilidade total")
+    @DisplayName("Deve serializar o DTO com campo 'meta' aditivo mantendo retrocompatibilidade total")
     void deveSerializarModularDashboardStatsComCampoMetaAditivo() throws IOException {
-        java.time.Instant geradoEm = java.time.Instant.parse("2026-10-15T10:00:00Z");
-        inv.dashboard.infrastructure.web.dto.DashboardStats.MetaDTO meta = new inv.dashboard.infrastructure.web.dto.DashboardStats.MetaDTO(
+        Instant geradoEm = Instant.parse("2026-10-15T10:00:00Z");
+        MetaDTO meta = new MetaDTO(
                 geradoEm,
-                new inv.dashboard.infrastructure.web.dto.DashboardStats.FrescorDTO(100L, 100L, 0L, 0L, true),
+                new FrescorDTO(100L, 100L, 0L, 0L, true),
                 List.of("atividade")
         );
 
-        inv.dashboard.infrastructure.web.dto.DashboardStats stats = new inv.dashboard.infrastructure.web.dto.DashboardStats(
+        DashboardStats stats = new DashboardStats(
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
                 0L,
@@ -314,7 +259,7 @@ class DashboardStatsContractTest {
                 meta
         );
 
-        JsonContent<inv.dashboard.infrastructure.web.dto.DashboardStats> result = modularJson.write(stats);
+        JsonContent<DashboardStats> result = json.write(stats);
 
         assertThat(result).hasJsonPath("$.meta");
         assertThat(result).extractingJsonPathStringValue("$.meta.geradoEm").isEqualTo("2026-10-15T10:00:00Z");
@@ -323,9 +268,9 @@ class DashboardStatsContractTest {
     }
 
     @Test
-    @DisplayName("Deve desserializar JSON completo com meta para modular DashboardStats")
+    @DisplayName("Deve desserializar JSON completo com meta para DashboardStats")
     void deveDesserializarModularDashboardStatsComMeta() throws IOException {
-        String json = """
+        String jsonStr = """
                 {
                     "totalRevenue": 2500.00,
                     "revenueGrowth": 10.00,
@@ -348,18 +293,18 @@ class DashboardStatsContractTest {
                 }
                 """;
 
-        inv.dashboard.infrastructure.web.dto.DashboardStats parsed = modularJson.parseObject(json);
+        DashboardStats parsed = json.parseObject(jsonStr);
 
         assertThat(parsed).isNotNull();
         assertThat(parsed.totalRevenue()).isEqualByComparingTo("2500.00");
         assertThat(parsed.meta()).isNotNull();
-        assertThat(parsed.meta().geradoEm()).isEqualTo(java.time.Instant.parse("2026-10-15T10:00:00Z"));
+        assertThat(parsed.meta().geradoEm()).isEqualTo(Instant.parse("2026-10-15T10:00:00Z"));
         assertThat(parsed.meta().frescor().emDia()).isTrue();
         assertThat(parsed.meta().cardsDegradados()).isEmpty();
     }
 
     @Test
-    @DisplayName("Deve ignorar propriedades desconhecidas ao desserializar modular DashboardStats")
+    @DisplayName("Deve ignorar propriedades desconhecidas ao desserializar DashboardStats")
     void deveIgnorarPropriedadesDesconhecidasAoDesserializarModularDashboardStats() throws IOException {
         String jsonComCamposExtras = """
                 {
@@ -375,9 +320,10 @@ class DashboardStatsContractTest {
                 }
                 """;
 
-        inv.dashboard.infrastructure.web.dto.DashboardStats parsed = modularJson.parseObject(jsonComCamposExtras);
+        DashboardStats parsed = json.parseObject(jsonComCamposExtras);
 
         assertThat(parsed).isNotNull();
         assertThat(parsed.totalRevenue()).isEqualByComparingTo("100.00");
     }
 }
+

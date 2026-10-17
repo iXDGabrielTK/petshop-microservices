@@ -14,7 +14,7 @@ import inv.checkout.infrastructure.persistence.VendaRepository;
 import inv.dashboard.application.DashboardQueryService;
 import inv.dashboard.application.DashboardSnapshot;
 import inv.dashboard.infrastructure.cache.DashboardCacheConfig;
-import inv.dashboard.infrastructure.provider.DefaultDashboardStatsProvider;
+import inv.dashboard.infrastructure.web.DashboardStatsMapper;
 import inv.dashboard.infrastructure.web.dto.DashboardStats;
 import inv.finance.api.FrescorProjecao;
 import inv.finance.api.PeriodoContabil;
@@ -86,8 +86,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * - Telemetria de plataforma em Redis;
  * - Reconciliação a 100%: Σ projeção diária == Σ ledger, 0 divergências em ReconciliacaoService e frescor em dia;
  * - Fechamento de caixa D+0 sem divergências;
- * - Endpoint HTTP /dashboard/stats sob a engine MODULAR (Caffeine cache ativo, p95 < 100ms, 0% 5xx);
- * - Capacidade de Rollback com DASHBOARD_ENGINE=legacy.
+ * - Endpoint HTTP /dashboard/stats (Caffeine cache ativo, p95 < 100ms, 0% 5xx).
  */
 @Testcontainers
 @SpringBootTest(classes = InvServiceApplication.class)
@@ -114,7 +113,6 @@ class CargaSintetica7DiasCutoverIT {
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
 
         registry.add("finance.projection.diaria.enabled", () -> "true");
-        registry.add("dashboard.engine", () -> "modular");
         registry.add("dashboard.cache.ttl", () -> "15s");
         registry.add("dashboard.cache.max-size", () -> "100");
     }
@@ -162,7 +160,7 @@ class CargaSintetica7DiasCutoverIT {
     private DashboardQueryService dashboardQueryService;
 
     @Autowired
-    private DefaultDashboardStatsProvider statsProvider;
+    private DashboardStatsMapper statsMapper;
 
     @Autowired
     private VendaEventHandler vendaEventHandler;
@@ -181,18 +179,6 @@ class CargaSintetica7DiasCutoverIT {
 
     @Autowired
     private ObjectMapper objectMapper;
-
-    @Autowired
-    private org.springframework.transaction.PlatformTransactionManager transactionManager;
-
-    @Autowired
-    private inv.dashboard.infrastructure.legacy.LegacyDashboardStatsAdapter legacyAdapter;
-
-    @Autowired
-    private inv.dashboard.infrastructure.web.DashboardStatsMapper statsMapper;
-
-    @Autowired
-    private inv.dashboard.infrastructure.shadow.DashboardParityComparator parityComparator;
 
     @BeforeEach
     void setUp() {
@@ -443,7 +429,7 @@ class CargaSintetica7DiasCutoverIT {
         // =========================================================================
         // 2ª chamada servida pelo cache Caffeine em sub-milissegundos
         long inicioCache = System.currentTimeMillis();
-        DashboardStats statsFromCache = statsProvider.getModularStats();
+        DashboardStats statsFromCache = statsMapper.toDto(dashboardQueryService.consultar());
         long duracaoCacheMs = System.currentTimeMillis() - inicioCache;
 
         assertThat(duracaoCacheMs).isLessThanOrEqualTo(50); // p95 SLO < 100ms
@@ -453,32 +439,6 @@ class CargaSintetica7DiasCutoverIT {
         assertThat(stats.meta().cardsDegradados()).isEmpty();
     }
 
-    @Test
-    @DisplayName("DEBT-ARCH-001 (E5 Rollback): Engine LEGACY continua operacional via rollback imediato")
-    void deveConfirmarRollbackImediatoParaLegacySemRegressao() {
-        Produto prod = produtoRepository.save(criarProduto("RB-01", "Ração Gatos 3kg", new BigDecimal("70.00"), new BigDecimal("10"), new BigDecimal("5")));
-        Venda v = registrarVendaConcluida(prod, 1, MetodoPagamento.PIX, new BigDecimal("70.00"), LocalDateTime.now());
-
-        // Provider executando em modo LEGACY (simulando DASHBOARD_ENGINE=legacy)
-        DefaultDashboardStatsProvider legacyProvider = new DefaultDashboardStatsProvider(
-                "legacy", 0.10,
-                legacyAdapter,
-                dashboardQueryService,
-                statsMapper,
-                parityComparator
-        );
-
-        assertThat(legacyProvider.getEngineMode()).isEqualTo(DefaultDashboardStatsProvider.EngineMode.LEGACY);
-
-        // Execução real do rollback: deve invocar o serviço legado sob escopo de sessão e retornar métricas consistentes
-        DashboardStats stats = new org.springframework.transaction.support.TransactionTemplate(transactionManager)
-                .execute(status -> legacyProvider.getStats());
-        assertThat(stats).isNotNull();
-        assertThat(stats.totalRevenue()).isEqualByComparingTo(new BigDecimal("70.00"));
-        assertThat(stats.salesCount()).isEqualTo(1L);
-        assertThat(stats.recentSales()).isNotEmpty();
-        assertThat(stats.meta()).isNull(); // O motor legado não possui campo meta aditivo
-    }
 
     private Venda registrarVendaConcluida(Produto produto, int quantidade, MetodoPagamento metodo, BigDecimal valorTotal, LocalDateTime dataHora) {
         Venda v = new Venda();

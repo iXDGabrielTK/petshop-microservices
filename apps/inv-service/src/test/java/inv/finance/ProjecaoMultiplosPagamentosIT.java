@@ -60,7 +60,6 @@ class ProjecaoMultiplosPagamentosIT {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", redis::getFirstMappedPort);
-        registry.add("dashboard.engine", () -> "legacy");
     }
 
     @MockBean

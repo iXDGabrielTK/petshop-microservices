@@ -1,6 +1,7 @@
 package inv.dashboard.infrastructure.web;
 
-import inv.dashboard.application.DashboardStatsProvider;
+import inv.dashboard.application.DashboardQueryService;
+import inv.dashboard.application.DashboardSnapshot;
 import inv.dashboard.infrastructure.web.dto.DashboardStats;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,21 +12,25 @@ import java.util.Objects;
 
 /**
  * Controller REST do módulo de composição Dashboard (BFF interno somente-leitura).
- * Expõe o endpoint público GET /dashboard/stats delegando ao {@link DashboardStatsProvider}.
+ * Expõe o endpoint público GET /dashboard/stats orquestrando {@link DashboardQueryService}
+ * e convertendo o snapshot para o DTO web via {@link DashboardStatsMapper}.
  */
 @RestController
 @RequestMapping("/dashboard")
 public class DashboardController {
 
-    private final DashboardStatsProvider dashboardStatsProvider;
+    private final DashboardQueryService queryService;
+    private final DashboardStatsMapper mapper;
 
-    public DashboardController(DashboardStatsProvider dashboardStatsProvider) {
-        this.dashboardStatsProvider = Objects.requireNonNull(dashboardStatsProvider, "dashboardStatsProvider");
+    public DashboardController(DashboardQueryService queryService, DashboardStatsMapper mapper) {
+        this.queryService = Objects.requireNonNull(queryService, "queryService");
+        this.mapper = Objects.requireNonNull(mapper, "mapper");
     }
 
     @GetMapping("/stats")
     public ResponseEntity<DashboardStats> getStats() {
-        DashboardStats stats = dashboardStatsProvider.getStats();
-        return ResponseEntity.ok(stats);
+        DashboardSnapshot snapshot = queryService.consultar();
+        return ResponseEntity.ok(mapper.toDto(snapshot));
     }
 }
+

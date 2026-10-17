@@ -12,7 +12,7 @@
 - [x] **E3** — Projeção diária Finance (V4 migration + listener + catch-up)
 - [x] **E4** — Módulo inv.dashboard + Shadow mode (dashboard.engine)
 - [x] **E5** — Cutover (Carga sintética 7d + 100% reconciliação + Caffeine ativo)
-- [ ] **E6** — Descomissionamento do legado + Remoção da catraca
+- [x] **E6** — Descomissionamento do legado + Remoção da catraca
 - [ ] **E7** — (Backlog) Spring Modulith
 
 ---
@@ -699,6 +699,13 @@ mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest -Dsurefire.failIfNoSpec
 - **Rollback:** `DASHBOARD_ENGINE=legacy` (o legado continua no código até a E6).
 
 ### E6 — Descomissionamento e **remoção definitiva da catraca** ⟵ ponto exato
+> **Estado atual:** **Concluída.**
+> - **Remoção do Legado e Modos de Transição:** Removidos `finance.usecase.DashboardService`, `finance.infrastructure.web.dto.DashboardStats`, o adaptador `inv.dashboard.infrastructure.legacy.LegacyDashboardStatsAdapter`, os componentes de paridade/shadow (`DashboardParityComparator`, `ParityComparisonResult`, `DefaultDashboardStatsProvider`, `DashboardStatsProvider`) e os testes de transição correspondentes (`DashboardLegacyCharacterizationIT`, `DashboardParityIT`, `LegacyDashboardStatsAdapterTest`, `DashboardParityComparatorTest`, `DefaultDashboardStatsProviderTest`). `DashboardController` agora injeta diretamente `DashboardQueryService` e `DashboardStatsMapper`.
+> - **Limpeza de Repositórios e Contratos Transitórios (Q1):** Removidos de `VendaRepository` os 4 métodos exclusivos do legado (`somarReceitaNoPeriodo`, `countVendasNoPeriodo`, `findTop5ByOrderByDataHoraAberturaDesc` e `findByStatusAndDataHoraConclusaoAfter`) e removidos de `VendaQueryService` / `JdbcVendaQueryService` os métodos transitórios de faturamento por competência (`somarFaturamentoConcluido`, `faturamentoDiarioConcluido` e `FaturamentoDiarioView`).
+> - **Remoção da Catraca do Finance e Ativação Completa do Pilar 5 (`R1`–`R12`):** `financeNaoDeveDependerDeCheckout` (R2) e `financeNaoDeveDependerDeInventory` (R3) voltaram a ser `ArchRule` puras (**sem `@ArchIgnore` e sem `FreezingArchRule`**), a exceção `inv.dashboard.infrastructure.legacy..` foi removida da R6 (`dashboardSoConsomeApis`), os arquivos de violações do Finance foram eliminados de `archunit_store/` (0 entradas de Finance no store), e foram ativadas R7 (`repositoriosConfinadosAoContexto`), R8 (`entidadesConfinadasAoContexto`) e R11 (`infraSoEmInfraestrutura`), mantendo apenas `inventory` em R7/R8 sob `FreezingArchRule` para o acoplamento `Checkout -> Inventory` rastreado no `DEBT-ARCH-002`.
+> - **Documentação e Governança:** Aviso de governança do `DEBT-ARCH-001` atualizado para **Resolvido** na [ADR-0001](../adr/0001-modular-monolith-bounded-contexts.md); criada a [ADR-0010](../adr/0010-dashboard-read-only-composition-module.md) documentando o módulo `inv.dashboard` e adicionada ao catálogo do `README.md`; adicionado adendo à [ADR-0006](../adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md) cobrindo o `financial_projection_checkpoint_v2` (F1) e a projeção diária `financial_projection_diaria`.
+> - **Testes e Gate:** `ArquiteturaTest` (12 regras) 100% verde com store bloqueado (`allowStoreCreation=false`, `refreeze=false`), suíte completa do `inv-service` 100% verde e zero imports de `inv.checkout` ou `inv.inventory` em `apps/inv-service/src/main/java/inv/finance`.
+
 1. Apagar `finance.usecase.DashboardService`, `finance.infrastructure.web.dto.DashboardStats`, o adaptador `inv.dashboard.infrastructure.legacy` e os modos `legacy`/`shadow`.
 2. Remover de `VendaRepository` os métodos `somarReceitaNoPeriodo`, `countVendasNoPeriodo`, `findTop5ByOrderByDataHoraAberturaDesc` e `findByStatusAndDataHoraConclusaoAfter` (confirmar antes que não há outros usos). Remover os métodos transitórios de `VendaQueryService`, se a §7-Q1 aprovar o ledger.
 3. **No mesmo PR:** no `ArquiteturaTest`, remover o `freeze(...)` das regras 2 e 3 (que voltam a ser `ArchRule` puras, **sem `@ArchIgnore` e sem catraca**), apagar as entradas correspondentes em `archunit_store/` e ativar as novas regras do Pilar 5.

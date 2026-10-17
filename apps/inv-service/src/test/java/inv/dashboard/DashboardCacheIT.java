@@ -72,7 +72,6 @@ class DashboardCacheIT {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
 
-        registry.add("dashboard.engine", () -> "modular");
         registry.add("dashboard.cache.ttl", () -> "15s");
         registry.add("dashboard.cache.max-size", () -> "50");
     }

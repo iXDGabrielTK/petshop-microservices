@@ -79,7 +79,6 @@ class ProjecaoReceitaDiariaIT {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", redis::getFirstMappedPort);
-        registry.add("dashboard.engine", () -> "legacy");
         registry.add("finance.projection.diaria.enabled", () -> "true");
         registry.add("spring.flyway.enabled", () -> "true");
     }

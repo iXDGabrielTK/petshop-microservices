@@ -36,18 +36,20 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Teste de integração HTTP ponta a ponta do endpoint /dashboard/stats sob a engine MODULAR (DEBT-ARCH-001 E4).
- * Comprova que sob dashboard.engine=modular o endpoint responde 200 OK sem LazyInitializationException (resolvendo F5).
+ * Teste de integração HTTP ponta a ponta do endpoint /dashboard/stats no módulo inv.dashboard (DEBT-ARCH-001 E6).
+ * Valida o baseline sem vendas, resolução do achado F5 (open-in-view=false sem LazyInitializationException),
+ * regime de caixa líquido de troco (Q1) e filtragem por StatusVenda.FATURADAS (Q3).
  */
 @Testcontainers
 @SpringBootTest(classes = inv.InvServiceApplication.class)
@@ -74,7 +76,6 @@ class DashboardModularEndpointIT {
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
 
         registry.add("finance.projection.diaria.enabled", () -> "true");
-        registry.add("dashboard.engine", () -> "modular");
     }
 
     @MockitoBean
@@ -136,41 +137,78 @@ class DashboardModularEndpointIT {
     }
 
     @Test
-    @DisplayName("GET /dashboard/stats sob engine MODULAR deve responder 200 OK sem LazyInitializationException quando há vendas cadastradas")
+    @DisplayName("Baseline: GET /dashboard/stats deve retornar 200 com métricas de estoque e telemetria Redis quando não há vendas")
+    void deveRetornarMetricasDeEstoqueETelemetriaQuandoNaoExistemVendas() throws Exception {
+        Produto p1 = criarProduto("COD-001", "Ração Premium Filhote 1kg", new BigDecimal("45.00"), new BigDecimal("2"), new BigDecimal("10"));
+        Produto p2 = criarProduto("COD-002", "Antipulgas Pipeta", new BigDecimal("80.00"), BigDecimal.ZERO, new BigDecimal("5"));
+        Produto p3 = criarProduto("COD-003", "Shampoo Neutro 500ml", new BigDecimal("25.00"), new BigDecimal("50"), new BigDecimal("10"));
+        produtoRepository.saveAll(List.of(p1, p2, p3));
+
+        long agora = Instant.now().toEpochMilli();
+        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-1", agora - 60_000);
+        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-2", agora - 120_000);
+        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-3", agora - 180_000);
+        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-expired", agora - 4_000_000);
+
+        mockMvc.perform(get("/dashboard/stats")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRevenue").value(0))
+                .andExpect(jsonPath("$.revenueGrowth").value(0))
+                .andExpect(jsonPath("$.salesCount").value(0))
+                .andExpect(jsonPath("$.lowStockCount").value(2))
+                .andExpect(jsonPath("$.activityCount").value(3))
+                .andExpect(jsonPath("$.recentSales").isEmpty())
+                .andExpect(jsonPath("$.chartData", hasSize(7)));
+    }
+
+    @Test
+    @DisplayName("GET /dashboard/stats deve responder 200 OK sem LazyInitializationException (F5), filtrar vendas abertas (Q3) e formatar itens")
     void deveResponderComSucessoViaHttpEmModoModularComVendasEItens() throws Exception {
-        Produto produto = produtoRepository.save(
+        Produto p1 = produtoRepository.save(
                 criarProduto("MOD-101", "Ração Super Premium 15kg", new BigDecimal("199.90"), new BigDecimal("15"), new BigDecimal("5"))
         );
+        Produto p2 = produtoRepository.save(
+                criarProduto("MOD-102", "Biscoito Canino 500g", new BigDecimal("30.00"), new BigDecimal("2"), new BigDecimal("5"))
+        );
 
-        Venda venda = new Venda();
-        venda.adicionarItem(produto, BigDecimal.ONE);
-        venda.irParaPagamento();
-        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("199.90"), UUID.randomUUID());
-        pagamento.confirmar(new BigDecimal("199.90"), "NSU-MOD-1");
-        venda.registrarPagamentoConfirmado(pagamento);
-        venda.concluir();
-        vendaRepository.save(venda);
+        // Venda 1: 2 itens (deve exibir sufixo '+ outros')
+        Venda v1 = new Venda();
+        v1.adicionarItem(p1, BigDecimal.ONE);
+        v1.adicionarItem(p2, BigDecimal.ONE);
+        v1.irParaPagamento();
+        Pagamento pag1 = new Pagamento(v1, MetodoPagamento.PIX, new BigDecimal("229.90"), UUID.randomUUID());
+        pag1.confirmar(new BigDecimal("229.90"), "NSU-MOD-1");
+        v1.registrarPagamentoConfirmado(pag1);
+        v1.concluir();
+        vendaRepository.save(v1);
+
+        // Venda 2: ABERTA (Q3: deve ser ignorada nas vendas recentes e na contagem)
+        Venda vAberta = new Venda();
+        vAberta.adicionarItem(p1, BigDecimal.ONE);
+        vendaRepository.save(vAberta);
 
         LocalDateTime agora = LocalDateTime.now();
         jdbcTemplate.update("UPDATE vendas SET data_hora_abertura = ?, data_hora_conclusao = ? WHERE id = ?",
-                agora, agora, venda.getId());
+                agora, agora, v1.getId());
 
         jdbcTemplate.update("""
                 INSERT INTO lancamentos_financeiros (venda_id, referencia, valor, tipo, data_hora)
                 VALUES (?, ?, ?, 'CREDITO', ?)
-                """, venda.getId(), UUID.randomUUID(), new BigDecimal("199.90"), agora);
+                """, v1.getId(), UUID.randomUUID(), new BigDecimal("229.90"), agora);
         catchUpJob.executarBackfillCompleto();
 
         long agoraMillis = Instant.now().toEpochMilli();
         redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "user-session-mod", agoraMillis - 10_000);
 
-        // Execução real via HTTP MockMvc
         MvcResult result = mockMvc.perform(get("/dashboard/stats")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.salesCount").value(1))
+                .andExpect(jsonPath("$.lowStockCount").value(1))
                 .andExpect(jsonPath("$.activityCount").value(1))
-                .andExpect(jsonPath("$.recentSales[0].productName").value("Ração Super Premium 15kg"))
+                .andExpect(jsonPath("$.recentSales", hasSize(1)))
+                .andExpect(jsonPath("$.recentSales[0].productName").value("Ração Super Premium 15kg + outros"))
                 .andExpect(jsonPath("$.meta").exists())
                 .andExpect(jsonPath("$.meta.geradoEm").isNotEmpty())
                 .andExpect(jsonPath("$.meta.frescor.emDia").value(true))
@@ -178,7 +216,7 @@ class DashboardModularEndpointIT {
 
         DashboardStats response = objectMapper.readValue(result.getResponse().getContentAsString(), DashboardStats.class);
         assertThat(response).isNotNull();
-        assertThat(response.totalRevenue()).isEqualByComparingTo(new BigDecimal("199.90"));
+        assertThat(response.totalRevenue()).isEqualByComparingTo(new BigDecimal("229.90"));
         assertThat(response.meta().cardsDegradados()).isEmpty();
     }
 
@@ -194,3 +232,4 @@ class DashboardModularEndpointIT {
         return p;
     }
 }
+
