@@ -21,6 +21,8 @@ RUN mvn clean package -pl apps/inv-service -am -DskipTests
 # -------- STAGE 2: Runtime --------
 FROM eclipse-temurin:21-jre-alpine
 
+ENV TZ=America/Sao_Paulo
+
 WORKDIR /app
 
 # Segurança: não rodar como root

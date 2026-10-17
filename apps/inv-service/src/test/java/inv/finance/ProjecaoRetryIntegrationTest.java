@@ -94,6 +94,7 @@ class ProjecaoRetryIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        jdbcTemplate.update("DELETE FROM financial_projection_checkpoint_v2");
         jdbcTemplate.update("DELETE FROM financial_projection_checkpoint");
         jdbcTemplate.update("DELETE FROM financial_projection_venda");
         retryRepository.deleteAll();
@@ -155,7 +156,7 @@ class ProjecaoRetryIntegrationTest {
         assertEquals(0, contagemProjecao, "A projeção não deve conter o registro da venda devido à falha.");
 
         Integer contagemCheckpoint = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM financial_projection_checkpoint WHERE lancamento_id = ?",
+                "SELECT count(*) FROM financial_projection_checkpoint_v2 WHERE lancamento_id = ?",
                 Integer.class,
                 lancamentoId
         );
@@ -182,9 +183,9 @@ class ProjecaoRetryIntegrationTest {
         assertEquals(0, new BigDecimal("0.00").compareTo((BigDecimal) projecao.get("total_estornos")),
                 "Total de estornos da projeção deve ser 0.00");
 
-        // c) financial_projection_checkpoint deve conter o lancamento_id persistido
+        // c) financial_projection_checkpoint_v2 deve conter o lancamento_id persistido
         Integer checkpointFinal = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM financial_projection_checkpoint WHERE lancamento_id = ?",
+                "SELECT count(*) FROM financial_projection_checkpoint_v2 WHERE lancamento_id = ?",
                 Integer.class,
                 lancamentoId
         );

@@ -3,7 +3,7 @@
 * **Status:** Aceito
 * **Data:** 2026-08-28
 * **Autores:** Equipe de Engenharia
-* **Bounded Contexts Afetados:** Checkout, Finance, Inventory, Shared
+* **Bounded Contexts Afetados:** Checkout, Finance, Inventory, Dashboard, Shared
 * **Serviços:** `apps/inv-service`
 
 ---
@@ -34,7 +34,7 @@ Por outro lado, um monólito clássico sem barreiras arquiteturais ("Big Ball of
 
 1. **Opção 1: Microsserviços 100% Granulares:** Separar `checkout-service`, `finance-service` e `inventory-service` em três repositórios/processos distintos com bancos de dados próprios e comunicação gRPC/REST.
 2. **Opção 2: Monólito Tradicional em Camadas:** Um único projeto fatiado por camadas técnicas (`controller`, `service`, `repository`, `entity`).
-3. **Opção 3: Monólito Modular (Modular Monolith / Bounded Contexts DDD):** Um único artefato de execução (`apps/inv-service`) estruturado internamente por Bounded Contexts estritos (`checkout`, `finance`, `inventory`, `shared`), com isolamento de pacotes e comunicação assíncrona por eventos internos (`ApplicationEventPublisher`) ou mensageria.
+3. **Opção 3: Monólito Modular (Modular Monolith / Bounded Contexts DDD):** Um único artefato de execução (`apps/inv-service`) estruturado internamente por Bounded Contexts estritos (`checkout`, `finance`, `inventory`, `shared`) e módulo de composição de leitura (`dashboard`), com isolamento de pacotes, contratos públicos (`*.api`) e comunicação assíncrona por eventos internos (`ApplicationEventPublisher`) ou mensageria.
 
 ---
 
@@ -42,13 +42,14 @@ Por outro lado, um monólito clássico sem barreiras arquiteturais ("Big Ball of
 
 Decidimos adotar a **Opção 3: Monólito Modular com Bounded Contexts**, porque:
 * Permite executar transações locais confiáveis no PostgreSQL ([`V1__Schema_Inicial.sql`](../../apps/inv-service/src/main/resources/db/migration/V1__Schema_Inicial.sql)) enquanto garante limites arquiteturais claros entre os domínios.
-* A comunicação entre domínios no mesmo processo ocorre via casos de uso bem definidos ou eventos de integração (`LancamentoRegistradoEvent`, `VendaConcluidaEvent`).
+* A comunicação entre domínios no mesmo processo ocorre via casos de uso bem definidos, contratos de leitura publicados (`inv.<contexto>.api`) ou eventos de integração (`LancamentoRegistradoEvent`, `VendaConcluidaEvent`).
 * Mantém a stack simplificada para desenvolvimento local e testes de integração com Testcontainers.
 
 ### Estrutura de Pacotes Adotada
 ```plaintext
 apps/inv-service/src/main/java/inv/
 ├── checkout/       # Domínio de Vendas, Pagamentos e Long Polling PDV
+├── dashboard/      # Módulo de Composição de Leitura (BFF Interno Read-Only)
 ├── finance/        # Motor Contábil: Ledger Append-Only, CQRS e Fechamento D+0
 ├── inventory/      # Gestão de Produtos, Baixa Atômica e Alertas de Estoque
 └── shared/         # Transversal: Outbox, Configurações RabbitMQ/Segurança e Eventos Compartilhados
@@ -84,19 +85,15 @@ apps/inv-service/src/main/java/inv/
 
 ## 6. Estratégia de Validação & Testes
 
-* **Testes de Arquitetura (ArchUnit):** Especificado em [`ArquiteturaTest.java`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java) com 3 regras isoladas para validação de fronteiras DDD.
+* **Testes de Arquitetura (ArchUnit):** Especificado em [`ArquiteturaTest.java`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java) com 12 regras ativas (`R1` a `R12`) para validação contínua de fronteiras DDD, pureza da *Published Language* (`*.api`), confinamento de entidades/repositórios e ausência de ciclos entre módulos.
 
-> [!WARNING]
-> **Aviso de Governança & Débito Técnico [DEBT-ARCH-001]:**
-> * **Status Atual:** 
->   1. `VendaPagaEvent` foi migrado com sucesso para `inv.shared.event`, eliminando as violações do `VendaPagaEventListener`.
->   2. A regra de isolamento do `Checkout` (`checkoutNaoDeveDependerDeFinance`) está **ativa e 100% verde no CI**, garantindo a integridade do domínio de vendas.
->   3. As 22 violações restantes são de responsabilidade exclusiva do **`DashboardService`** (que injeta `VendaRepository` e `ProdutoRepository`).
-> * **Medida Mitigatória:** As regras que envolvem `Finance` foram anotadas individualmente com `@ArchIgnore`, mantendo a suíte verde no CI sem desproteger o `Checkout`.
-> * **Item de Acompanhamento (Tracking Item):**
->   * **`[DEBT-ARCH-001]`**: Refatorar o `DashboardService` (desacoplando agregação executiva de modelos transacionais crus para modelos de leitura CQRS ou camada de aplicação/BFF).
->   * **Responsável:** Time Core/Backend.
->   * **Prazo/Sprint:** Sprint 24 (Data Alvo: 15/10/2026).
+> [!NOTE]
+> **Aviso de Governança & Débito Técnico [DEBT-ARCH-001] — Status: Resolvido (Outubro/2026):**
+> * **Resolução Definitiva:**
+>   1. O acoplamento transversal do antigo `DashboardService` dentro de `inv.finance` foi erradicado com a criação do módulo de composição de leitura `inv.dashboard` ([ADR-0010](0010-dashboard-read-only-composition-module.md)) e da projeção CQRS temporal diária ([ADR-0006](0006-cqrs-asynchronous-projections-and-self-healing-retry.md)).
+>   2. O código legado (`finance.usecase.DashboardService`), os modos de transição (`legacy`/`shadow`) e a catraca do `Finance` no ArchUnit foram integralmente removidos na Etapa 6 do [plano DEBT-ARCH-001](../debt/DEBT-ARCH-001-desacoplamento-dashboard.md).
+>   3. As regras `checkoutNaoDeveDependerDeFinance`, `financeNaoDeveDependerDeCheckout` e `financeNaoDeveDependerDeInventory` rodam como `ArchRule` puras, **sem `@ArchIgnore` e sem `FreezingArchRule`** (zero entradas de `Finance` em `archunit_store/`).
+>   4. O acoplamento residual de `Checkout` acessando `Produto` de `Inventory` permanece congelado na catraca das regras `R7`/`R8` e é rastreado sob o item **`[DEBT-ARCH-002]`**.
 
 * **Testes de Integração de Módulo (Planejados / Backlog):** Proposta de testes utilizando Spring Boot `@SpringBootTest` com fatiamento de contexto parcial (`@ContextConfiguration`) para validar a inicialização isolada de cada Bounded Context. *(Nota de Auditoria: Este teste de contexto parcial ainda não existe no repositório; o único `@SpringBootTest` atualmente implementado no `inv-service` é o `OutboxConcurrencyManualRunner`).*
 

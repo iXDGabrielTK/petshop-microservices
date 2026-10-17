@@ -1,6 +1,6 @@
 package inv.shared.event;
 
-import inv.checkout.domain.model.MetodoPagamento;
+import inv.shared.domain.MetodoPagamento;
 import java.math.BigDecimal;
 import java.util.UUID;
 

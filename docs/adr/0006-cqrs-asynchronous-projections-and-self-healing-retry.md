@@ -116,9 +116,32 @@ Se a projeção assíncrona falhar por timeout ou indisponibilidade:
 
 ---
 
-## 7. Referências e Links Relevantes
+## 7. Adendo (Outubro/2026 — DEBT-ARCH-001): Checkpoint V2 por `lancamentoId` e Projeção CQRS Temporal Diária
+
+Durante a execução do plano **[DEBT-ARCH-001](../debt/DEBT-ARCH-001-desacoplamento-dashboard.md)**, a arquitetura CQRS desta ADR foi estendida para alimentar as leituras temporais do módulo `inv.dashboard` ([ADR-0010](0010-dashboard-read-only-composition-module.md)) e corrigir a granularidade de deduplicação em vendas com múltiplos pagamentos:
+
+### A. Correção da Chave de Idempotência (`financial_projection_checkpoint_v2`)
+* **Contexto (Achado F1):** Em vendas com pagamentos divididos (múltiplos lançamentos para o mesmo `vendaId`), a deduplicação precisava ocorrer estritamente pelo ID único do lançamento no ledger (`lancamento_id: BIGINT`), e não pelo `venda_id: UUID`.
+* **Solução ([`V3__financial_projection_checkpoint_v2.sql`](../../apps/inv-service/src/main/resources/db/migration/V3__financial_projection_checkpoint_v2.sql)):** Criada a tabela aditiva `financial_projection_checkpoint_v2 (lancamento_id BIGINT PRIMARY KEY, venda_id UUID NOT NULL, processed_at TIMESTAMP NOT NULL)` e o job idempotente de reparo [`ReparoProjecaoVendaJob`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ReparoProjecaoVendaJob.java), garantindo que todos os pagamentos parciais e estornos de uma mesma venda sejam refletidos sem perda nem duplicidade.
+
+### B. Projeção CQRS Temporal Diária (`financial_projection_diaria`)
+* **Contexto (Achado F4 e Decisão Q1):** `financial_projection_venda` consolida o saldo por venda (sem dimensão de calendário), enquanto `fechamento_caixa_diario` opera por *high watermark* de reconciliação D+0. Para responder "receita do dia", "receita acumulada no mês (MTD)" e "série diária dos últimos 7 dias" em $O(\text{dias})$ sob **regime de caixa líquido** (`valorRecebido - troco`), foi introduzida uma segunda projeção read-optimized.
+* **Schema e Idempotência Física ([`V4__projecao_receita_diaria.sql`](../../apps/inv-service/src/main/resources/db/migration/V4__projecao_receita_diaria.sql)):**
+  * `financial_projection_diaria`: armazena `data_referencia DATE PRIMARY KEY`, `total_creditos`, `total_debitos`, `receita_liquida` (`GENERATED ALWAYS AS (total_creditos - total_debitos) STORED`), `qtd_lancamentos` e `ultimo_lancamento_id`.
+  * `financial_projection_diaria_checkpoint`: deduplicação física por `lancamento_id BIGINT PRIMARY KEY`.
+* **Upsert Atômico por CTE ([`ProjecaoReceitaDiariaRepository`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjecaoReceitaDiariaRepository.java)):** Uma única instrução SQL com Common Table Expression (`WITH ins AS (INSERT INTO financial_projection_diaria_checkpoint ... ON CONFLICT DO NOTHING RETURNING ...) INSERT INTO financial_projection_diaria ... ON CONFLICT (data_referencia) DO UPDATE`) garante que a inserção do checkpoint e o incremento do saldo diário sejam atômicos no PostgreSQL, tornando o pipeline seguro sob concorrência entre o listener assíncrono, o `ProjectionRetryScheduler` e o job de catch-up/backfill.
+* **Auto-Cura por Varredura de Faixa ([`ProjecaoDiariaCatchUpJob`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ProjecaoDiariaCatchUpJob.java)):** Além da fila `projection_retry_queue`, um job periódico varre eventuais lacunas entre o maior ID do checkpoint diário e o maior ID de `lancamentos_financeiros`, permitindo backfill histórico em lotes de 5.000 registros sem bloqueio.
+* **Contrato Público de Leitura ([`ReceitaQueryService`](../../apps/inv-service/src/main/java/inv/finance/api/ReceitaQueryService.java) e [`ProjecaoReceitaQueryService`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/query/ProjecaoReceitaQueryService.java)):** Expõe consultas em série densa (`generate_series` preenchendo dias sem movimento com zero) e diagnóstico de frescor (`FrescorProjecao`: atraso em número de lançamentos e tamanho da fila de retry), validados em [`ProjecaoReceitaDiariaIT`](../../apps/inv-service/src/test/java/inv/finance/ProjecaoReceitaDiariaIT.java).
+
+---
+
+## 8. Referências e Links Relevantes
 
 * [Listener de Projeções Financeiras](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/FinancialProjectionListener.java)
+* [Repositório da Projeção Diária](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjecaoReceitaDiariaRepository.java)
+* [Job de Catch-Up e Backfill da Projeção Diária](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ProjecaoDiariaCatchUpJob.java)
 * [Scheduler de Auto-Cura](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ProjectionRetryScheduler.java)
 * [Repositório da Fila de Retry](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjectionRetryRepository.java)
 * [Documentação do Domínio Finance](../domains/finance.md)
+* [ADR-0010: Dashboard como Módulo de Composição de Leitura](0010-dashboard-read-only-composition-module.md)
+

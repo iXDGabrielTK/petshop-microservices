@@ -1,0 +1,3 @@
+Method <inv.checkout.domain.model.Venda.adicionarItem(inv.inventory.domain.model.Produto, java.math.BigDecimal)> calls method <inv.inventory.domain.model.Produto.getNome()> in (Venda.java:60)
+Method <inv.checkout.domain.model.Venda.adicionarItem(inv.inventory.domain.model.Produto, java.math.BigDecimal)> calls method <inv.inventory.domain.model.Produto.getPrecoVenda()> in (Venda.java:61)
+Method <inv.checkout.usecase.VendaService.carregarProdutos(inv.checkout.infrastructure.web.dto.VendaRequest)> references method <inv.inventory.domain.model.Produto.getId()> in (VendaService.java:178)

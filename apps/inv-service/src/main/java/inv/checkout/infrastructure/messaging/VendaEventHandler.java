@@ -7,6 +7,7 @@ import inv.checkout.infrastructure.messaging.event.VendaAtualizadaEvent;
 import inv.shared.config.RabbitMQConfig;
 import inv.shared.event.VendaPagaEvent;
 import inv.checkout.infrastructure.web.dto.VendaStatusResponse;
+import java.math.BigDecimal;
 import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.Venda;
 import inv.checkout.infrastructure.persistence.VendaRepository;
@@ -51,7 +52,11 @@ public class VendaEventHandler {
 
             Pagamento pagamentoProxy = entityManager.getReference(Pagamento.class, event.pagamentoId());
 
+            BigDecimal trocoAnterior = venda.getValorTroco() != null ? venda.getValorTroco() : BigDecimal.ZERO;
             venda.registrarPagamentoConfirmado(pagamentoProxy);
+            BigDecimal trocoAtual = venda.getValorTroco() != null ? venda.getValorTroco() : BigDecimal.ZERO;
+            BigDecimal trocoDestePagamento = trocoAtual.subtract(trocoAnterior).max(BigDecimal.ZERO);
+            BigDecimal valorLiquidoRetido = pagamentoProxy.getValorRecebido().subtract(trocoDestePagamento).max(BigDecimal.ZERO);
 
             if (venda.estaPaga()) {
                 venda.concluir();
@@ -65,7 +70,7 @@ public class VendaEventHandler {
             eventPublisher.publishEvent(new VendaPagaEvent(
                     venda.getId(),
                     pagamentoProxy.getUuidReferencia(),
-                    pagamentoProxy.getValorRecebido()
+                    valorLiquidoRetido
             ));
 
             eventPublisher.publishEvent(new VendaAtualizadaEvent(venda.getId(), VendaStatusResponse.from(venda)));

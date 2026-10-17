@@ -36,6 +36,13 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      - name: Validar integridade de configuracao (bloquear caminhos do host)
+        run: |
+          if git grep -Eni '(<executable>|[a-z]:\\[a-z])' -- 'pom.xml' '**/pom.xml' 'Dockerfile' '**/Dockerfile' 'docker-compose*.yml' '**/docker-compose*.yml' '**/*.properties' '**/*.yml' '**/*.yaml' ':!.github/workflows/*'; then
+            echo "::error::Caminho absoluto local do Windows ou tag <executable> detectado em arquivos de configuracao!"
+            exit 1
+          fi
+
       - name: Validar estrutura dos POMs
         run: mvn validate
 

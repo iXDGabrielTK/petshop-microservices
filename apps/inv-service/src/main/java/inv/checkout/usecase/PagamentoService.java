@@ -2,7 +2,7 @@ package inv.checkout.usecase;
 
 import common.exception.BusinessException;
 import inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent;
-import inv.checkout.domain.model.MetodoPagamento;
+import inv.shared.domain.MetodoPagamento;
 import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.StatusPagamento;
 import inv.checkout.domain.model.Venda;

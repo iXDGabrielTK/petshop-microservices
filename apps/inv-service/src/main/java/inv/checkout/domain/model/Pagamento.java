@@ -1,6 +1,7 @@
 package inv.checkout.domain.model;
 
 import common.exception.BusinessException;
+import inv.shared.domain.MetodoPagamento;
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;

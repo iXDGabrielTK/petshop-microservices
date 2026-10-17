@@ -1,5 +1,6 @@
 package gateway.filter;
 
+import common.telemetry.TelemetriaKeys;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.data.domain.Range;
@@ -15,7 +16,7 @@ import java.util.UUID;
 public class ActivityFilter implements GlobalFilter {
 
     private final ReactiveRedisTemplate<String, String> redisTemplate;
-    private static final String ACTIVITY_KEY = "system:activity:ts";
+    private static final String ACTIVITY_KEY = TelemetriaKeys.ATIVIDADE_ZSET;
 
     public ActivityFilter(ReactiveRedisTemplate<String, String> redisTemplate) {
         this.redisTemplate = redisTemplate;
