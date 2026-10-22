@@ -236,8 +236,8 @@ class CargaSintetica7DiasCutoverIT {
         // DIA 2 (D-5): Pagamento Dividido (2 pagamentos na mesma venda: Cartão + Dinheiro)
         // =========================================================================
         Venda v3 = new Venda();
-        v3.adicionarItem(prodRacao, BigDecimal.ONE); // 200.00
-        v3.adicionarItem(prodShampoo, BigDecimal.ONE); // 45.00 -> total 245.00
+        v3.adicionarItem(prodRacao.getId(), prodRacao.getNome(), prodRacao.getPrecoVenda(), BigDecimal.ONE); // 200.00
+        v3.adicionarItem(prodShampoo.getId(), prodShampoo.getNome(), prodShampoo.getPrecoVenda(), BigDecimal.ONE); // 45.00 -> total 245.00
         v3.irParaPagamento();
         Pagamento pag3a = new Pagamento(v3, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("145.00"), UUID.randomUUID());
         pag3a.processar();
@@ -260,7 +260,7 @@ class CargaSintetica7DiasCutoverIT {
         // =========================================================================
         // Venda 4: total R$ 90.00, cliente entrega R$ 100.00, troco R$ 10.00 -> ledger registra R$ 90.00 retido
         Venda v4 = new Venda();
-        v4.adicionarItem(prodShampoo, new BigDecimal("2"));
+        v4.adicionarItem(prodShampoo.getId(), prodShampoo.getNome(), prodShampoo.getPrecoVenda(), new BigDecimal("2"));
         v4.irParaPagamento();
         v4 = vendaRepository.save(v4);
         Pagamento pag4 = new Pagamento(v4, MetodoPagamento.DINHEIRO, new BigDecimal("90.00"), UUID.randomUUID());
@@ -294,7 +294,7 @@ class CargaSintetica7DiasCutoverIT {
 
         // Venda em Aberto (não deve gerar ledger nem contar como faturada)
         Venda vAberta = new Venda();
-        vAberta.adicionarItem(prodRacao, BigDecimal.ONE);
+        vAberta.adicionarItem(prodRacao.getId(), prodRacao.getNome(), prodRacao.getPrecoVenda(), BigDecimal.ONE);
         vAberta = vendaRepository.save(vAberta);
         atualizarHorarioVenda(vAberta.getId(), d5.atTime(10, 0));
 
@@ -442,7 +442,7 @@ class CargaSintetica7DiasCutoverIT {
 
     private Venda registrarVendaConcluida(Produto produto, int quantidade, MetodoPagamento metodo, BigDecimal valorTotal, LocalDateTime dataHora) {
         Venda v = new Venda();
-        v.adicionarItem(produto, new BigDecimal(quantidade));
+        v.adicionarItem(produto.getId(), produto.getNome(), produto.getPrecoVenda(), new BigDecimal(quantidade));
         v.irParaPagamento();
         Pagamento p = new Pagamento(v, metodo, valorTotal, UUID.randomUUID());
         p.processar();
