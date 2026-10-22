@@ -161,6 +161,16 @@ public class VendaService {
         Venda venda = vendaRepository.findByIdWithLock(vendaId)
                 .orElseThrow(() -> new BusinessException("Venda não encontrada"));
 
+        switch (venda.getStatus()) {                                // guard pós-lock (F2 / Q10)
+            case CANCELADA -> {
+                log.info("Venda {} já está CANCELADA; expiração ignorada (idempotente).", vendaId);
+                return;
+            }
+            case ABERTA, AGUARDANDO_PAGAMENTO -> { /* elegível: segue */ }
+            default -> throw new BusinessException(
+                    "Venda #" + vendaId + " não é elegível para cancelamento por expiração no status: " + venda.getStatus());
+        }
+
         venda.cancelar();
 
         for (ItemVenda item : venda.getItens()) {
