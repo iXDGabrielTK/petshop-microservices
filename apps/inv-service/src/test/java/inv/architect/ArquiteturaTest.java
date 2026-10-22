@@ -73,25 +73,29 @@ public class ArquiteturaTest {
     // (inventory embrulhado em freeze devido ao achado F8 / DEBT-ARCH-002: Checkout acessa ProdutoRepository)
     @ArchTest
     static final ArchRule repositoriosConfinadosAoContexto =
-            CompositeArchRule.of(Arrays.stream(CONTEXTOS).map(ctx -> {
-                ArchRule rule = classes().that().areAssignableTo(org.springframework.data.repository.Repository.class)
-                        .and().resideInAPackage("inv." + ctx + "..")
-                        .should().onlyBeAccessed().byAnyPackage("inv." + ctx + "..")
-                        .as("Repositórios de " + ctx + " são internos ao contexto");
-                return "inventory".equals(ctx) ? freeze(rule) : rule;
-            }).toList());
+            CompositeArchRule.of(Arrays.stream(CONTEXTOS).<ArchRule>map(ctx -> "inventory".equals(ctx)
+                    ? freeze(classes().that().areAssignableTo(org.springframework.data.repository.Repository.class)
+                            .and().resideInAPackage("inv.inventory..")
+                            .should().onlyBeAccessed().byAnyPackage("inv.inventory..")
+                            .as("Repositórios de inventory são internos ao contexto"))          // idêntico ao store
+                    : classes().that().areAssignableTo(org.springframework.data.repository.Repository.class)
+                            .and().resideInAPackage("inv." + ctx + "..")
+                            .should().onlyHaveDependentClassesThat().resideInAPackage("inv." + ctx + "..")
+                            .as("Repositórios de " + ctx + " são internos ao contexto")).toList());
 
     // R8 — Entidades JPA não atravessam fronteiras
     // (inventory embrulhado em freeze devido ao achado F8 / DEBT-ARCH-002: Checkout acessa Produto)
     @ArchTest
     static final ArchRule entidadesConfinadasAoContexto =
-            CompositeArchRule.of(Arrays.stream(CONTEXTOS).map(ctx -> {
-                ArchRule rule = classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
-                        .and().resideInAPackage("inv." + ctx + "..")
-                        .should().onlyBeAccessed().byAnyPackage("inv." + ctx + "..")
-                        .as("Entidades JPA de " + ctx + " são internas ao contexto");
-                return "inventory".equals(ctx) ? freeze(rule) : rule;
-            }).toList());
+            CompositeArchRule.of(Arrays.stream(CONTEXTOS).<ArchRule>map(ctx -> "inventory".equals(ctx)
+                    ? freeze(classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
+                            .and().resideInAPackage("inv.inventory..")
+                            .should().onlyBeAccessed().byAnyPackage("inv.inventory..")
+                            .as("Entidades JPA de inventory são internas ao contexto"))         // idêntico ao store
+                    : classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
+                            .and().resideInAPackage("inv." + ctx + "..")
+                            .should().onlyHaveDependentClassesThat().resideInAPackage("inv." + ctx + "..")
+                            .as("Entidades JPA de " + ctx + " são internas ao contexto")).toList());
 
     // R9 — Pureza da Published Language
     @ArchTest
@@ -138,4 +142,3 @@ public class ArquiteturaTest {
         };
     }
 }
-
