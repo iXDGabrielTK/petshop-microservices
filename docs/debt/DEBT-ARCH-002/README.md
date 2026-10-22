@@ -6,10 +6,20 @@
 
 | PR | Etapas | Runbook | Status |
 | :---: | :--- | :--- | :--- |
-| 1 | E0 rede de segurança, E1 correções bloqueantes (F1 parcial, F2, F7) | [E0-E1.md](./E0-E1.md) | pendente |
+| 1 | E0 rede de segurança, E1 correções bloqueantes (F1 parcial, F2, F7) | [E0-E1.md](./E0-E1.md) | concluído (PR #31) |
 | 2 | E2 Published Language `inventory.api` (aditivo), E3 refatoração do Checkout | [E2.md](./E2.md), [E3.md](./E3.md) | pendente |
 | 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | pendente |
 | 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 backlog Spring Modulith | [E5-E6.md](./E5-E6.md) | pendente |
+
+### Progresso da Execução
+
+- [x] **E0** — Rede de segurança (`CicloVendaEstoqueCharacterizationIT`, `VendaEventHandlerTest`, `VendaEventHandlerIT`)
+- [x] **E1** — Correções bloqueantes (guard idempotente `F2`/`Q10` em `cancelarVendaExpirada`, remoção de código morto `F7`/`Q7` e `F1` parcial em `ArquiteturaTest`)
+- [ ] **E2** — Published Language `inv.inventory.api` (`EstoqueCommandService`, `CatalogoQueryService`, implementação aditiva em lote ordenado)
+- [ ] **E3** — Refatoração do Checkout (`ItemVenda.produtoId`, `VendaService` e `VendaEventHandler` via `inventory.api`, `EstoqueService` package-private)
+- [ ] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`)
+- [ ] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs
+- [ ] **E6** — (Backlog) Spring Modulith
 
 ```mermaid
 flowchart LR
@@ -38,7 +48,7 @@ flowchart LR
 
 ### 1.2 Árvore de pacotes — Antes vs Depois
 
-#### 1.2.1 Antes (estado atual)
+#### 1.2.1 Antes (estado inicial do débito)
 
 ```plaintext
 inv/
@@ -50,8 +60,8 @@ inv/
 │   │   ├── ProdutoRepository.findAllById ───────────► inventory.infrastructure.persistence ❌ (F1: invisível ao R7)
 │   │   ├── EstoqueService.{reservar…,confirmar…,estornar…}(Produto, …) ► inventory.usecase ❌ (F4)
 │   │   ├── iteração em ordem arbitrária ─────────────► deadlock 40P01 ❌ (F5)
-│   │   ├── cancelarVendaExpirada sem guard pós-lock ─► roubo de reserva ❌ (F2)
-│   │   └── processarPagamento + registrarOutboxVendaConcluida  (mortos ❌ F7)
+│   │   ├── cancelarVendaExpirada sem guard pós-lock ─► roubo de reserva ❌ (F2 — corrigido na E1)
+│   │   └── processarPagamento + registrarOutboxVendaConcluida  (mortos ❌ F7 — removidos na E1)
 │   └── infrastructure/messaging/VendaEventHandler ──► EstoqueService(item.getProduto()) ❌
 ├── inventory/
 │   ├── api/{EstoqueQueryService, ResumoEstoque}       (só leitura, para o dashboard)
@@ -261,17 +271,17 @@ Cancelamento/devolução de venda `CONCLUIDA` pertence ao **DEBT-ARCH-003** (Q5)
 | **Q4** | Decisão | `ItemVenda.produtoId` escalar + FKs físicas mantidas | E3, E5-E6 | Refatoração Java (E3) e migration V6 de comentários (E5) |
 | **Q5** | Decisão | Fronteira com `DEBT-ARCH-003` (devolução fora de escopo) | — (informativo) | Limite de escopo |
 | **Q6** | Decisão | ArchUnit sem freeze e store limpo | E5-E6 | Fechamento da governança |
-| **Q7** | Decisão | Remoção de código morto (`processarPagamento`, outbox) | E0-E1 | Limpeza no PR 1 |
+| **Q7** | Decisão | Remoção de código morto (`processarPagamento`, outbox) | E0-E1 (concluído — PR #31) | Limpeza no PR 1 |
 | **Q8** | Decisão | `@Retryable` com `PessimisticLockingFailureException` | E4 | Resiliência |
-| **Q9** | Decisão | Paridade funcional de mensagens de erro | E0-E1, E2, E3 | Caracterizada na E0, preservada na E2/E3 |
-| **Q10** | Decisão | Guard de `CANCELADA` em `cancelarVendaExpirada` (red-green) | E0-E1 | Correção em commit isolado na E1 |
-| **F1** | Achado | Falso positivo R7/R8 (`onlyHaveDependentClassesThat`) | E0-E1, E5-E6 | Parcial em checkout/finance (E1), final em inventory (E5) |
-| **F2** | Achado | Roubo de reserva / estorno duplo pós-expiração | E0-E1 | Bug resolvido na E1 via Q10 |
+| **Q9** | Decisão | Paridade funcional de mensagens de erro | E0-E1 (E0 concluída), E2, E3 | Caracterizada na E0, preservada na E2/E3 |
+| **Q10** | Decisão | Guard de `CANCELADA` em `cancelarVendaExpirada` (red-green) | E0-E1 (concluído — PR #31) | Correção em commit isolado na E1 |
+| **F1** | Achado | Falso positivo R7/R8 (`onlyHaveDependentClassesThat`) | E0-E1 (concluído em checkout/finance), E5-E6 | Parcial em checkout/finance (E1), final em inventory (E5) |
+| **F2** | Achado | Roubo de reserva / estorno duplo pós-expiração | E0-E1 (concluído — PR #31) | Bug resolvido na E1 via Q10 |
 | **F3** | Achado | Acoplamento de entidade JPA (`ItemVenda.produto`) | E3 | Resolvido na E3 via Q4 |
 | **F4** | Achado | Checkout injeta `EstoqueService` (caso de uso interno) | E2, E3 | Porta na E2, migração do Checkout na E3 |
 | **F5** | Achado | Risco de deadlock 40P01 em carrinhos multi-item | E2, E4 | Ordenação (E2) e prova (E4) |
 | **F6** | Achado | `EstoqueService` depende de entidade pré-carregada | E2 | Pré-imagem `novoSaldo + qtd` e `getReferenceById` |
-| **F7** | Achado | Código morto em `VendaService` e handler sem testes | E0-E1 | Testes na E0, remoção na E1 via Q7 |
+| **F7** | Achado | Código morto em `VendaService` e handler sem testes | E0-E1 (concluído — PR #31) | Testes na E0, remoção na E1 via Q7 |
 | **F8** | Achado | Teste de concorrência cruzando módulos | E4 | Mover `EstoqueConcorrenciaIntegrationTest` para `inv.it` |
 | **F9** | Achado | Fragilidades no `VendaEventHandler` | — (informativo) | Backlog DEBT-ARCH-004 |
 | **F10** | Achado | Devolução de venda concluída | — (informativo) | Fora de escopo (DEBT-ARCH-003) |
@@ -296,8 +306,8 @@ Nenhum destes itens corrompe o estoque hoje. Todos ficam **caracterizados** (nã
 - [ ] Nova regra R13 (`checkoutNaoDeveDependerDeInventoryInterno`) garantindo que `checkout` dependa de Inventory **exclusivamente** via `inv.inventory.api`; R14 garantindo implementações não públicas.
 - [ ] `CarrinhosInvertidosDeadlockIT` (`[A, B]` vs `[B, A]` simultâneos) sem deadlock, com controle negativo comprovando a sensibilidade do teste.
 - [ ] Testes de reserva, baixa e estorno com 100% de aprovação e **paridade de mensagens** (inclusive a nuance de ordem por `produtoId`, documentada).
-- [ ] `VendaEventHandlerTest` criado **antes** da migração (E0), acompanhado de `VendaEventHandlerIT` validando a fronteira de `@Transactional`.
-- [ ] Teste do guard de venda `CANCELADA`: vermelho antes do fix e verde depois (commits isolados na E1).
+- [x] `VendaEventHandlerTest` criado **antes** da migração (E0), acompanhado de `VendaEventHandlerIT` validando a fronteira de `@Transactional`.
+- [x] Teste do guard de venda `CANCELADA`: vermelho antes do fix e verde depois (commits isolados na E1).
 - [ ] `EstoqueConcorrenciaIntegrationTest` (50 threads / 5 unidades) verde em todas as etapas, preservando a integridade das asserções de efeito.
 - [ ] `fk_itens_venda_produto`, `fk_movimentacoes_venda` (e `fk_lancamento_venda`) documentadas no schema (V6, só metadados) e na ADR-0001 como FKs de fronteira modular.
 - [ ] ADR-0002 com adendo (ordem de locks, hierarquia `vendas → produtos`, pré-imagem do anti-spam) e ADR-0011 criada.
