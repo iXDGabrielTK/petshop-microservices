@@ -174,8 +174,8 @@ class DashboardModularEndpointIT {
 
         // Venda 1: 2 itens (deve exibir sufixo '+ outros')
         Venda v1 = new Venda();
-        v1.adicionarItem(p1, BigDecimal.ONE);
-        v1.adicionarItem(p2, BigDecimal.ONE);
+        v1.adicionarItem(p1.getId(), p1.getNome(), p1.getPrecoVenda(), BigDecimal.ONE);
+        v1.adicionarItem(p2.getId(), p2.getNome(), p2.getPrecoVenda(), BigDecimal.ONE);
         v1.irParaPagamento();
         Pagamento pag1 = new Pagamento(v1, MetodoPagamento.PIX, new BigDecimal("229.90"), UUID.randomUUID());
         pag1.confirmar(new BigDecimal("229.90"), "NSU-MOD-1");
@@ -185,7 +185,7 @@ class DashboardModularEndpointIT {
 
         // Venda 2: ABERTA (Q3: deve ser ignorada nas vendas recentes e na contagem)
         Venda vAberta = new Venda();
-        vAberta.adicionarItem(p1, BigDecimal.ONE);
+        vAberta.adicionarItem(p1.getId(), p1.getNome(), p1.getPrecoVenda(), BigDecimal.ONE);
         vendaRepository.save(vAberta);
 
         LocalDateTime agora = LocalDateTime.now();

@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.Venda;
 import inv.checkout.infrastructure.persistence.VendaRepository;
-import inv.inventory.usecase.EstoqueService;
+import inv.inventory.api.ComandoEstoqueVenda;
+import inv.inventory.api.EstoqueCommandService;
+import inv.inventory.api.ItemComando;
 import jakarta.persistence.EntityManager;
 import org.hibernate.exception.ConstraintViolationException;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +35,7 @@ public class VendaEventHandler {
 
     private final VendaRepository vendaRepository;
     private final EntityManager entityManager;
-    private final EstoqueService estoqueService;
+    private final EstoqueCommandService estoqueCommandService;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -60,9 +62,12 @@ public class VendaEventHandler {
 
             if (venda.estaPaga()) {
                 venda.concluir();
-                venda.getItens().forEach(item ->
-                        estoqueService.confirmarBaixaEstoque(item.getProduto(), item.getQuantidade(), venda.getId())
-                );
+                ComandoEstoqueVenda comando = new ComandoEstoqueVenda(
+                        venda.getId(),
+                        venda.getItens().stream()
+                                .map(item -> new ItemComando(item.getProdutoId(), item.getQuantidade()))
+                                .toList());
+                estoqueCommandService.confirmarBaixa(comando);
             }
 
             vendaRepository.save(venda);

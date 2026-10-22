@@ -418,7 +418,7 @@ class ProjecaoReceitaDiariaIT {
 
         // 2. Criar venda no valor de R$ 75.00 e avançar para pagamento
         Venda venda = new Venda();
-        venda.adicionarItem(produto, BigDecimal.ONE);
+        venda.adicionarItem(produto.getId(), produto.getNome(), produto.getPrecoVenda(), BigDecimal.ONE);
         venda.irParaPagamento();
         venda = vendaRepository.save(venda);
         assertThat(venda.getValorTotal()).isEqualByComparingTo("75.00");
@@ -681,7 +681,7 @@ class ProjecaoReceitaDiariaIT {
         produto = produtoRepository.save(produto);
 
         Venda venda = new Venda();
-        venda.adicionarItem(produto, BigDecimal.ONE);
+        venda.adicionarItem(produto.getId(), produto.getNome(), produto.getPrecoVenda(), BigDecimal.ONE);
         venda.irParaPagamento();
         venda = vendaRepository.save(venda);
 

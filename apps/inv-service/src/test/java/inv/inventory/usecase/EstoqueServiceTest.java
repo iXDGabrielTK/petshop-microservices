@@ -1,12 +1,14 @@
-package inv.service;
+package inv.inventory.usecase;
 
-import inv.inventory.infrastructure.messaging.EstoqueBaixoMessage;
-import inv.inventory.infrastructure.messaging.EstoqueAtingiuMinimoEvent;
+import inv.inventory.api.ComandoEstoqueVenda;
+import inv.inventory.api.ItemComando;
 import inv.inventory.domain.model.MovimentacaoEstoque;
 import inv.inventory.domain.model.Produto;
 import inv.inventory.domain.model.TipoMovimentacao;
-import inv.inventory.usecase.EstoqueService;
+import inv.inventory.infrastructure.messaging.EstoqueAtingiuMinimoEvent;
+import inv.inventory.infrastructure.messaging.EstoqueBaixoMessage;
 import inv.inventory.infrastructure.persistence.MovimentacaoRepository;
+import inv.inventory.infrastructure.persistence.ProdutoMetadadosEstoque;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -45,10 +49,14 @@ class EstoqueServiceTest {
         produtoSpy.setEstoqueDisponivel(new BigDecimal("11"));
         produtoSpy.setEstoqueMinimo(new BigDecimal("10"));
 
+        when(produtoRepository.buscarMetadadosEstoque(Set.of(1L))).thenReturn(List.of(
+                new ProdutoMetadadosEstoque(1L, "Ração Premium", new BigDecimal("10"))
+        ));
         when(produtoRepository.reservarEstoqueAtomo(1L, qtdReserva)).thenReturn(new BigDecimal("9"));
+        when(produtoRepository.getReferenceById(1L)).thenReturn(produtoSpy);
 
         // AÇÃO
-        estoqueService.reservarEstoqueParaVenda(produtoSpy, qtdReserva, 100L);
+        estoqueService.reservar(new ComandoEstoqueVenda(100L, List.of(new ItemComando(1L, qtdReserva))));
 
         // VERIFICAÇÃO 1: Contrato de Domínio e Persistência
         verify(produtoSpy, never()).reservar(any());
@@ -88,10 +96,14 @@ class EstoqueServiceTest {
         produtoSpy.setEstoqueDisponivel(new BigDecimal("9"));
         produtoSpy.setEstoqueMinimo(new BigDecimal("10"));
 
+        when(produtoRepository.buscarMetadadosEstoque(Set.of(2L))).thenReturn(List.of(
+                new ProdutoMetadadosEstoque(2L, "Produto", new BigDecimal("10"))
+        ));
         when(produtoRepository.reservarEstoqueAtomo(2L, qtdReserva)).thenReturn(new BigDecimal("7"));
+        when(produtoRepository.getReferenceById(2L)).thenReturn(produtoSpy);
 
         // AÇÃO
-        estoqueService.reservarEstoqueParaVenda(produtoSpy, qtdReserva, 100L);
+        estoqueService.reservar(new ComandoEstoqueVenda(100L, List.of(new ItemComando(2L, qtdReserva))));
 
         // VERIFICAÇÃO
         verify(produtoRepository, times(1)).reservarEstoqueAtomo(2L, qtdReserva);
@@ -110,9 +122,10 @@ class EstoqueServiceTest {
         produtoSpy.setId(3L);
 
         when(produtoRepository.confirmarBaixaEstoqueAtomo(3L, qtdBaixa)).thenReturn(new BigDecimal("0"));
+        when(produtoRepository.getReferenceById(3L)).thenReturn(produtoSpy);
 
         // AÇÃO
-        estoqueService.confirmarBaixaEstoque(produtoSpy, qtdBaixa, 100L);
+        estoqueService.confirmarBaixa(new ComandoEstoqueVenda(100L, List.of(new ItemComando(3L, qtdBaixa))));
 
         // VERIFICAÇÃO
         verify(produtoSpy, never()).confirmarReserva(any());
@@ -137,9 +150,10 @@ class EstoqueServiceTest {
         produtoSpy.setId(4L);
 
         when(produtoRepository.estornarReservaEstoqueAtomo(4L, qtdEstorno)).thenReturn(new BigDecimal("5"));
+        when(produtoRepository.getReferenceById(4L)).thenReturn(produtoSpy);
 
         // AÇÃO
-        estoqueService.estornarReservaEstoque(produtoSpy, qtdEstorno, 100L);
+        estoqueService.estornarReserva(new ComandoEstoqueVenda(100L, List.of(new ItemComando(4L, qtdEstorno))));
 
         // VERIFICAÇÃO
         verify(produtoSpy, never()).cancelarReserva(any());
