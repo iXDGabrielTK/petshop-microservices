@@ -2,7 +2,6 @@ package inv.checkout.usecase;
 
 import common.exception.BusinessException;
 import common.exception.ResourceNotFoundException;
-import inv.checkout.domain.model.ItemVenda;
 import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.domain.model.Venda;
 import inv.checkout.infrastructure.persistence.VendaRepository;
@@ -11,9 +10,11 @@ import inv.checkout.infrastructure.web.dto.ItemVendaRequest;
 import inv.checkout.infrastructure.web.dto.ReciboResponse;
 import inv.checkout.infrastructure.web.dto.VendaRequest;
 import inv.checkout.infrastructure.web.dto.VendaStatusResponse;
-import inv.inventory.domain.model.Produto;
-import inv.inventory.infrastructure.persistence.ProdutoRepository;
-import inv.inventory.usecase.EstoqueService;
+import inv.inventory.api.CatalogoQueryService;
+import inv.inventory.api.ComandoEstoqueVenda;
+import inv.inventory.api.EstoqueCommandService;
+import inv.inventory.api.ItemComando;
+import inv.inventory.api.ProdutoCheckoutView;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
@@ -32,16 +33,16 @@ import java.util.stream.Collectors;
 @Service
 public class VendaService {
 
-    private final ProdutoRepository produtoRepository;
     private final VendaRepository vendaRepository;
-    private final EstoqueService estoqueService;
+    private final CatalogoQueryService catalogoQueryService;
+    private final EstoqueCommandService estoqueCommandService;
 
-    public VendaService(ProdutoRepository produtoRepository,
-                        VendaRepository vendaRepository,
-                        EstoqueService estoqueService) {
-        this.produtoRepository = produtoRepository;
+    public VendaService(VendaRepository vendaRepository,
+                        CatalogoQueryService catalogoQueryService,
+                        EstoqueCommandService estoqueCommandService) {
         this.vendaRepository = vendaRepository;
-        this.estoqueService = estoqueService;
+        this.catalogoQueryService = catalogoQueryService;
+        this.estoqueCommandService = estoqueCommandService;
     }
 
     @Retryable(
@@ -52,16 +53,15 @@ public class VendaService {
     public Venda iniciarVenda(VendaRequest pedido) {
         log.debug("Processando início de venda. Verificando disponibilidade de estoque...");
 
-        Map<Long, Produto> produtosMap = carregarProdutos(pedido);
-
+        Map<Long, ProdutoCheckoutView> produtos = carregarCatalogo(pedido);
         Venda venda = vendaRepository.save(new Venda());
 
         for (ItemVendaRequest itemRequest : pedido.itens()) {
-            Produto produto = produtosMap.get(itemRequest.produtoId());
-            venda.adicionarItem(produto, itemRequest.quantidade());
-            estoqueService.reservarEstoqueParaVenda(produto, itemRequest.quantidade(), venda.getId());
+            ProdutoCheckoutView prod = produtos.get(itemRequest.produtoId());
+            venda.adicionarItem(prod.id(), prod.nome(), prod.precoVenda(), itemRequest.quantidade());
         }
 
+        estoqueCommandService.reservar(comandoPara(venda));
         venda.irParaPagamento();
         return vendaRepository.save(venda);
     }
@@ -121,21 +121,25 @@ public class VendaService {
         }
 
         venda.cancelar();
-
-        for (ItemVenda item : venda.getItens()) {
-            estoqueService.estornarReservaEstoque(item.getProduto(), item.getQuantidade(), venda.getId());
-        }
-
+        estoqueCommandService.estornarReserva(comandoPara(venda));
         vendaRepository.save(venda);
     }
 
-    private Map<Long, Produto> carregarProdutos(VendaRequest pedido) {
+    private static ComandoEstoqueVenda comandoPara(Venda venda) {
+        return new ComandoEstoqueVenda(
+                venda.getId(),
+                venda.getItens().stream()
+                        .map(item -> new ItemComando(item.getProdutoId(), item.getQuantidade()))
+                        .toList());
+    }
+
+    private Map<Long, ProdutoCheckoutView> carregarCatalogo(VendaRequest pedido) {
         Set<Long> ids = pedido.itens().stream()
                 .map(ItemVendaRequest::produtoId)
                 .collect(Collectors.toSet());
 
-        Map<Long, Produto> map = produtoRepository.findAllById(ids).stream()
-                .collect(Collectors.toMap(Produto::getId, Function.identity()));
+        Map<Long, ProdutoCheckoutView> map = catalogoQueryService.buscarParaCheckout(ids).stream()
+                .collect(Collectors.toMap(ProdutoCheckoutView::id, Function.identity()));
 
         if (map.size() != ids.size()) {
             throw new ResourceNotFoundException("Um ou mais produtos não foram encontrados.");
