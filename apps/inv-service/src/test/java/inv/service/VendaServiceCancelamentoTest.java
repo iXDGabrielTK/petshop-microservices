@@ -86,4 +86,18 @@ class VendaServiceCancelamentoTest {
         verifyNoInteractions(estoqueService, eventPublisher);
         verify(vendaRepository, never()).save(any());
     }
+
+    @Test
+    @DisplayName("F2/Q10 — cancelarVendaExpirada em venda já CANCELADA deve ser idempotente e não estornar estoque")
+    void cancelarVendaJaCanceladaNaoDeveEstornarEstoqueNovamente() {
+        Long vendaId = 100L;
+        Venda venda = new Venda();
+        venda.cancelar();
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+
+        vendaService.cancelarVendaExpirada(vendaId);
+
+        verify(vendaRepository, never()).save(any());
+        verifyNoInteractions(estoqueService);
+    }
 }
