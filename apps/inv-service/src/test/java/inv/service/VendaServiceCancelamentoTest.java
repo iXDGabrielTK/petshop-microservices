@@ -14,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -32,7 +31,6 @@ class VendaServiceCancelamentoTest {
 
     @Mock private VendaRepository vendaRepository;
     @Mock private EstoqueService estoqueService;
-    @Mock private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private VendaService vendaService;
@@ -74,9 +72,6 @@ class VendaServiceCancelamentoTest {
         // VERIFICAÇÃO 2: Contrato do loop de itens (Estorno de reservas)
         verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto1), eq(new BigDecimal("5")), eq(vendaId));
         verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto2), eq(new BigDecimal("3")), eq(vendaId));
-
-        // VERIFICAÇÃO 3: Nenhuma ação paralela indevida
-        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -86,7 +81,7 @@ class VendaServiceCancelamentoTest {
 
         assertThrows(BusinessException.class, () -> vendaService.cancelarVendaExpirada(999L));
 
-        verifyNoInteractions(estoqueService, eventPublisher);
+        verifyNoInteractions(estoqueService);
         verify(vendaRepository, never()).save(any());
     }
 

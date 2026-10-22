@@ -1,37 +1,27 @@
 package inv.checkout.usecase;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import common.exception.BusinessException;
 import common.exception.ResourceNotFoundException;
 import inv.checkout.domain.model.ItemVenda;
-import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.domain.model.Venda;
+import inv.checkout.infrastructure.persistence.VendaRepository;
 import inv.checkout.infrastructure.web.dto.ItemReciboResponse;
+import inv.checkout.infrastructure.web.dto.ItemVendaRequest;
 import inv.checkout.infrastructure.web.dto.ReciboResponse;
 import inv.checkout.infrastructure.web.dto.VendaRequest;
 import inv.checkout.infrastructure.web.dto.VendaStatusResponse;
-import inv.checkout.infrastructure.messaging.event.VendaConcluidaEvent;
 import inv.inventory.domain.model.Produto;
-import inv.checkout.infrastructure.web.dto.ItemVendaRequest;
-import inv.inventory.usecase.EstoqueService;
-import inv.checkout.infrastructure.persistence.PagamentoRepository;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
-import inv.checkout.infrastructure.persistence.VendaRepository;
-import inv.shared.outbox.model.Outbox;
-import inv.shared.outbox.repository.OutboxRepository;
-import org.springframework.context.ApplicationEventPublisher;
+import inv.inventory.usecase.EstoqueService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import lombok.extern.slf4j.Slf4j;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,25 +33,15 @@ import java.util.stream.Collectors;
 public class VendaService {
 
     private final ProdutoRepository produtoRepository;
-    private final PagamentoRepository pagamentoRepository;
     private final VendaRepository vendaRepository;
     private final EstoqueService estoqueService;
-    private final ApplicationEventPublisher eventPublisher;
-    private final OutboxRepository outboxRepository;
-    private final ObjectMapper objectMapper;
 
-
-    public VendaService(ProdutoRepository produtoRepository, PagamentoRepository pagamentoRepository,
+    public VendaService(ProdutoRepository produtoRepository,
                         VendaRepository vendaRepository,
-                        EstoqueService estoqueService,
-                        ApplicationEventPublisher eventPublisher, OutboxRepository outboxRepository, ObjectMapper objectMapper) {
+                        EstoqueService estoqueService) {
         this.produtoRepository = produtoRepository;
-        this.pagamentoRepository = pagamentoRepository;
         this.vendaRepository = vendaRepository;
         this.estoqueService = estoqueService;
-        this.eventPublisher = eventPublisher;
-        this.outboxRepository = outboxRepository;
-        this.objectMapper = objectMapper;
     }
 
     @Retryable(
@@ -125,37 +105,6 @@ public class VendaService {
                 .orElse(null);
     }
 
-    @Transactional(propagation = Propagation.MANDATORY)
-    public void processarPagamento(Long vendaId, Long pagamentoId) {
-
-        Venda venda = vendaRepository.findByIdWithLock(vendaId)
-                .orElseThrow(() -> new BusinessException("Venda não encontrada"));
-
-        Pagamento pagamento = pagamentoRepository.findById(pagamentoId)
-                .orElseThrow(() -> new BusinessException("Pagamento não encontrado"));
-
-        if (venda.getStatus() == StatusVenda.CONCLUIDA) {
-            log.warn("Tentativa de reprocessamento para venda já paga: {}", vendaId);
-            return;
-        }
-
-        venda.registrarPagamentoConfirmado(pagamento);
-
-        if (venda.estaPaga()) {
-            venda.concluir();
-
-            for (ItemVenda item : venda.getItens()) {
-                estoqueService.confirmarBaixaEstoque(item.getProduto(), item.getQuantidade(), venda.getId());
-            }
-
-            registrarOutboxVendaConcluida(venda.getId());
-        }
-
-        vendaRepository.save(venda);
-    }
-
-
-
     @Transactional
     public void cancelarVendaExpirada(Long vendaId) {
         Venda venda = vendaRepository.findByIdWithLock(vendaId)
@@ -192,26 +141,6 @@ public class VendaService {
             throw new ResourceNotFoundException("Um ou mais produtos não foram encontrados.");
         }
         return map;
-    }
-
-    private void registrarOutboxVendaConcluida(Long vendaId) {
-        try {
-            VendaConcluidaEvent event = new VendaConcluidaEvent(vendaId);
-            String payloadJson = objectMapper.writeValueAsString(event);
-
-            Outbox outbox = new Outbox();
-            outbox.setExchange("vendas.exchange");
-            outbox.setRoutingKey("venda.concluida");
-            outbox.setEventType(VendaConcluidaEvent.class.getName());
-            outbox.setPayload(payloadJson);
-            outbox.setVersion(1);
-            outbox.setCreatedAt(LocalDateTime.now());
-
-            outboxRepository.save(outbox);
-        } catch (JsonProcessingException e) {
-            log.error("Erro ao serializar evento VendaConcluidaEvent para venda ID: {}", vendaId, e);
-            throw new BusinessException("Erro ao gerar evento de conclusão de venda.");
-        }
     }
 
     @SuppressWarnings("unused")
