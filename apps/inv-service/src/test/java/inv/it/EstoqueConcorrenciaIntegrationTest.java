@@ -1,4 +1,4 @@
-package inv.inventory;
+package inv.it;
 
 import common.exception.BusinessException;
 import inv.checkout.infrastructure.persistence.VendaRepository;
