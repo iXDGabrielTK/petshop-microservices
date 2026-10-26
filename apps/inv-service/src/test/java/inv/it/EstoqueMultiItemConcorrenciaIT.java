@@ -112,6 +112,17 @@ class EstoqueMultiItemConcorrenciaIT {
         jdbcTemplate.update("DELETE FROM vendas");
         produtoRepository.deleteAll();
 
+        Produto pB = new Produto();
+        pB.setNome(NOME_PRODUTO_B);
+        pB.setCodigoBarras("7898888000020");
+        pB.setUnidadeMedida(UnidadeMedida.UN);
+        pB.setPrecoVenda(new BigDecimal("10.00"));
+        pB.setEstoqueDisponivel(new BigDecimal("1000.000"));
+        pB.setEstoqueReservado(new BigDecimal("0.000"));
+        pB.setEstoqueMinimo(new BigDecimal("10.000"));
+        Produto salvoB = produtoRepository.saveAndFlush(pB);
+        this.idB = salvoB.getId();
+
         Produto pA = new Produto();
         pA.setNome(NOME_PRODUTO_A);
         pA.setCodigoBarras("7898888000010");
@@ -123,16 +134,11 @@ class EstoqueMultiItemConcorrenciaIT {
         Produto salvoA = produtoRepository.saveAndFlush(pA);
         this.idA = salvoA.getId();
 
-        Produto pB = new Produto();
-        pB.setNome(NOME_PRODUTO_B);
-        pB.setCodigoBarras("7898888000020");
-        pB.setUnidadeMedida(UnidadeMedida.UN);
-        pB.setPrecoVenda(new BigDecimal("10.00"));
-        pB.setEstoqueDisponivel(new BigDecimal("1000.000"));
-        pB.setEstoqueReservado(new BigDecimal("0.000"));
-        pB.setEstoqueMinimo(new BigDecimal("10.000"));
-        Produto salvoB = produtoRepository.saveAndFlush(pB);
-        this.idB = salvoB.getId();
+        // Garante idB < idA para que na ordenação determinística de lock (produtoId ASC),
+        // o produto B (abundante) seja reservado ANTES do produto A (escasso).
+        // Isso força a transação das 45 threads perdedoras a reservar B e falhar em A,
+        // provando de forma cabal o rollback atômico integral do lote.
+        assertThat(idB).isLessThan(idA);
     }
 
     @Test
@@ -201,6 +207,7 @@ class EstoqueMultiItemConcorrenciaIT {
 
         // 4. Prova de rollback atômico: exatamente 5 vendas persistidas e exatamente 10 movimentações RESERVA
         assertThat(vendaRepository.count()).isEqualTo(5L);
+        assertThat(movimentacaoRepository.count()).isEqualTo(10L);
 
         List<MovimentacaoEstoque> movimentacoesReserva = movimentacaoRepository.findAll().stream()
                 .filter(m -> m.getTipo() == TipoMovimentacao.RESERVA)
