@@ -329,12 +329,24 @@ class VendaServiceTest {
     class MetodosRecover {
 
         @Test
-        @DisplayName("recuperarFalhaDeLock deve lançar BusinessException com mensagem explicativa ao usuário")
-        void deveRecuperarFalhaDeLockComMensagemAmigavel() {
+        @DisplayName("recuperarFalhaDeConcorrencia deve lançar BusinessException amigável para OptimisticLockingFailureException")
+        void deveRecuperarFalhaOtimistaComMensagemAmigavel() {
             OptimisticLockingFailureException ex = new OptimisticLockingFailureException("conflito de versão");
             VendaRequest pedido = new VendaRequest(List.of());
 
-            assertThatThrownBy(() -> vendaService.recuperarFalhaDeLock(ex, pedido))
+            assertThatThrownBy(() -> vendaService.recuperarFalhaDeConcorrencia(ex, pedido))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Alta concorrência nos itens selecionados. O estoque foi atualizado por outro caixa. Por favor, tente finalizar novamente.");
+        }
+
+        @Test
+        @DisplayName("recuperarFalhaDeConcorrencia deve lançar BusinessException amigável para PessimisticLockingFailureException")
+        void deveRecuperarFalhaPessimistaComMensagemAmigavel() {
+            org.springframework.dao.PessimisticLockingFailureException ex =
+                    new org.springframework.dao.PessimisticLockingFailureException("lock timeout / deadlock");
+            VendaRequest pedido = new VendaRequest(List.of());
+
+            assertThatThrownBy(() -> vendaService.recuperarFalhaDeConcorrencia(ex, pedido))
                     .isInstanceOf(BusinessException.class)
                     .hasMessage("Alta concorrência nos itens selecionados. O estoque foi atualizado por outro caixa. Por favor, tente finalizar novamente.");
         }
