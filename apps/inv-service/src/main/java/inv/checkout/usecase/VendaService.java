@@ -16,7 +16,9 @@ import inv.inventory.api.EstoqueCommandService;
 import inv.inventory.api.ItemComando;
 import inv.inventory.api.ProdutoCheckoutView;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
@@ -46,7 +48,7 @@ public class VendaService {
     }
 
     @Retryable(
-            retryFor = { OptimisticLockingFailureException.class },
+            retryFor = { OptimisticLockingFailureException.class, PessimisticLockingFailureException.class },
             backoff = @Backoff(delay = 150, maxDelay = 500, random = true)
     )
     @Transactional
@@ -149,7 +151,7 @@ public class VendaService {
 
     @SuppressWarnings("unused")
     @Recover
-    public Venda recuperarFalhaDeLock(OptimisticLockingFailureException e, VendaRequest pedido) {
+    public Venda recuperarFalhaDeConcorrencia(ConcurrencyFailureException e, VendaRequest pedido) {
         log.warn("⚠️ Limite de retries atingido por contenção de lock no estoque. Venda abortada.");
         throw new BusinessException(
                 "Alta concorrência nos itens selecionados. O estoque foi atualizado por outro caixa. Por favor, tente finalizar novamente."
