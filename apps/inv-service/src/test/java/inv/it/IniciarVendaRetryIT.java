@@ -109,8 +109,6 @@ class IniciarVendaRetryIT {
         p.setEstoqueMinimo(new BigDecimal("5.000"));
         Produto salvo = produtoRepository.saveAndFlush(p);
         this.produtoId = salvo.getId();
-
-        reset(estoqueCommandService);
     }
 
     @Test

@@ -98,8 +98,6 @@ class CarrinhosInvertidosDeadlockIT {
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.execute("SET deadlock_timeout = '100ms'");
-
         jdbcTemplate.update("DELETE FROM financial_reconciliation_checkpoint");
         jdbcTemplate.update("DELETE FROM financial_projection_diaria_checkpoint");
         jdbcTemplate.update("DELETE FROM financial_projection_diaria");
@@ -147,6 +145,8 @@ class CarrinhosInvertidosDeadlockIT {
         AtomicInteger sucessos = new AtomicInteger();
         Queue<Throwable> erros = new ConcurrentLinkedQueue<>();
 
+        long deadlocksServidorInicio = obterDeadlocksServidor();
+
         try (ExecutorService pool = Executors.newFixedThreadPool(pares * 2)) {
             for (int i = 0; i < pares; i++) {
                 pool.submit(() -> executarNaBarreira(barreira, List.of(item(idA, "1.000"), item(idB, "1.000")), sucessos, erros));
@@ -155,6 +155,12 @@ class CarrinhosInvertidosDeadlockIT {
             pool.shutdown();
             assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
         }
+
+        // A1: Medição no servidor PostgreSQL garante que nenhuma tentativa sofreu 40P01 (independente de retry)
+        long deadlocksServidorFim = obterDeadlocksServidor();
+        assertThat(deadlocksServidorFim - deadlocksServidorInicio)
+                .withFailMessage("O servidor PostgreSQL registrou deadlocks durante a execução concorrente de carrinhos invertidos!")
+                .isZero();
 
         assertThat(erros).isEmpty();
         assertThat(sucessos.get()).isEqualTo(40);
@@ -178,6 +184,8 @@ class CarrinhosInvertidosDeadlockIT {
 
         TransactionTemplate tt2 = new TransactionTemplate(transactionManager);
         tt2.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        long deadlocksServidorInicio = obterDeadlocksServidor();
 
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
             // T1: Trava A -> Espera T2 travar B -> Pede B
@@ -233,8 +241,7 @@ class CarrinhosInvertidosDeadlockIT {
                             if (!t1PediuB.await(5, TimeUnit.SECONDS)) {
                                 throw new IllegalStateException("Timeout esperando T1 pedir B");
                             }
-                            // Pausa para dar tempo do PostgreSQL suspender T1 no lock de B
-                            Thread.sleep(100);
+                            // A7: Thread.sleep dispensável pois qualquer intercalação com latches produz exatamente 1 vítima
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             throw new RuntimeException(e);
@@ -258,10 +265,27 @@ class CarrinhosInvertidosDeadlockIT {
             assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
         }
 
+        // A1: Comprova no pg_stat_database que o servidor detectou e contabilizou exatamente 1 deadlock
+        long deadlocksServidorFim = obterDeadlocksServidor();
+        assertThat(deadlocksServidorFim - deadlocksServidorInicio)
+                .withFailMessage("O controle negativo deve registrar exatamente 1 deadlock no servidor PostgreSQL")
+                .isEqualTo(1L);
+
         // Deve ocorrer exatamente 1 deadlock (SQLState 40P01) e exatamente 1 sucesso (a transação sobrevivente)
         assertThat(outrosErros).isEmpty();
         assertThat(deadlocks.get()).isEqualTo(1);
         assertThat(sucessos.get()).isEqualTo(1);
+    }
+
+    private long obterDeadlocksServidor() {
+        try {
+            jdbcTemplate.execute("SELECT pg_stat_force_next_flush()");
+        } catch (Exception ignored) {
+            // Em versões anteriores ao PG 15 ou sem permissão de force flush
+        }
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()", Long.class);
+        return count != null ? count : 0L;
     }
 
     private void executarNaBarreira(CyclicBarrier barreira, List<ItemVendaRequest> itens,

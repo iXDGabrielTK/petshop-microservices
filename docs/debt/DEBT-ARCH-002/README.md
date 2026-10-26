@@ -8,7 +8,7 @@
 | :---: | :--- | :--- | :--- |
 | 1 | E0 rede de segurança, E1 correções bloqueantes (F1 parcial, F2, F7) | [E0-E1.md](./E0-E1.md) | concluído (PR #31) |
 | 2 | E2 Published Language `inventory.api` (aditivo), E3 refatoração do Checkout | [E2.md](./E2.md), [E3.md](./E3.md) | concluído (PR #32) |
-| 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | concluído |
+| 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | implementado localmente / PR pendente |
 | 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 backlog Spring Modulith | [E5-E6.md](./E5-E6.md) | pendente |
 
 ### Progresso da Execução
@@ -17,7 +17,7 @@
 - [x] **E1** — Correções bloqueantes (guard idempotente `F2`/`Q10` em `cancelarVendaExpirada`, remoção de código morto `F7`/`Q7` e `F1` parcial em `ArquiteturaTest`)
 - [x] **E2** — Published Language `inv.inventory.api` (`EstoqueCommandService`, `CatalogoQueryService`, implementação aditiva em lote ordenado)
 - [x] **E3** — Refatoração do Checkout (`ItemVenda.produtoId`, `VendaService` e `VendaEventHandler` via `inventory.api`, `EstoqueService` package-private)
-- [x] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`)
+- [x] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`) (implementado localmente / PR pendente)
 - [ ] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs
 - [ ] **E6** — (Backlog) Spring Modulith
 
@@ -308,7 +308,7 @@ Nenhum destes itens corrompe o estoque hoje. Todos ficam **caracterizados** (nã
 - [x] Testes de reserva, baixa e estorno com 100% de aprovação e **paridade de mensagens** (inclusive a nuance de ordem por `produtoId`, documentada).
 - [x] `VendaEventHandlerTest` criado **antes** da migração (E0), acompanhado de `VendaEventHandlerIT` validando a fronteira de `@Transactional`.
 - [x] Teste do guard de venda `CANCELADA`: vermelho antes do fix e verde depois (commits isolados na E1).
-- [x] `EstoqueConcorrenciaIntegrationTest` (50 threads / 5 unidades) verde em todas as etapas, preservando a integridade das asserções de efeito.
+- [ ] `EstoqueConcorrenciaIntegrationTest` (50 threads / 5 unidades) verde em todas as etapas (validado até E4; permanece aberto até a conclusão da E5), preservando a integridade das asserções de efeito.
 - [ ] `fk_itens_venda_produto`, `fk_movimentacoes_venda` (e `fk_lancamento_venda`) documentadas no schema (V6, só metadados) e na ADR-0001 como FKs de fronteira modular.
 - [ ] ADR-0002 com adendo (ordem de locks, hierarquia `vendas → produtos`, pré-imagem do anti-spam) e ADR-0011 criada.
 - [ ] Validação e suíte completa executadas com sucesso em Java 21 LTS com Docker ativo.

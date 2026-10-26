@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -153,6 +154,8 @@ class EstoqueMultiItemConcorrenciaIT {
         Queue<Throwable> deadlocks = new ConcurrentLinkedQueue<>();
         Queue<Throwable> outrosErros = new ConcurrentLinkedQueue<>();
 
+        long deadlocksServidorInicio = obterDeadlocksServidor();
+
         try (ExecutorService executor = Executors.newFixedThreadPool(totalThreads)) {
             for (int i = 0; i < totalThreads; i++) {
                 final int idx = i;
@@ -188,6 +191,12 @@ class EstoqueMultiItemConcorrenciaIT {
             assertThat(concluido).withFailMessage("Timeout aguardando as 50 threads").isTrue();
         }
 
+        // A1: Medição no servidor PostgreSQL garante que nenhuma tentativa sofreu 40P01 (independente de retry)
+        long deadlocksServidorFim = obterDeadlocksServidor();
+        assertThat(deadlocksServidorFim - deadlocksServidorInicio)
+                .withFailMessage("O servidor PostgreSQL registrou deadlocks durante a execução concorrente multi-item!")
+                .isZero();
+
         // 1. Asserções de ausência de deadlocks e outros erros de concorrência
         assertThat(deadlocks).isEmpty();
         assertThat(outrosErros).isEmpty();
@@ -215,14 +224,22 @@ class EstoqueMultiItemConcorrenciaIT {
         assertThat(movimentacoesReserva).hasSize(10);
     }
 
+    private long obterDeadlocksServidor() {
+        try {
+            jdbcTemplate.execute("SELECT pg_stat_force_next_flush()");
+        } catch (Exception ignored) {
+            // Em versões anteriores ao PG 15 ou sem permissão de force flush
+        }
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()", Long.class);
+        return count != null ? count : 0L;
+    }
+
     private static boolean isDeadlock(Throwable t) {
+        if (!(t instanceof PessimisticLockingFailureException)) {
+            return false;
+        }
         Throwable root = NestedExceptionUtils.getRootCause(t);
-        if (root instanceof SQLException sqlEx && "40P01".equals(sqlEx.getSQLState())) {
-            return true;
-        }
-        if (t instanceof ConcurrencyFailureException cfe && cfe.getMessage() != null && cfe.getMessage().contains("deadlock")) {
-            return true;
-        }
-        return t.getMessage() != null && t.getMessage().toLowerCase().contains("deadlock");
+        return root instanceof SQLException sqlEx && "40P01".equals(sqlEx.getSQLState());
     }
 }
