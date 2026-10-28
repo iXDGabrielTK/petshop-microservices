@@ -450,6 +450,33 @@ class CicloVendaEstoqueCharacterizationIT {
         assertThat(inalterado.getEstoqueDisponivel()).isEqualByComparingTo("10.000");
     }
 
+    @Test
+    @DisplayName("11. Q4/E5 — Migration V6: FKs de fronteira modular possuem comentários de metadados (obj_description)")
+    void cenario11_fksDeFronteiraModularPossuemMetadadosNaMigrationV6() {
+        String descItensProduto = jdbcTemplate.queryForObject("""
+                SELECT obj_description(oid, 'pg_constraint')
+                  FROM pg_constraint
+                 WHERE conname = 'fk_itens_venda_produto'
+                """, String.class);
+        String descMovVenda = jdbcTemplate.queryForObject("""
+                SELECT obj_description(oid, 'pg_constraint')
+                  FROM pg_constraint
+                 WHERE conname = 'fk_movimentacoes_venda'
+                """, String.class);
+        String descLancamentoVenda = jdbcTemplate.queryForObject("""
+                SELECT obj_description(oid, 'pg_constraint')
+                  FROM pg_constraint
+                 WHERE conname = 'fk_lancamento_venda'
+                """, String.class);
+
+        assertThat(descItensProduto)
+                .isEqualTo("FK de fronteira modular (Checkout -> Inventory). Sem mapeamento JPA (ItemVenda.produtoId). Remover apenas se os schemas forem separados fisicamente. ADR-0001 / DEBT-ARCH-002.");
+        assertThat(descMovVenda)
+                .isEqualTo("FK de fronteira modular (Inventory -> Checkout). Sem mapeamento JPA (MovimentacaoEstoque.vendaId). Remover apenas se os schemas forem separados fisicamente. ADR-0001 / DEBT-ARCH-002.");
+        assertThat(descLancamentoVenda)
+                .isEqualTo("FK de fronteira modular (Finance -> Checkout). Remover apenas se os schemas forem separados fisicamente. ADR-0001 / DEBT-ARCH-002.");
+    }
+
     private Produto salvarProduto(String codigoBarras, String nome, BigDecimal precoVenda,
                                   BigDecimal disponivel, BigDecimal minimo) {
         Produto produto = new Produto();
