@@ -24,9 +24,13 @@ updates:
           - "patch"
     ignore:
       - dependency-name: "org.springframework.boot:*"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
       - dependency-name: "org.springframework.cloud:*"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   - package-ecosystem: "docker"
     directories:
