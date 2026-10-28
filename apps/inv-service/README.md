@@ -1,9 +1,9 @@
 # 📦 Inv Service (Core Domain & Monólito Modular)
 
-O **Inv Service** é o núcleo de regras de negócio do Pet Shop, estruturado como um **Monólito Modular** contendo os subdomínios de **Checkout**, **Finance** e **Inventory**.
+O **Inv Service** é o núcleo de regras de negócio do Pet Shop, estruturado como um **Monólito Modular** (validado por ArchUnit e Spring Modulith) contendo os subdomínios de **Checkout**, **Dashboard**, **Finance** e **Inventory**.
 
 * **Porta Padrão:** `8083`
-* **Stack:** Java 21, Spring Boot 3.4.1, PostgreSQL 15, Flyway, RabbitMQ, Spring Security Resource Server.
+* **Stack:** Java 21, Spring Boot 3.4.1, Spring Modulith 1.3.2, PostgreSQL 15, Flyway, RabbitMQ, Redis, Spring Security Resource Server.
 
 ---
 
@@ -12,8 +12,9 @@ O **Inv Service** é o núcleo de regras de negócio do Pet Shop, estruturado co
 ```plaintext
 src/main/java/inv/
 ├── checkout/       # Vendas, Pagamentos, Webhooks e Long Polling de PDV
+├── dashboard/      # Módulo de Composição de Leitura (BFF Interno Read-Only)
 ├── finance/        # Ledger Append-Only, Projeções CQRS, High Watermark e Fechamento D+0
-├── inventory/      # Catálogo de Produtos, Baixas Atômicas e Alertas Anti-Spam
+├── inventory/      # Catálogo de Produtos, Baixas Atômicas em Lote Ordenado e Alertas Anti-Spam
 └── shared/         # Transactional Outbox, Configurações de Banco, RabbitMQ e Segurança
 ```
 
@@ -34,6 +35,8 @@ src/main/java/inv/
 * [ADR-0005: Ledger Financeiro Append-Only](../../docs/adr/0005-append-only-financial-ledger-and-idempotency.md)
 * [ADR-0006: Projeções CQRS e Auto-Cura](../../docs/adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)
 * [ADR-0007: Fechamento de Caixa D+0 com High Watermark](../../docs/adr/0007-d0-daily-cash-closing-and-high-watermark.md)
+* [ADR-0010: Dashboard como Módulo de Composição de Leitura](../../docs/adr/0010-dashboard-read-only-composition-module.md)
+* [ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](../../docs/adr/0011-synchronous-open-host-service-checkout-inventory.md)
 
 ---
 

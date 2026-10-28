@@ -96,7 +96,7 @@ GROUP BY fpv.venda_id, fpv.saldo
 HAVING fpv.saldo <> SUM(lf.valor);
 ```
 
-### D. Classificação de Severidade de Divergência ([`ReconciliacaoService.java`](file:///c:/Users/gabri/IdeaProjects/petshop-microservices/apps/inv-service/src/main/java/inv/finance/usecase/ReconciliacaoService.java#L28-L42))
+### D. Classificação de Severidade de Divergência ([`ReconciliacaoService.java`](../../apps/inv-service/src/main/java/inv/finance/usecase/ReconciliacaoService.java#L28-L42))
 
 > [!NOTE]
 > **Aviso de Governança de Produto:** Os valores de corte abaixo foram definidos heuristicamente pelo time de engenharia durante a implementação para diferenciar ruídos de arredondamento de bugs de código. Eles constam como **valores provisórios**, pendentes de validação e calibração formal junto à área contábil/financeira de negócio.

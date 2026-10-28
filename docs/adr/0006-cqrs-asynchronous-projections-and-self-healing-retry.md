@@ -41,7 +41,7 @@ Se a projeção for feita de forma **assíncrona pura**, qualquer crash da aplic
 3. **Opção 3: CQRS Assíncrono In-Memory (`AFTER_COMMIT`) com Checkpoint + Retry Queue com `SKIP LOCKED`:**
    * O listener dispara apenas após o commit com sucesso da transação principal (`TransactionPhase.AFTER_COMMIT`).
    * Roda em pool assíncrona dedicada (`@Async("projectionExecutor")`).
-   * Utiliza tabela de checkpoint (`financial_projection_checkpoint`) para deduplicação.
+   * Utiliza tabela de checkpoint (`financial_projection_checkpoint_v2`) para deduplicação.
    * Em caso de falha, persiste o payload na `projection_retry_queue` para reprocessamento por scheduler distribuído com `FOR UPDATE SKIP LOCKED`.
 
 ---
@@ -58,8 +58,8 @@ public void onLancamentoRegistrado(LancamentoRegistradoEvent event) {
     processarComIdempotencia(event);
 }
 ```
-* **Checkpoint Atômico:** O listener tenta inserir o `lancamento_id` na tabela `financial_projection_checkpoint`. Se já existir (retry anterior), uma `DuplicateKeyException` é capturada e a execução é finalizada de forma idempotente.
-* **Upsert Atômico:** A projeção em `financial_projection_venda` é atualizada via query nativa com `ON CONFLICT (venda_id) DO UPDATE`.
+* **Checkpoint Atômico:** O listener tenta inserir o `lancamento_id` na tabela `financial_projection_checkpoint_v2`. Se já existir (retry anterior), uma `DuplicateKeyException` é capturada e a execução é finalizada de forma idempotente.
+* **Upsert Atômico:** A projeção em `financial_projection_venda` é atualizada via query nativa com `ON CONFLICT (venda_id) DO UPDATE`, seguida pela projeção temporal diária em `financial_projection_diaria`.
 
 ### B. Auto-Cura de Falhas com `SKIP LOCKED` ([`ProjectionRetryScheduler.java`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ProjectionRetryScheduler.java) e [`ProjectionRetryRepository.java`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjectionRetryRepository.java#L11-L20))
 Se a projeção assíncrona falhar por timeout ou indisponibilidade:
@@ -105,13 +105,13 @@ Se a projeção assíncrona falhar por timeout ou indisponibilidade:
   3. **Validação Intermediária (Isolamento de Falha):**
      * O lançamento existe no `lancamentos_financeiros`.
      * O registro foi gravado na tabela `projection_retry_queue` com `status = 'PENDENTE'` e mensagem de erro serializada.
-     * `financial_projection_venda` e `financial_projection_checkpoint` não refletem o valor devido ao rollback da transação de projeção.
+     * `financial_projection_venda` e `financial_projection_checkpoint_v2` não refletem o valor devido ao rollback da transação de projeção.
   4. **Ativação da Auto-Cura:**
      * Restaurar o funcionamento normal do repositório (`Mockito.reset`) e disparar o `ProjectionRetryScheduler.reprocessarFalhasDeProjecao()`.
 * **Critérios de Aceite Obrigatórios (Asserts Validados):**
   1. `projection_retry_queue` para o `lancamento_id` fica vazia (registro processado e deletado com sucesso).
   2. `financial_projection_venda` exibe `saldo = 150.00`, `total_creditos = 150.00` e `total_estornos = 0.00`.
-  3. `financial_projection_checkpoint` contém o `lancamento_id` persistido (1 registro).
+  3. `financial_projection_checkpoint_v2` contém o `lancamento_id` persistido (1 registro).
   4. Executar o scheduler uma segunda vez e validar que nenhuma operação duplicada é realizada (`saldo` permanece 150.00).
 
 ---
@@ -121,15 +121,15 @@ Se a projeção assíncrona falhar por timeout ou indisponibilidade:
 Durante a execução do plano **[DEBT-ARCH-001](../debt/DEBT-ARCH-001-desacoplamento-dashboard.md)**, a arquitetura CQRS desta ADR foi estendida para alimentar as leituras temporais do módulo `inv.dashboard` ([ADR-0010](0010-dashboard-read-only-composition-module.md)) e corrigir a granularidade de deduplicação em vendas com múltiplos pagamentos:
 
 ### A. Correção da Chave de Idempotência (`financial_projection_checkpoint_v2`)
-* **Contexto (Achado F1):** Em vendas com pagamentos divididos (múltiplos lançamentos para o mesmo `vendaId`), a deduplicação precisava ocorrer estritamente pelo ID único do lançamento no ledger (`lancamento_id: BIGINT`), e não pelo `venda_id: UUID`.
-* **Solução ([`V3__financial_projection_checkpoint_v2.sql`](../../apps/inv-service/src/main/resources/db/migration/V3__financial_projection_checkpoint_v2.sql)):** Criada a tabela aditiva `financial_projection_checkpoint_v2 (lancamento_id BIGINT PRIMARY KEY, venda_id UUID NOT NULL, processed_at TIMESTAMP NOT NULL)` e o job idempotente de reparo [`ReparoProjecaoVendaJob`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ReparoProjecaoVendaJob.java), garantindo que todos os pagamentos parciais e estornos de uma mesma venda sejam refletidos sem perda nem duplicidade.
+* **Contexto (Achado F1):** Em vendas com pagamentos divididos (múltiplos lançamentos para o mesmo `vendaId`), a deduplicação precisava ocorrer estritamente pelo ID único do lançamento no ledger (`lancamento_id: BIGINT`), e não pelo `vendaId`.
+* **Solução ([`V3__financial_projection_checkpoint_v2.sql`](../../apps/inv-service/src/main/resources/db/migration/V3__financial_projection_checkpoint_v2.sql)):** Criada a tabela aditiva `financial_projection_checkpoint_v2 (lancamento_id BIGINT PRIMARY KEY, processado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, status VARCHAR(20) NOT NULL DEFAULT 'OK')` e o job idempotente de reparo [`ReparoProjecaoVendaJob`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ReparoProjecaoVendaJob.java), garantindo que todos os pagamentos parciais e estornos de uma mesma venda sejam refletidos sem perda nem duplicidade.
 
 ### B. Projeção CQRS Temporal Diária (`financial_projection_diaria`)
 * **Contexto (Achado F4 e Decisão Q1):** `financial_projection_venda` consolida o saldo por venda (sem dimensão de calendário), enquanto `fechamento_caixa_diario` opera por *high watermark* de reconciliação D+0. Para responder "receita do dia", "receita acumulada no mês (MTD)" e "série diária dos últimos 7 dias" em $O(\text{dias})$ sob **regime de caixa líquido** (`valorRecebido - troco`), foi introduzida uma segunda projeção read-optimized.
 * **Schema e Idempotência Física ([`V4__projecao_receita_diaria.sql`](../../apps/inv-service/src/main/resources/db/migration/V4__projecao_receita_diaria.sql)):**
-  * `financial_projection_diaria`: armazena `data_referencia DATE PRIMARY KEY`, `total_creditos`, `total_debitos`, `receita_liquida` (`GENERATED ALWAYS AS (total_creditos - total_debitos) STORED`), `qtd_lancamentos` e `ultimo_lancamento_id`.
-  * `financial_projection_diaria_checkpoint`: deduplicação física por `lancamento_id BIGINT PRIMARY KEY`.
-* **Upsert Atômico por CTE ([`ProjecaoReceitaDiariaRepository`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjecaoReceitaDiariaRepository.java)):** Uma única instrução SQL com Common Table Expression (`WITH ins AS (INSERT INTO financial_projection_diaria_checkpoint ... ON CONFLICT DO NOTHING RETURNING ...) INSERT INTO financial_projection_diaria ... ON CONFLICT (data_referencia) DO UPDATE`) garante que a inserção do checkpoint e o incremento do saldo diário sejam atômicos no PostgreSQL, tornando o pipeline seguro sob concorrência entre o listener assíncrono, o `ProjectionRetryScheduler` e o job de catch-up/backfill.
+  * `financial_projection_diaria`: armazena `data_referencia DATE PRIMARY KEY`, `total_creditos NUMERIC(14,2)`, `total_debitos NUMERIC(14,2)`, `qtd_lancamentos BIGINT` e `ultima_atualizacao TIMESTAMP` (com a receita líquida calculada no modelo de domínio `ResumoReceita.liquida()` / `ReceitaDiariaView.liquida()` como `creditos - debitos`).
+  * `financial_projection_diaria_checkpoint`: deduplicação física por `lancamento_id BIGINT PRIMARY KEY` e `processado_em TIMESTAMP`.
+* **Upsert Atômico por CTE ([`ProjecaoReceitaDiariaRepository`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjecaoReceitaDiariaRepository.java)):** Uma única instrução SQL com Common Table Expression (`WITH marcado AS (INSERT INTO financial_projection_diaria_checkpoint ... ON CONFLICT DO NOTHING RETURNING ...) INSERT INTO financial_projection_diaria ... ON CONFLICT (data_referencia) DO UPDATE`) garante que a inserção do checkpoint e o incremento do saldo diário sejam atômicos no PostgreSQL, tornando o pipeline seguro sob concorrência entre o listener assíncrono, o `ProjectionRetryScheduler` e o job de catch-up/backfill.
 * **Auto-Cura por Varredura de Faixa ([`ProjecaoDiariaCatchUpJob`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/jobs/ProjecaoDiariaCatchUpJob.java)):** Além da fila `projection_retry_queue`, um job periódico varre eventuais lacunas entre o maior ID do checkpoint diário e o maior ID de `lancamentos_financeiros`, permitindo backfill histórico em lotes de 5.000 registros sem bloqueio.
 * **Contrato Público de Leitura ([`ReceitaQueryService`](../../apps/inv-service/src/main/java/inv/finance/api/ReceitaQueryService.java) e [`ProjecaoReceitaQueryService`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/query/ProjecaoReceitaQueryService.java)):** Expõe consultas em série densa (`generate_series` preenchendo dias sem movimento com zero) e diagnóstico de frescor (`FrescorProjecao`: atraso em número de lançamentos e tamanho da fila de retry), validados em [`ProjecaoReceitaDiariaIT`](../../apps/inv-service/src/test/java/inv/finance/ProjecaoReceitaDiariaIT.java).
 
@@ -144,4 +144,3 @@ Durante a execução do plano **[DEBT-ARCH-001](../debt/DEBT-ARCH-001-desacoplam
 * [Repositório da Fila de Retry](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/ProjectionRetryRepository.java)
 * [Documentação do Domínio Finance](../domains/finance.md)
 * [ADR-0010: Dashboard como Módulo de Composição de Leitura](0010-dashboard-read-only-composition-module.md)
-

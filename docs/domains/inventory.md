@@ -2,6 +2,11 @@
 
 O módulo **Inventory** é responsável pelo catálogo de produtos, rastreabilidade física de mercadorias, prevenção de *overselling* (vendas a descoberto) via **SQL Atômico** e alertas de estoque baixo orientados a eventos com proteção anti-spam.
 
+A fronteira pública do módulo (*Published Language* em `inv.inventory.api`, anotada com `@NamedInterface("api")` do Spring Modulith) expõe três contratos puros:
+* **`EstoqueCommandService`** (`reservar`, `confirmarBaixa`, `estornarReserva` recebendo `ComandoEstoqueVenda` com `Propagation.MANDATORY`), implementado por `EstoqueService` (`package-private`), que ordena os itens por `produtoId ASC` (`ORDEM_DE_LOCK`) antes dos `UPDATE`s nativos para eliminar deadlocks (`SQLState 40P01`) em carrinhos concorrentes com múltiplos itens.
+* **`CatalogoQueryService`** (`buscarParaCheckout`), implementado por `JpaCatalogoQueryService` (`package-private`), fornecendo snapshots imutáveis (`ProdutoCheckoutView`) ao **Checkout**.
+* **`EstoqueQueryService`** (`resumo` retornando `ResumoEstoque`), implementado por `JpaEstoqueQueryService` (`package-private`), consumido pelo módulo **Dashboard**.
+
 ---
 
 ## 1. Glossário da Linguagem Ubíqua (Ubiquitous Language)
@@ -48,12 +53,13 @@ classDiagram
 
 ## 3. Lógica de Alerta Anti-Spam para Estoque Baixo
 
-Para evitar que múltiplos caixas vendendo o mesmo produto disparem dezenas de e-mails para o administrador quando o estoque já está abaixo do mínimo, o [`EstoqueService`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L93-L105) aplica uma **verificação de transição de estado**:
+Para evitar que múltiplos caixas vendendo o mesmo produto disparem dezenas de e-mails para o administrador quando o estoque já está abaixo do mínimo, o [`EstoqueService`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L45-L61) (`package-private`) reconstrói o saldo anterior diretamente do valor retornado pela cláusula `RETURNING` sob o row lock do `UPDATE` atômico (`saldoAnterior = novoSaldo.add(item.quantidade())`), eliminando leituras prévias fora de lock, e aplica a **verificação de transição de estado** ([`verificarEAlertarEstoqueBaixo`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L125-L131)):
 
 ```mermaid
 flowchart TD
-    Inicio([Reserva de Estoque Executada]) --> Checagem{Saldo Anterior > Mínimo E Novo Saldo <= Mínimo?}
-    Checagem -- SIM (Momento da Quebra) --> Disparo[Publica EstoqueAtingiuMinimoEvent -> Outbox -> RabbitMQ]
+    Inicio([Reserva Atômica Executada com RETURNING novoSaldo]) --> Calculo[Reconstrói sob lock: saldoAnterior = novoSaldo + qtd]
+    Calculo --> Checagem{saldoAnterior > Mínimo E novoSaldo <= Mínimo?}
+    Checagem -- SIM (Momento Exato da Quebra) --> Disparo[Publica EstoqueAtingiuMinimoEvent -> Outbox -> RabbitMQ]
     Checagem -- NÃO (Já estava abaixo ou ainda está acima) --> Silencio[Ignora envio de alerta - Sem Spam]
     Disparo --> Fim([Fim])
     Silencio --> Fim
@@ -63,10 +69,13 @@ flowchart TD
 
 ## 4. Modelo Físico de Dados
 
+> [!NOTE]
+> **FKs de Fronteira Modular (Sem Mapeamento JPA Cross-Context):** A relação física entre `itens_venda.produto_id` e `produtos.id` (`fk_itens_venda_produto`) e entre `movimentacoes_estoque.venda_id` e `vendas.id` (`fk_movimentacoes_venda`) é mantida no PostgreSQL para integridade referencial e documentada na migration `V6__comentarios_fk_fronteira_modular.sql`. No modelo de domínio JPA, `ItemVenda` armazena apenas a referência escalar `Long produtoId` e `MovimentacaoEstoque` armazena `Long vendaId`, preservando o isolamento estrito entre os Bounded Contexts.
+
 ```mermaid
 erDiagram
     PRODUTOS ||--o{ MOVIMENTACOES_ESTOQUE : registra
-    PRODUTOS ||--o{ ITENS_VENDA : referencia
+    PRODUTOS ||--o{ ITENS_VENDA : "fk_itens_venda_produto (escalar ItemVenda.produtoId)"
 
     PRODUTOS {
         bigint id PK
@@ -98,3 +107,4 @@ erDiagram
 * 📑 **[ADR-0002: Controle Híbrido de Concorrência e Estoque Atômico](../adr/0002-atomic-sql-inventory-and-hybrid-locking.md)**
 * 📑 **[ADR-0004: Transactional Outbox Pattern com SKIP LOCKED](../adr/0004-transactional-outbox-with-skip-locked.md)**
 * 📑 **[ADR-0008: Consumidor Idempotente e Evolução de Schemas](../adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)**
+* 📑 **[ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](../adr/0011-synchronous-open-host-service-checkout-inventory.md)**

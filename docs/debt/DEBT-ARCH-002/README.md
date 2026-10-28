@@ -9,7 +9,7 @@
 | 1 | E0 rede de segurança, E1 correções bloqueantes (F1 parcial, F2, F7) | [E0-E1.md](./E0-E1.md) | concluído (PR #31) |
 | 2 | E2 Published Language `inventory.api` (aditivo), E3 refatoração do Checkout | [E2.md](./E2.md), [E3.md](./E3.md) | concluído (PR #32) |
 | 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | concluído (PR #37) |
-| 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 Spring Modulith | [E5-E6.md](./E5-E6.md) | concluído (PR #38 + E6) |
+| 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 Spring Modulith | [E5-E6.md](./E5-E6.md) | concluído (PR #38, PR #39) |
 
 ### Progresso da Execução
 
@@ -19,7 +19,7 @@
 - [x] **E3** — Refatoração do Checkout (`ItemVenda.produtoId`, `VendaService` e `VendaEventHandler` via `inventory.api`, `EstoqueService` package-private)
 - [x] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`) (concluído — PR #37)
 - [x] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs (concluído — PR #38)
-- [x] **E6** — Spring Modulith (`@ApplicationModule`, `@NamedInterface("api")`, `ApplicationModules.verify()` e C4 `Documenter` em `ModulithTest`)
+- [x] **E6** — Spring Modulith (`@ApplicationModule`, `@NamedInterface("api")`, `ApplicationModules.verify()` e C4 `Documenter` em `ModulithTest`) (concluído — PR #39)
 
 ```mermaid
 flowchart LR

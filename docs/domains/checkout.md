@@ -9,11 +9,11 @@ O módulo **Checkout** é responsável pela orquestração do ciclo de vida das 
 | Termo | Definição no Domínio |
 | :--- | :--- |
 | **Venda** | Agregado raiz que representa o pedido comercial, contendo o valor total, status, versionamento otimista e a lista de itens comprados. |
-| **Item de Venda** | Snapshot imutável do produto (preço unitário, quantidade e nome) no momento exato em que foi adicionado ao carrinho. |
+| **Item de Venda** | Snapshot imutável do produto (preço unitário, quantidade e nome) no momento exato em que foi adicionado ao carrinho, armazenando apenas a referência escalar `Long produtoId`. |
 | **Intenção de Pagamento** | Registro prévio de uma tentativa de pagamento associada a uma referência UUID externa e método de pagamento (Pix, Cartão, Dinheiro). |
 | **Recibo** | Projeção formatada de uma venda ativa ou concluída, contendo a lista de itens, subtotais e dados de abertura. |
 | **Long Polling (`DeferredResult`)** | Mecanismo de espera reativa assíncrona onde o terminal de PDV aguarda até 30 segundos por uma mudança de estado da venda sem prender threads do servidor. |
-| **Venda Expirada** | Venda que permaneceu em `AGUARDANDO_PAGAMENTO` além do tempo limite configurado e tem seus itens devolvidos automaticamente ao estoque disponível por um job agendado. |
+| **Venda Expirada** | Venda que permaneceu em `ABERTA` ou `AGUARDANDO_PAGAMENTO` além do tempo limite configurado e tem seus itens devolvidos automaticamente ao estoque disponível por um job agendado. |
 
 ---
 
@@ -26,7 +26,7 @@ stateDiagram-v2
     [*] --> ABERTA: POST /vendas (Reserva Atômica no Estoque)
     ABERTA --> AGUARDANDO_PAGAMENTO: POST /pagamentos/intencao
     
-    AGUARDANDO_PAGAMENTO --> CONCLUIDA: Webhook Confirmado (Baixa Definitiva + Outbox + VendaPagaEvent)
+    AGUARDANDO_PAGAMENTO --> CONCLUIDA: Webhook Confirmado (Baixa Definitiva via EstoqueCommandService + VendaPagaEvent)
     AGUARDANDO_PAGAMENTO --> CANCELADA: VendaExpiracaoJob / Timeout (Estorno da Reserva de Estoque)
     
     CONCLUIDA --> [*]
@@ -59,30 +59,36 @@ sequenceDiagram
     participant PDV as Terminal PDV (Front-end)
     participant VendaCtrl as VendaController
     participant VendaSvc as VendaService
+    participant EstoqueAPI as EstoqueCommandService (inv.inventory.api)
     participant Registry as VendaStatusRegistry
     participant GatewayExt as Gateway Pagamentos (Externo)
     participant PagtoCtrl as PagamentoController
-    participant Outbox as Tabela Outbox (DB)
+    participant PagtoSvc as PagamentoService
+    participant RabbitMQ as RabbitMQ (pagamento.confirmado.queue)
+    participant Handler as VendaEventHandler
     participant Finance as Finance (VendaPagaEventListener)
 
     Operador->>PDV: Escaneia produtos e finaliza carrinho
     PDV->>VendaCtrl: POST /vendas (itens, quantidades)
-    VendaCtrl->>VendaSvc: iniciarVenda() (Reserva Atômica Estoque)
-    VendaCtrl-->>PDV: Retorna Venda (ID: 100, Status: ABERTA)
+    VendaCtrl->>VendaSvc: iniciarVenda()
+    VendaSvc->>EstoqueAPI: reservar(ComandoEstoqueVenda) [MANDATORY, produtoId ASC]
+    VendaCtrl-->>PDV: Retorna Venda (ID: 100, Status: AGUARDANDO_PAGAMENTO)
 
     PDV->>VendaCtrl: GET /vendas/100/status?wait=true&sinceVersion=1
     Note over VendaCtrl,Registry: Thread HTTP liberada. Conexão estacionada no VendaStatusRegistry (30s)
 
     GatewayExt->>PagtoCtrl: POST /pagamentos/webhook/confirmar (pagamentoId, NSU)
-    PagtoCtrl->>VendaSvc: processarPagamento(vendaId=100)
-    Note over VendaSvc: Lock Pessimista (findByIdWithLock)
-    VendaSvc->>VendaSvc: Baixa Definitiva no Estoque
-    VendaSvc->>Outbox: INSERT outbox (VendaConcluidaEvent)
-    VendaSvc->>Finance: Publica VendaPagaEvent (@EventListener síncrono na mesma TX)
+    PagtoCtrl->>PagtoSvc: confirmarPagamentoWebhook()
+    PagtoSvc->>RabbitMQ: Publica PagamentoConfirmadoEvent (pagamentos.exchange)
+    RabbitMQ->>Handler: Consome PagamentoConfirmadoEvent (pagamento.confirmado.queue)
+    Note over Handler: Lock Pessimista na Venda (findByIdWithLock)
+    Handler->>Handler: Registra pagamento na Venda e conclui a Venda
+    Handler->>EstoqueAPI: confirmarBaixa(ComandoEstoqueVenda) [MANDATORY, produtoId ASC]
+    Handler->>Finance: Publica VendaPagaEvent (@EventListener síncrono na mesma TX)
     Finance->>Finance: INSERT INTO lancamentos_financeiros (Ledger)
-    Note over VendaSvc,Finance: Commit da Transação Principal (Venda + Estoque + Ledger)
+    Note over Handler,Finance: Commit da Transação Principal (Venda + Estoque + Ledger)
     
-    VendaSvc-->>Registry: VendaAtualizadaEvent (@TransactionalEventListener AFTER_COMMIT)
+    Handler-->>Registry: VendaAtualizadaEvent (@TransactionalEventListener AFTER_COMMIT)
     Registry-->>PDV: Resolve DeferredResult: Status CONCLUIDA (HTTP 200)
     PDV->>Operador: Imprime Recibo e libera mercadoria!
 ```
@@ -92,9 +98,9 @@ sequenceDiagram
 ## 4. Rotinas Periódicas de Expiração (Housekeeping)
 
 O componente [`VendaExpiracaoJob`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/jobs/VendaExpiracaoJob.java) roda periodicamente a cada 5 minutos:
-1. Localiza vendas em `StatusVenda.AGUARDANDO_PAGAMENTO` criadas há mais de 30 minutos.
-2. Executa `vendaService.cancelarVendaExpirada(vendaId)` sob lock pessimista.
-3. Invoca `estoqueService.estornarReservaEstoque()`, devolvendo as unidades reservadas para `estoque_disponivel` sem intervenção manual.
+1. Localiza vendas em `StatusVenda.ABERTA` ou `StatusVenda.AGUARDANDO_PAGAMENTO` criadas há mais de 30 minutos.
+2. Executa `vendaService.cancelarVendaExpirada(vendaId)` sob lock pessimista (`findByIdWithLock`), aplicando um **guard pós-lock idempotente** que retorna silenciosamente caso a venda já esteja `CANCELADA` (Q10/F2).
+3. Invoca `estoqueCommandService.estornarReserva(comandoPara(venda))` (`Propagation.MANDATORY`, lote ordenado por `produtoId ASC`), devolvendo as unidades reservadas para `estoque_disponivel` sem intervenção manual.
 
 ---
 
@@ -103,3 +109,4 @@ O componente [`VendaExpiracaoJob`](../../apps/inv-service/src/main/java/inv/chec
 * 📑 **[ADR-0002: Controle Híbrido de Concorrência e Estoque Atômico](../adr/0002-atomic-sql-inventory-and-hybrid-locking.md)**
 * 📑 **[ADR-0003: Long Polling Não-Bloqueante com DeferredResult](../adr/0003-async-long-polling-pos-deferred-result.md)**
 * 📑 **[ADR-0004: Transactional Outbox Pattern com SKIP LOCKED](../adr/0004-transactional-outbox-with-skip-locked.md)**
+* 📑 **[ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](../adr/0011-synchronous-open-host-service-checkout-inventory.md)**
