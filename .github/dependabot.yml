@@ -2,31 +2,46 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "maven"
     directory: "/"
+    target-branch: "develop"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      maven-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "org.springframework.boot:*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.springframework.cloud:*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "docker"
-    directory: "/apps/api-gateway"
+    directories:
+      - "/apps/api-gateway"
+      - "/apps/auth-service"
+      - "/apps/inv-service"
+      - "/apps/mail-service"
+    target-branch: "develop"
     schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/apps/auth-service"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/apps/inv-service"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/apps/mail-service"
-    schedule:
-      interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "eclipse-temurin"
+        update-types: ["version-update:semver-major"]
