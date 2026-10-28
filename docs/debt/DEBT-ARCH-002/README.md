@@ -8,8 +8,8 @@
 | :---: | :--- | :--- | :--- |
 | 1 | E0 rede de segurança, E1 correções bloqueantes (F1 parcial, F2, F7) | [E0-E1.md](./E0-E1.md) | concluído (PR #31) |
 | 2 | E2 Published Language `inventory.api` (aditivo), E3 refatoração do Checkout | [E2.md](./E2.md), [E3.md](./E3.md) | concluído (PR #32) |
-| 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | implementado localmente / PR pendente |
-| 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 backlog Spring Modulith | [E5-E6.md](./E5-E6.md) | pendente |
+| 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | concluído (PR #37) |
+| 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 backlog Spring Modulith | [E5-E6.md](./E5-E6.md) | concluído (E5 concluída; E6 em backlog) |
 
 ### Progresso da Execução
 
@@ -17,8 +17,8 @@
 - [x] **E1** — Correções bloqueantes (guard idempotente `F2`/`Q10` em `cancelarVendaExpirada`, remoção de código morto `F7`/`Q7` e `F1` parcial em `ArquiteturaTest`)
 - [x] **E2** — Published Language `inv.inventory.api` (`EstoqueCommandService`, `CatalogoQueryService`, implementação aditiva em lote ordenado)
 - [x] **E3** — Refatoração do Checkout (`ItemVenda.produtoId`, `VendaService` e `VendaEventHandler` via `inventory.api`, `EstoqueService` package-private)
-- [x] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`) (implementado localmente / PR pendente)
-- [ ] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs
+- [x] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`) (concluído — PR #37)
+- [x] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs
 - [ ] **E6** — (Backlog) Spring Modulith
 
 ```mermaid
@@ -268,14 +268,14 @@ Cancelamento/devolução de venda `CONCLUIDA` pertence ao **DEBT-ARCH-003** (Q5)
 | **Q1** | Decisão | Integração síncrona OHS via `inventory.api` com `MANDATORY` | E2, E3 (concluído — PR #32) | Interfaces e services da API; consumo no Checkout |
 | **Q2** | Decisão | Segregação `EstoqueCommandService` / `CatalogoQueryService` | E2 (concluído — PR #32) | Contratos da Published Language |
 | **Q3** | Decisão | Lote ordenado por `produtoId ASC` (anti-deadlock) | E2 (implementado — PR #32), E4 (concluído) | Implementado em `EstoqueService` (E2), testado sob barreira (E4) |
-| **Q4** | Decisão | `ItemVenda.produtoId` escalar + FKs físicas mantidas | E3 (concluído em Java — PR #32), E5-E6 | Refatoração Java (E3) e migration V6 de comentários (E5) |
+| **Q4** | Decisão | `ItemVenda.produtoId` escalar + FKs físicas mantidas | E3 (concluído em Java — PR #32), E5 (concluído) | Refatoração Java (E3) e migration V6 de comentários (E5) |
 | **Q5** | Decisão | Fronteira com `DEBT-ARCH-003` (devolução fora de escopo) | — (informativo) | Limite de escopo |
-| **Q6** | Decisão | ArchUnit sem freeze e store limpo | E5-E6 | Fechamento da governança |
+| **Q6** | Decisão | ArchUnit sem freeze e store limpo | E5 (concluído) | Fechamento da governança |
 | **Q7** | Decisão | Remoção de código morto (`processarPagamento`, outbox) | E0-E1 (concluído — PR #31) | Limpeza no PR 1 |
-| **Q8** | Decisão | `@Retryable` com `PessimisticLockingFailureException` | E4 (concluído) | Resiliência |
+| **Q8** | Decisão | `@Retryable` com `PessimisticLockingFailureException` | E4 (concluído — PR #37) | Resiliência |
 | **Q9** | Decisão | Paridade funcional de mensagens de erro | E0-E1 (E0 concluída), E2, E3 (concluído — PR #32) | Caracterizada na E0, preservada na E2/E3 |
 | **Q10** | Decisão | Guard de `CANCELADA` em `cancelarVendaExpirada` (red-green) | E0-E1 (concluído — PR #31) | Correção em commit isolado na E1 |
-| **F1** | Achado | Falso positivo R7/R8 (`onlyHaveDependentClassesThat`) | E0-E1 (concluído em checkout/finance), E5-E6 | Parcial em checkout/finance (E1), final em inventory (E5) |
+| **F1** | Achado | Falso positivo R7/R8 (`onlyHaveDependentClassesThat`) | E0-E1 (concluído em checkout/finance), E5 (concluído em inventory) | Parcial em checkout/finance (E1), final em inventory (E5) |
 | **F2** | Achado | Roubo de reserva / estorno duplo pós-expiração | E0-E1 (concluído — PR #31) | Bug resolvido na E1 via Q10 |
 | **F3** | Achado | Acoplamento de entidade JPA (`ItemVenda.produto`) | E3 (concluído — PR #32) | Resolvido na E3 via Q4 |
 | **F4** | Achado | Checkout injeta `EstoqueService` (caso de uso interno) | E2, E3 (concluído — PR #32) | Porta na E2, migração do Checkout na E3 |
@@ -302,13 +302,13 @@ Nenhum destes itens corrompe o estoque hoje. Todos ficam **caracterizados** (nã
 
 ## DoD global (Definição de Pronto, fonte única)
 
-- [ ] Regras ArchUnit R7 e R8 sem `freeze`, com semântica `onlyHaveDependentClassesThat()`, e `archunit_store/` removido (0 entradas de `inventory`).
-- [ ] Nova regra R13 (`checkoutNaoDeveDependerDeInventoryInterno`) garantindo que `checkout` dependa de Inventory **exclusivamente** via `inv.inventory.api`; R14 garantindo implementações não públicas.
+- [x] Regras ArchUnit R7 e R8 sem `freeze`, com semântica `onlyHaveDependentClassesThat()`, e `archunit_store/` removido (0 entradas de `inventory`).
+- [x] Nova regra R13 (`checkoutNaoDeveDependerDeInventoryInterno`) garantindo que `checkout` dependa de Inventory **exclusivamente** via `inv.inventory.api`; R14 garantindo implementações não públicas.
 - [x] `CarrinhosInvertidosDeadlockIT` (`[A, B]` vs `[B, A]` simultâneos) sem deadlock, com controle negativo comprovando a sensibilidade do teste.
 - [x] Testes de reserva, baixa e estorno com 100% de aprovação e **paridade de mensagens** (inclusive a nuance de ordem por `produtoId`, documentada).
 - [x] `VendaEventHandlerTest` criado **antes** da migração (E0), acompanhado de `VendaEventHandlerIT` validando a fronteira de `@Transactional`.
 - [x] Teste do guard de venda `CANCELADA`: vermelho antes do fix e verde depois (commits isolados na E1).
-- [ ] `EstoqueConcorrenciaIntegrationTest` (50 threads / 5 unidades) verde em todas as etapas (validado até E4; permanece aberto até a conclusão da E5), preservando a integridade das asserções de efeito.
-- [ ] `fk_itens_venda_produto`, `fk_movimentacoes_venda` (e `fk_lancamento_venda`) documentadas no schema (V6, só metadados) e na ADR-0001 como FKs de fronteira modular.
-- [ ] ADR-0002 com adendo (ordem de locks, hierarquia `vendas → produtos`, pré-imagem do anti-spam) e ADR-0011 criada.
-- [ ] Validação e suíte completa executadas com sucesso em Java 21 LTS com Docker ativo.
+- [x] `EstoqueConcorrenciaIntegrationTest` (50 threads / 5 unidades) verde em todas as etapas, preservando a integridade das asserções de efeito.
+- [x] `fk_itens_venda_produto`, `fk_movimentacoes_venda` (e `fk_lancamento_venda`) documentadas no schema (V6, só metadados) e na ADR-0001 como FKs de fronteira modular.
+- [x] ADR-0002 com adendo (ordem de locks, hierarquia `vendas → produtos`, pré-imagem do anti-spam) e ADR-0011 criada.
+- [x] Validação e suíte completa executadas com sucesso em Java 21 LTS com Docker ativo.

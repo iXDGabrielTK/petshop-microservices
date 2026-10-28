@@ -42,6 +42,7 @@ Toda a arquitetura, regras de negócio e decisões de engenharia estão cataloga
 | **[ADR-0008](docs/adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)** | Consumidor Idempotente e Schema Evolution | `Aceito` | Mail, Shared | Deduplicação com `processed_events` e fallback V1/V2. |
 | **[ADR-0009](docs/adr/0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)** | Spring Auth Server OIDC e RSA 2048-bit | `Aceito` | Auth, Gateway | Resource Servers stateless validados localmente em memória. |
 | **[ADR-0010](docs/adr/0010-dashboard-read-only-composition-module.md)** | Dashboard como Módulo de Composição de Leitura | `Aceito` | Dashboard, Core | BFF interno read-only consumindo contratos `*.api` e CQRS diário. |
+| **[ADR-0011](docs/adr/0011-synchronous-open-host-service-checkout-inventory.md)** | Open Host Service Síncrono de Comandos (Checkout → Inventory) | `Aceito` | Checkout, Inventory | Lote ordenado (`produtoId ASC`), `Propagation.MANDATORY` e `ItemVenda.produtoId`. |
 
 ---
 
@@ -112,7 +113,7 @@ petshop-microservices/
 ├── docs/                               # Hub de Governança & Arquitetura
 │   ├── architecture/                   # System Overview e Observabilidade
 │   ├── domains/                        # Deep Dives dos Bounded Contexts
-│   └── adr/                            # 10 Architecture Decision Records (MADR 3.0)
+│   └── adr/                            # 11 Architecture Decision Records (MADR 3.0)
 │
 ├── apps/
 │   ├── api-gateway/                    # Spring Cloud Gateway + Redis Token Bucket

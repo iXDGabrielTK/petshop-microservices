@@ -716,6 +716,9 @@ mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest -Dsurefire.failIfNoSpec
 ### E7 — (Backlog, fora desta sprint) Spring Modulith
 `spring-modulith-starter-test` (linha 1.3.x, compatível com Boot 3.4), `package-info.java` com `@ApplicationModule(allowedDependencies = {"checkout::api", "finance::api", "inventory::api", "shared"})` no `dashboard` e `@NamedInterface("api")` em cada `*.api`. Teste `ApplicationModules.of(InvServiceApplication.class).verify()` e geração de documentação C4 com `Documenter`. Pré-requisito: o F8 resolvido ou declarado em `allowedDependencies`.
 
+> [!NOTE]
+> **Atualização (Outubro/2026 — DEBT-ARCH-002):** O pré-requisito F8 (`Checkout → Inventory`) e a remoção definitiva do `archunit_store/` foram integralmente concluídos na Etapa 5 do **[DEBT-ARCH-002](./DEBT-ARCH-002/README.md)**. O backlog do Spring Modulith segue consolidado na **Etapa E6** de [`docs/debt/DEBT-ARCH-002/E5-E6.md`](./DEBT-ARCH-002/E5-E6.md#e6--backlog-spring-modulith), aguardando apenas aprovação prévia da engenharia para inclusão da dependência no `pom.xml` (até lá, as regras `R13` e `R14` do ArchUnit cobrem o mesmo invariante).
+
 ---
 
 ## Pilar 5 — Desativação do `@ArchIgnore` e proteção contínua
