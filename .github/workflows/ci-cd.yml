@@ -43,6 +43,13 @@ jobs:
             exit 1
           fi
 
+      - name: Verificar ausencia da catraca ArchUnit (archunit_store)
+        run: |
+          if [ -d "apps/inv-service/src/test/resources/archunit_store" ] || [ -n "$(git ls-files '**/archunit_store/**')" ]; then
+            echo "::error::Diretorio archunit_store detectado! A catraca FreezingArchRule foi removida definitivamente no DEBT-ARCH-002 (E5)."
+            exit 1
+          fi
+
       - name: Validar estrutura dos POMs
         run: mvn validate
 
