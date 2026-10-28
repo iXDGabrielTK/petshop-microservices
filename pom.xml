@@ -42,6 +42,15 @@
                 <scope>import</scope>
             </dependency>
 
+            <!-- Spring Modulith -->
+            <dependency>
+                <groupId>org.springframework.modulith</groupId>
+                <artifactId>spring-modulith-bom</artifactId>
+                <version>1.3.2</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- SpringDoc -->
             <dependency>
                 <groupId>org.springdoc</groupId>

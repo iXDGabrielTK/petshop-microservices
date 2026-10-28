@@ -102,7 +102,8 @@ public class ArquiteturaTest {
     @ArchTest
     static final ArchRule apisSaoContratosPuros = classes()
             .that().resideInAPackage("inv..api..")
-            .should().onlyDependOnClassesThat().resideInAnyPackage("inv..api..", "java..", "common..")
+            .should().onlyDependOnClassesThat().resideInAnyPackage(
+                    "inv..api..", "java..", "common..", "org.springframework.modulith..")
             .andShould(beInterfacesRecordsOrEnums())
             .as("APIs públicas devem ser contratos puros dependendo apenas de java, common ou outras APIs e ser interfaces, records ou enums");
 
