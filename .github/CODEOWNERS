@@ -1,0 +1,4 @@
+# Governança Arquitetural — Proteção das regras do ArchUnit e bloqueio da catraca (DEBT-ARCH-001 E6 / DEBT-ARCH-002 E5)
+/apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java @iXDGabrielTK
+/apps/inv-service/src/test/resources/archunit.properties @iXDGabrielTK
+/apps/inv-service/src/test/resources/archunit_store/ @iXDGabrielTK
