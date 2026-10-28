@@ -1,6 +1,6 @@
 # DEBT-ARCH-002 — Desacoplar `inv.checkout` dos internos de `inv.inventory` (`inv-service`)
 
-> **TL;DR:** o Checkout passa a falar com o Inventory **apenas** por um **Open Host Service síncrono e in-process** em `inv.inventory.api`, separado em **comandos** (`EstoqueCommandService`: reservar, confirmar baixa, estornar) e **consulta de catálogo** (`CatalogoQueryService` → `ProdutoCheckoutView`). Os comandos operam **em lote**, rodam com `Propagation.MANDATORY` na transação do chamador (ADR-0002) e a implementação **ordena os itens por `produtoId` crescente** antes dos `UPDATE ... RETURNING` atômicos, o que elimina o deadlock `40P01` entre carrinhos invertidos. No domínio, `ItemVenda` troca o `@ManyToOne Produto` por `Long produtoId`, sem migration estrutural. Antes, corrige-se o estorno duplicado em `cancelarVendaExpirada` (F2). Ao final, o `freeze(...)` de `inventory` sai de R7/R8 e as regras R13/R14 impedem regressões.
+> **TL;DR:** o Checkout passa a falar com o Inventory **apenas** por um **Open Host Service síncrono e in-process** em `inv.inventory.api`, separado em **comandos** (`EstoqueCommandService`: reservar, confirmar baixa, estornar) e **consulta de catálogo** (`CatalogoQueryService` → `ProdutoCheckoutView`). Os comandos operam **em lote**, rodam com `Propagation.MANDATORY` na transação do chamador (ADR-0002) e a implementação **ordena os itens por `produtoId` crescente** antes dos `UPDATE ... RETURNING` atômicos, o que elimina o deadlock `40P01` entre carrinhos invertidos. No domínio, `ItemVenda` troca o `@ManyToOne Produto` por `Long produtoId`, sem migration estrutural. Antes, corrige-se o estorno duplicado em `cancelarVendaExpirada` (F2). Ao final, o `freeze(...)` de `inventory` sai de R7/R8, as regras R13/R14 impedem regressões e o Spring Modulith valida `@ApplicationModule`/`@NamedInterface("api")` gerando documentação C4.
 
 ## Roadmap dos 4 PRs
 
@@ -9,7 +9,7 @@
 | 1 | E0 rede de segurança, E1 correções bloqueantes (F1 parcial, F2, F7) | [E0-E1.md](./E0-E1.md) | concluído (PR #31) |
 | 2 | E2 Published Language `inventory.api` (aditivo), E3 refatoração do Checkout | [E2.md](./E2.md), [E3.md](./E3.md) | concluído (PR #32) |
 | 3 | E4 concorrência pesada, anti-deadlock e `@Retryable` (Q8) | [E4.md](./E4.md) | concluído (PR #37) |
-| 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 backlog Spring Modulith | [E5-E6.md](./E5-E6.md) | concluído (E5 concluída; E6 em backlog) |
+| 4 | E5 remoção da catraca, R13/R14, ADRs e V6; E6 Spring Modulith | [E5-E6.md](./E5-E6.md) | concluído (PR #38 + E6) |
 
 ### Progresso da Execução
 
@@ -18,8 +18,8 @@
 - [x] **E2** — Published Language `inv.inventory.api` (`EstoqueCommandService`, `CatalogoQueryService`, implementação aditiva em lote ordenado)
 - [x] **E3** — Refatoração do Checkout (`ItemVenda.produtoId`, `VendaService` e `VendaEventHandler` via `inventory.api`, `EstoqueService` package-private)
 - [x] **E4** — Concorrência pesada, anti-deadlock (`CarrinhosInvertidosDeadlockIT`, `EstoqueMultiItemConcorrenciaIT`, `HandlerExpiracaoMesmaVendaIT`) e `@Retryable` (`Q8`) (concluído — PR #37)
-- [x] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs
-- [ ] **E6** — (Backlog) Spring Modulith
+- [x] **E5** — Remoção definitiva da catraca (`archunit_store/`), regras R13/R14, migration V6 de metadados e ADRs (concluído — PR #38)
+- [x] **E6** — Spring Modulith (`@ApplicationModule`, `@NamedInterface("api")`, `ApplicationModules.verify()` e C4 `Documenter` em `ModulithTest`)
 
 ```mermaid
 flowchart LR
@@ -28,10 +28,10 @@ flowchart LR
     E2 --> E3["E3 Refatoração do Checkout"]
     E3 --> E4["E4 Concorrência e anti-deadlock + Q8"]
     E4 --> E5["E5 Remoção da catraca + ADRs + FKs"]
-    E5 -.-> E6["E6 Backlog Spring Modulith"]
+    E5 --> E6["E6 Spring Modulith"]
 ```
 
-**Princípios transversais:** sem migration estrutural (só a V6 de metadados); rollout fatiado em 4 PRs atômicos; testes de regressão preservados integralmente.
+**Princípios transversais:** sem migration estrutural (só a V6 de metadados); rollout fatiado em PRs atômicos; testes de regressão preservados integralmente.
 
 ---
 
@@ -95,7 +95,7 @@ inv/
 │       ├── persistence/ProdutoRepository       (+ buscarViewsCheckout, buscarMetadadosEstoque)
 │       ├── persistence/ProdutoMetadadosEstoque (record interno: id, nome, estoqueMinimo)
 │       └── query/{JpaEstoqueQueryService, JpaCatalogoQueryService}   (package-private)
-└── (test) archunit_store/  ◄ REMOVIDO; R7/R8 sem freeze; R13/R14 novas
+└── (test) archunit_store/  ◄ REMOVIDO; R7/R8 sem freeze; R13/R14 novas; ModulithTest ativo
 ```
 
 ### 1.3 Fluxo unidirecional de dependências (alvo)
@@ -132,7 +132,7 @@ flowchart LR
     DASH["inv.dashboard"] --> EQS
 ```
 
-**Invariantes:** nenhuma classe de `inv.checkout` importa `inv.inventory.{domain,usecase,infrastructure}` nem qualquer subpacote futuro de `inventory` fora de `api` (R13, whitelist). Implementações de interfaces `*.api` não são públicas (R14). `inv.inventory` não conhece `inv.checkout` (R4). Entidades e repositórios só têm dependentes no próprio contexto (R7/R8 com `onlyHaveDependentClassesThat`).
+**Invariantes:** nenhuma classe de `inv.checkout` importa `inv.inventory.{domain,usecase,infrastructure}` nem qualquer subpacote futuro de `inventory` fora de `api` (R13, whitelist). Implementações de interfaces `*.api` não são públicas (R14). `inv.inventory` não conhece `inv.checkout` (R4). Entidades e repositórios só têm dependentes no próprio contexto (R7/R8 com `onlyHaveDependentClassesThat`). `ApplicationModules.of(InvServiceApplication.class).verify()` garante o contrato `@ApplicationModule` e `@NamedInterface("api")` no Spring Modulith (E6).
 
 ### 1.4 Justificativa
 
@@ -140,7 +140,7 @@ flowchart LR
   - **Open Host Service + Published Language:** o Inventory publica um protocolo estável (`EstoqueCommandService`, `CatalogoQueryService`) com records imutáveis. Os agregados (`Produto`, `Venda`) não atravessam a fronteira.
   - **IDs por referência entre agregados:** `ItemVenda` guarda `produtoId` (`Long`) e um **snapshot** escalar (nome e preço no momento da venda). É o desenho correto: o preço da venda não pode mudar se o catálogo mudar, e o domínio do Checkout não depende de tipos de `inv.inventory` (nem mesmo de `inv.inventory.api`).
 - **Clean Architecture:** a regra de dependência aponta para a abstração do provedor (`inventory.api`). O caso de uso `VendaService` orquestra; a política de concorrência (ordem de locks, SQL atômico, alerta, auditoria) é detalhe **interno** do Inventory e deixa de vazar para o Checkout, que hoje precisa "saber" que deve passar a entidade pré-carregada.
-- **Visibilidade e ArchUnit:** em Java, `package-private` só vale dentro do mesmo pacote. Por isso os contratos ficam públicos em `inv.inventory.api` (R9: só `interface`/`record`/`enum`, dependendo de `java..`, `common..` e `inv..api..`), e as implementações são package-private: `JpaCatalogoQueryService` em `infrastructure.query` (R10) e `EstoqueService` em `usecase` (nova R14). O Spring instancia e cria proxies CGLIB de classes package-private sem problema (o proxy é gerado no mesmo pacote; os métodos `@Transactional` são públicos por implementarem a interface).
+- **Visibilidade, ArchUnit e Spring Modulith:** em Java, `package-private` só vale dentro do mesmo pacote. Por isso os contratos ficam públicos em `inv.inventory.api` (R9: só `interface`/`record`/`enum`, dependendo de `java..`, `common..`, `org.springframework.modulith..` e `inv..api..`, expostos como `@NamedInterface("api")`), e as implementações são package-private: `JpaCatalogoQueryService` em `infrastructure.query` (R10) e `EstoqueService` em `usecase` (nova R14). O Spring instancia e cria proxies CGLIB de classes package-private sem problema (o proxy é gerado no mesmo pacote; os métodos `@Transactional` são públicos por implementarem a interface).
 
 ---
 
@@ -201,7 +201,7 @@ flowchart LR
 ### Q6 — ArchUnit sem freeze e store limpo
 **Decisão:** descongelar R7/R8, apagar `archunit_store/` e criar a regra "`checkout` só depende de `inventory.api`".
 **Por quê:** R7/R8 trocam `onlyBeAccessed()` por `onlyHaveDependentClassesThat()` (fecha a brecha do F1). As 3 violações de R8 somem na E3. Novas R13 (whitelist) e R14. Testes cruzando módulos vão para `inv.it` (F8 — concluído na E4 com `EstoqueConcorrenciaIntegrationTest` em `inv.it`).
-**Implementado em:** E5.
+**Implementado em:** E5 (concluído — PR #38).
 
 ### Q7 — Remoção de código morto
 **Decisão:** remover `VendaService.processarPagamento` (sem chamador; o `VendaEventHandler` é o único ponto de baixa), `registrarOutboxVendaConcluida` (sem produtor ativo nem consumidor; `vendas.exchange` não existe em `RabbitMQConfig`) e `VendaConcluidaEvent`.
@@ -268,9 +268,9 @@ Cancelamento/devolução de venda `CONCLUIDA` pertence ao **DEBT-ARCH-003** (Q5)
 | **Q1** | Decisão | Integração síncrona OHS via `inventory.api` com `MANDATORY` | E2, E3 (concluído — PR #32) | Interfaces e services da API; consumo no Checkout |
 | **Q2** | Decisão | Segregação `EstoqueCommandService` / `CatalogoQueryService` | E2 (concluído — PR #32) | Contratos da Published Language |
 | **Q3** | Decisão | Lote ordenado por `produtoId ASC` (anti-deadlock) | E2 (implementado — PR #32), E4 (concluído) | Implementado em `EstoqueService` (E2), testado sob barreira (E4) |
-| **Q4** | Decisão | `ItemVenda.produtoId` escalar + FKs físicas mantidas | E3 (concluído em Java — PR #32), E5 (concluído) | Refatoração Java (E3) e migration V6 de comentários (E5) |
+| **Q4** | Decisão | `ItemVenda.produtoId` escalar + FKs físicas mantidas | E3 (concluído em Java — PR #32), E5 (concluído — PR #38) | Refatoração Java (E3) e migration V6 de comentários (E5) |
 | **Q5** | Decisão | Fronteira com `DEBT-ARCH-003` (devolução fora de escopo) | — (informativo) | Limite de escopo |
-| **Q6** | Decisão | ArchUnit sem freeze e store limpo | E5 (concluído) | Fechamento da governança |
+| **Q6** | Decisão | ArchUnit sem freeze e store limpo | E5 (concluído — PR #38) | Fechamento da governança |
 | **Q7** | Decisão | Remoção de código morto (`processarPagamento`, outbox) | E0-E1 (concluído — PR #31) | Limpeza no PR 1 |
 | **Q8** | Decisão | `@Retryable` com `PessimisticLockingFailureException` | E4 (concluído — PR #37) | Resiliência |
 | **Q9** | Decisão | Paridade funcional de mensagens de erro | E0-E1 (E0 concluída), E2, E3 (concluído — PR #32) | Caracterizada na E0, preservada na E2/E3 |
@@ -311,4 +311,5 @@ Nenhum destes itens corrompe o estoque hoje. Todos ficam **caracterizados** (nã
 - [x] `EstoqueConcorrenciaIntegrationTest` (50 threads / 5 unidades) verde em todas as etapas, preservando a integridade das asserções de efeito.
 - [x] `fk_itens_venda_produto`, `fk_movimentacoes_venda` (e `fk_lancamento_venda`) documentadas no schema (V6, só metadados) e na ADR-0001 como FKs de fronteira modular.
 - [x] ADR-0002 com adendo (ordem de locks, hierarquia `vendas → produtos`, pré-imagem do anti-spam) e ADR-0011 criada.
+- [x] Spring Modulith ativo (`ModulithTest`): `ApplicationModules.of(InvServiceApplication.class).verify()` verde com `@ApplicationModule` e `@NamedInterface("api")` em todos os Bounded Contexts e documentação C4 gerada via `Documenter`.
 - [x] Validação e suíte completa executadas com sucesso em Java 21 LTS com Docker ativo.

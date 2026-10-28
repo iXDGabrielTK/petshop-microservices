@@ -13,7 +13,7 @@
 - [x] **E4** — Módulo inv.dashboard + Shadow mode (dashboard.engine)
 - [x] **E5** — Cutover (Carga sintética 7d + 100% reconciliação + Caffeine ativo)
 - [x] **E6** — Descomissionamento do legado + Remoção da catraca
-- [ ] **E7** — (Backlog) Spring Modulith
+- [x] **E7** — Spring Modulith (concluída na E6 do DEBT-ARCH-002 — `ModulithTest`)
 
 ---
 
@@ -717,7 +717,7 @@ mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest -Dsurefire.failIfNoSpec
 `spring-modulith-starter-test` (linha 1.3.x, compatível com Boot 3.4), `package-info.java` com `@ApplicationModule(allowedDependencies = {"checkout::api", "finance::api", "inventory::api", "shared"})` no `dashboard` e `@NamedInterface("api")` em cada `*.api`. Teste `ApplicationModules.of(InvServiceApplication.class).verify()` e geração de documentação C4 com `Documenter`. Pré-requisito: o F8 resolvido ou declarado em `allowedDependencies`.
 
 > [!NOTE]
-> **Atualização (Outubro/2026 — DEBT-ARCH-002):** O pré-requisito F8 (`Checkout → Inventory`) e a remoção definitiva do `archunit_store/` foram integralmente concluídos na Etapa 5 do **[DEBT-ARCH-002](./DEBT-ARCH-002/README.md)**. O backlog do Spring Modulith segue consolidado na **Etapa E6** de [`docs/debt/DEBT-ARCH-002/E5-E6.md`](./DEBT-ARCH-002/E5-E6.md#e6--backlog-spring-modulith), aguardando apenas aprovação prévia da engenharia para inclusão da dependência no `pom.xml` (até lá, as regras `R13` e `R14` do ArchUnit cobrem o mesmo invariante).
+> **Atualização (Outubro/2026 — DEBT-ARCH-002):** O pré-requisito F8 (`Checkout → Inventory`), a remoção definitiva do `archunit_store/` (Etapa 5) e a ativação completa do **Spring Modulith** (`@ApplicationModule`, `@NamedInterface("api")` e [`ModulithTest`](../../apps/inv-service/src/test/java/inv/architect/ModulithTest.java) com `ApplicationModules.verify()` e geração de diagramas C4 via `Documenter`) foram integralmente concluídos na **Etapa E6** do **[DEBT-ARCH-002](./DEBT-ARCH-002/E5-E6.md#e6--spring-modulith)**.
 
 ---
 
