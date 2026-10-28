@@ -1,33 +1,38 @@
 package inv.service;
 
 import common.exception.BusinessException;
-import inv.model.ItemVenda;
-import inv.model.Produto;
-import inv.model.Venda;
-import inv.repository.VendaRepository;
+import inv.checkout.domain.model.ItemVenda;
+import inv.checkout.domain.model.StatusVenda;
+import inv.checkout.domain.model.Venda;
+import inv.checkout.infrastructure.persistence.VendaRepository;
+import inv.checkout.usecase.VendaService;
+import inv.inventory.api.ComandoEstoqueVenda;
+import inv.inventory.api.EstoqueCommandService;
+import inv.inventory.api.ItemComando;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class VendaServiceCancelamentoTest {
 
     @Mock private VendaRepository vendaRepository;
-    @Mock private EstoqueService estoqueService;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private EstoqueCommandService estoqueCommandService;
 
     @InjectMocks
     private VendaService vendaService;
@@ -42,17 +47,13 @@ class VendaServiceCancelamentoTest {
         Venda vendaSpy = spy(new Venda());
         doReturn(vendaId).when(vendaSpy).getId();
 
-        // Produtos (Mocks)
-        Produto produto1 = mock(Produto.class);
-        Produto produto2 = mock(Produto.class);
-
         // Itens da Venda (Mocks)
         ItemVenda item1 = mock(ItemVenda.class);
-        when(item1.getProduto()).thenReturn(produto1);
+        when(item1.getProdutoId()).thenReturn(1L);
         when(item1.getQuantidade()).thenReturn(new BigDecimal("5"));
 
         ItemVenda item2 = mock(ItemVenda.class);
-        when(item2.getProduto()).thenReturn(produto2);
+        when(item2.getProdutoId()).thenReturn(2L);
         when(item2.getQuantidade()).thenReturn(new BigDecimal("3"));
 
         doReturn(List.of(item1, item2)).when(vendaSpy).getItens();
@@ -66,12 +67,16 @@ class VendaServiceCancelamentoTest {
         verify(vendaSpy, times(1)).cancelar();
         verify(vendaRepository, times(1)).save(vendaSpy);
 
-        // VERIFICAÇÃO 2: Contrato do loop de itens (Estorno de reservas)
-        verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto1), eq(new BigDecimal("5")), eq(vendaSpy));
-        verify(estoqueService, times(1)).estornarReservaEstoque(eq(produto2), eq(new BigDecimal("3")), eq(vendaSpy));
+        // VERIFICAÇÃO 2: Contrato de estorno de reservas em lote via EstoqueCommandService
+        ArgumentCaptor<ComandoEstoqueVenda> comandoCaptor = ArgumentCaptor.forClass(ComandoEstoqueVenda.class);
+        verify(estoqueCommandService, times(1)).estornarReserva(comandoCaptor.capture());
 
-        // VERIFICAÇÃO 3: Nenhuma ação paralela indevida
-        verifyNoInteractions(eventPublisher);
+        ComandoEstoqueVenda comando = comandoCaptor.getValue();
+        assertThat(comando.vendaId()).isEqualTo(vendaId);
+        assertThat(comando.itens()).containsExactly(
+                new ItemComando(1L, new BigDecimal("5")),
+                new ItemComando(2L, new BigDecimal("3"))
+        );
     }
 
     @Test
@@ -81,7 +86,40 @@ class VendaServiceCancelamentoTest {
 
         assertThrows(BusinessException.class, () -> vendaService.cancelarVendaExpirada(999L));
 
-        verifyNoInteractions(estoqueService, eventPublisher);
+        verifyNoInteractions(estoqueCommandService);
         verify(vendaRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("F2/Q10 — cancelarVendaExpirada em venda já CANCELADA deve ser idempotente e não estornar estoque")
+    void cancelarVendaJaCanceladaNaoDeveEstornarEstoqueNovamente() {
+        Long vendaId = 100L;
+        Venda venda = new Venda();
+        venda.cancelar();
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+
+        vendaService.cancelarVendaExpirada(vendaId);
+
+        verify(vendaRepository, never()).save(any());
+        verifyNoInteractions(estoqueCommandService);
+    }
+
+    @Test
+    @DisplayName("F2/Q10 — cancelarVendaExpirada deve rejeitar venda CONCLUIDA ou CANCELAMENTO_SOLICITADO sem tocar no estoque")
+    void naoDeveCancelarVendaExpiradaSeJaEstiverConcluida() {
+        Long vendaId = 100L;
+
+        for (StatusVenda statusInelegivel : List.of(StatusVenda.CONCLUIDA, StatusVenda.CANCELAMENTO_SOLICITADO)) {
+            Venda venda = new Venda();
+            ReflectionTestUtils.setField(venda, "status", statusInelegivel);
+            when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+
+            assertThatThrownBy(() -> vendaService.cancelarVendaExpirada(vendaId))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Venda #" + vendaId + " não é elegível para cancelamento por expiração no status: " + statusInelegivel);
+
+            verifyNoInteractions(estoqueCommandService);
+            verify(vendaRepository, never()).save(any());
+        }
     }
 }

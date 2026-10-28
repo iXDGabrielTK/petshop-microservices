@@ -3,7 +3,9 @@ package common.exception;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.*;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.InternalAuthenticationServiceException;
@@ -69,7 +71,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problem);
     }
 
-    // 4. Validação de Campos (400) - Bean Validation
+    // 4. Concorrência / Lock Otimista (409)
+    @ExceptionHandler({OptimisticLockingFailureException.class, ObjectOptimisticLockingFailureException.class})
+    public ResponseEntity<ProblemDetail> handleOptimisticLockingFailure(Exception ex) {
+        log.warn("Conflito de concorrência detectado: {}", ex.getMessage());
+        ProblemDetail problem = buildProblemDetail(
+                HttpStatus.CONFLICT,
+                "O registro foi alterado por outro usuário. Por favor, recarregue e tente novamente.",
+                "Conflito de Concorrência",
+                "optimistic-lock-failure"
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
+
+    // 5. Validação de Campos (400) - Bean Validation
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex, @NonNull HttpHeaders headers, @NonNull HttpStatusCode status, @NonNull WebRequest request) {
         ProblemDetail problem = buildProblemDetail(
@@ -89,7 +104,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problem);
     }
 
-    // 5. Autenticação (401) - Login/Senha errados
+    // 6. Autenticação (401)
     @ExceptionHandler({BadCredentialsException.class, InternalAuthenticationServiceException.class})
     ProblemDetail handleBadCredentialsException() {
         return buildProblemDetail(
@@ -100,7 +115,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         );
     }
 
-    // 6. Autorização (403) - Sem permissão de acesso
+    // 7. Autorização (403)
     @ExceptionHandler(AccessDeniedException.class)
     ProblemDetail handleAccessDeniedException(AccessDeniedException ex) {
         log.warn("Tentativa de acesso negado bloqueada: {}", ex.getMessage());

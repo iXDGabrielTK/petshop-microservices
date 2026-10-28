@@ -1,0 +1,12 @@
+# --- Spring Boot Actuator (Falsos Positivos) ---
+# CVE-2026-22731: Requer Health Group customizado com additional-path colidindo com rotas autenticadas (não aplicável ao projeto).
+CVE-2026-22731
+# CVE-2026-22733: Bypass específico do ambiente CloudFoundry (não aplicável, rodamos em containers Docker normais).
+CVE-2026-22733
+
+# --- PostgreSQL JDBC Driver ---
+# CVE-2025-49146, CVE-2026-42198, CVE-2026-54291: Conexão PostgreSQL isolada em rede interna Docker.
+# Upgrade do driver postergado para o PR dedicado de bump de dependências.
+CVE-2025-49146
+CVE-2026-42198
+CVE-2026-54291

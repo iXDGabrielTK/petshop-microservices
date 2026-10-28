@@ -1,0 +1,5 @@
+# Governança Arquitetural — Proteção das regras do ArchUnit, Spring Modulith e bloqueio da catraca (DEBT-ARCH-001 E6-E7 / DEBT-ARCH-002 E5-E6)
+/apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java @iXDGabrielTK
+/apps/inv-service/src/test/java/inv/architect/ModulithTest.java @iXDGabrielTK
+/apps/inv-service/src/test/resources/archunit.properties @iXDGabrielTK
+/apps/inv-service/src/test/resources/archunit_store/ @iXDGabrielTK
