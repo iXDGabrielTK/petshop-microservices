@@ -3,7 +3,9 @@ package auth.controller;
 import auth.dto.request.UserSettingsRequest;
 import auth.dto.response.UserResponse;
 import auth.model.Usuario;
+import auth.security.user.UserDetailsImpl;
 import auth.service.UsuarioService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -35,15 +37,36 @@ public class UsuarioController {
     /**
      * Atualiza as configurações do usuário autenticado.
      * Endpoint usado pelo Frontend para salvar preferências do usuário.
+     * Suporta autenticação tanto via JWT (Resource Server) quanto via Session (UserDetailsImpl).
      */
     @PatchMapping("/settings")
     public ResponseEntity<Void> updateSettings(
-            @RequestBody UserSettingsRequest request,
-            @AuthenticationPrincipal Usuario usuario
+            @Valid @RequestBody UserSettingsRequest request,
+            @AuthenticationPrincipal Object principal
     ) {
-        usuarioService.updateSettings(usuario.getId(), request);
+        if (principal instanceof Jwt jwt) {
+            Object userIdClaim = jwt.getClaims().get("user_id");
+            if (userIdClaim instanceof Number number) {
+                usuarioService.updateSettings(number.longValue(), request);
+            } else {
+                usuarioService.updateSettingsByEmail(jwt.getClaimAsString("sub"), request);
+            }
+        } else if (principal instanceof UserDetailsImpl userDetails) {
+            usuarioService.updateSettings(userDetails.getId(), request);
+        } else if (principal instanceof Usuario usuario) {
+            usuarioService.updateSettings(usuario.getId(), request);
+        } else {
+            throw new IllegalArgumentException("Principal de autenticação não suportado");
+        }
 
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Sobrecarga para compatibilidade retroativa com testes legados ou chamadores diretos.
+     */
+    public ResponseEntity<Void> updateSettings(UserSettingsRequest request, Usuario usuario) {
+        return updateSettings(request, (Object) usuario);
     }
 
 }

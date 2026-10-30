@@ -50,6 +50,9 @@ public class AuthService {
      * @return Usuario recém-criado
      */
     public Usuario register(auth.dto.request.RegisterRequest request) {
+        if (request == null || request.getEmail() == null) {
+            throw new BusinessException("Dados de registro inválidos");
+        }
         if (usuarioRepository.findByEmail(request.getEmail()).isPresent()) {
             throw new BusinessException("Email já cadastrado");
         }
@@ -79,6 +82,9 @@ public class AuthService {
      */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
+        if (request == null || request.getEmail() == null) {
+            throw new BusinessException("Email obrigatório");
+        }
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("Email não encontrado"));
 
@@ -122,10 +128,13 @@ public class AuthService {
      */
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
+        if (request == null || request.getToken() == null) {
+            throw new BusinessException("Dados de redefinição de senha inválidos");
+        }
         PasswordResetToken resetToken = tokenRepository.findByToken(request.getToken())
                 .orElseThrow(() -> new ResourceNotFoundException("Token inválido"));
 
-        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+        if (!java.util.Objects.equals(request.getNewPassword(), request.getConfirmPassword())) {
             throw new BusinessException("As senhas não conferem.");
         }
 
