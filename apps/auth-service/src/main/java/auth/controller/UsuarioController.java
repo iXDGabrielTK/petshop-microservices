@@ -7,6 +7,8 @@ import auth.security.user.UserDetailsImpl;
 import auth.service.UsuarioService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -27,8 +29,11 @@ public class UsuarioController {
      */
     @GetMapping("/me")
     public ResponseEntity<UserResponse> me(@AuthenticationPrincipal Jwt jwt) {
-        String email = jwt.getClaimAsString("sub");
+        if (jwt == null) {
+            throw new BadCredentialsException("Usuário não autenticado");
+        }
 
+        String email = jwt.getClaimAsString("sub");
         UserResponse response = usuarioService.obterDadosUsuarioLogado(email);
 
         return ResponseEntity.ok(response);
@@ -44,6 +49,10 @@ public class UsuarioController {
             @Valid @RequestBody UserSettingsRequest request,
             @AuthenticationPrincipal Object principal
     ) {
+        if (principal == null) {
+            throw new BadCredentialsException("Usuário não autenticado");
+        }
+
         if (principal instanceof Jwt jwt) {
             Object userIdClaim = jwt.getClaims().get("user_id");
             if (userIdClaim instanceof Number number) {
@@ -56,7 +65,7 @@ public class UsuarioController {
         } else if (principal instanceof Usuario usuario) {
             usuarioService.updateSettings(usuario.getId(), request);
         } else {
-            throw new IllegalArgumentException("Principal de autenticação não suportado");
+            throw new AccessDeniedException("Principal de autenticação não suportado");
         }
 
         return ResponseEntity.noContent().build();

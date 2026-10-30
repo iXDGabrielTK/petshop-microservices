@@ -13,6 +13,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -55,6 +57,14 @@ class UsuarioControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isEqualTo(expectedResponse);
         verify(usuarioService).obterDadosUsuarioLogado("logado@petshop.com");
+    }
+
+    @Test
+    @DisplayName("me() deve lançar BadCredentialsException quando Jwt for nulo")
+    void meDeveLancarBadCredentialsExceptionQuandoJwtNulo() {
+        assertThatThrownBy(() -> usuarioController.me(null))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessage("Usuário não autenticado");
     }
 
     @Test
@@ -119,23 +129,23 @@ class UsuarioControllerTest {
     }
 
     @Test
-    @DisplayName("updateSettings() deve lançar IllegalArgumentException quando principal for de tipo desconhecido")
+    @DisplayName("updateSettings() deve lançar AccessDeniedException quando principal for de tipo desconhecido")
     void updateSettingsComPrincipalInvalido() {
         UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
 
         assertThatThrownBy(() -> usuarioController.updateSettings(request, "string-desconhecida"))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(AccessDeniedException.class)
                 .hasMessage("Principal de autenticação não suportado");
     }
 
     @Test
-    @DisplayName("updateSettings() deve lançar IllegalArgumentException quando principal for nulo")
+    @DisplayName("updateSettings() deve lançar BadCredentialsException quando principal for nulo")
     void updateSettingsComPrincipalNulo() {
         UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
 
         assertThatThrownBy(() -> usuarioController.updateSettings(request, null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Principal de autenticação não suportado");
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessage("Usuário não autenticado");
     }
 
     @org.junit.jupiter.api.Nested

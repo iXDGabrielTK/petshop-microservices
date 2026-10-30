@@ -1,18 +1,25 @@
 package auth.service;
 
-import auth.dto.request.*;
-import auth.dto.message.PasswordResetMessage;
 import auth.config.RabbitMQConfig;
-import auth.model.Usuario;
+import auth.dto.message.PasswordResetMessage;
+import auth.dto.request.ForgotPasswordRequest;
+import auth.dto.request.RegisterRequest;
+import auth.dto.request.ResetPasswordRequest;
 import auth.model.PasswordResetToken;
+import auth.model.Role;
+import auth.model.Usuario;
+import auth.repository.PasswordResetTokenRepository;
+import auth.repository.RoleRepository;
 import auth.repository.UsuarioRepository;
 import common.exception.BusinessException;
 import common.exception.ResourceNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -23,15 +30,16 @@ public class AuthService {
     Logger logger = Logger.getLogger(AuthService.class.getName());
 
     private final UsuarioRepository usuarioRepository;
-    private final auth.repository.PasswordResetTokenRepository tokenRepository;
+    private final PasswordResetTokenRepository tokenRepository;
     private final RabbitTemplate rabbitTemplate;
-    private final auth.repository.RoleRepository roleRepository;
-    private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    public AuthService(UsuarioRepository usuarioRepository, auth.repository.PasswordResetTokenRepository tokenRepository,
+    public AuthService(UsuarioRepository usuarioRepository,
+                       PasswordResetTokenRepository tokenRepository,
                        RabbitTemplate rabbitTemplate,
-                       auth.repository.RoleRepository roleRepository,
-                       org.springframework.security.crypto.password.PasswordEncoder passwordEncoder) {
+                       RoleRepository roleRepository,
+                       PasswordEncoder passwordEncoder) {
         this.usuarioRepository = usuarioRepository;
         this.tokenRepository = tokenRepository;
         this.rabbitTemplate = rabbitTemplate;
@@ -42,17 +50,17 @@ public class AuthService {
     /**
      * Registra um novo usuário na aplicação.
      *<p>
-     * - Verifica se o email já existe e lança IllegalArgumentException se estiver em uso.
+     * - Verifica se o email já existe e lança BusinessException se estiver em uso.
      * - Cria o Usuario com senha codificada e atribui a role padrão "USER".
      * - Persiste o usuário no repositório e retorna a entidade criada.
      *
      * @param request dados para cadastro (nome, email, senha)
      * @return Usuario recém-criado
      */
-    public Usuario register(auth.dto.request.RegisterRequest request) {
-        if (request == null || request.getEmail() == null) {
-            throw new BusinessException("Dados de registro inválidos");
-        }
+    public Usuario register(RegisterRequest request) {
+        Objects.requireNonNull(request, "request não pode ser nulo");
+        Objects.requireNonNull(request.getEmail(), "email não pode ser nulo");
+
         if (usuarioRepository.findByEmail(request.getEmail()).isPresent()) {
             throw new BusinessException("Email já cadastrado");
         }
@@ -63,8 +71,8 @@ public class AuthService {
                 passwordEncoder.encode(request.getSenha())
         );
 
-        auth.model.Role roleUser = roleRepository.findByNome("USER")
-                .orElseGet(() -> roleRepository.save(new auth.model.Role(null, "USER")));
+        Role roleUser = roleRepository.findByNome("USER")
+                .orElseGet(() -> roleRepository.save(new Role(null, "USER")));
 
         novoUsuario.adicionarRole(roleUser);
 
@@ -82,9 +90,9 @@ public class AuthService {
      */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
-        if (request == null || request.getEmail() == null) {
-            throw new BusinessException("Email obrigatório");
-        }
+        Objects.requireNonNull(request, "request não pode ser nulo");
+        Objects.requireNonNull(request.getEmail(), "email não pode ser nulo");
+
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("Email não encontrado"));
 
@@ -128,13 +136,13 @@ public class AuthService {
      */
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
-        if (request == null || request.getToken() == null) {
-            throw new BusinessException("Dados de redefinição de senha inválidos");
-        }
+        Objects.requireNonNull(request, "request não pode ser nulo");
+        Objects.requireNonNull(request.getToken(), "token não pode ser nulo");
+
         PasswordResetToken resetToken = tokenRepository.findByToken(request.getToken())
                 .orElseThrow(() -> new ResourceNotFoundException("Token inválido"));
 
-        if (!java.util.Objects.equals(request.getNewPassword(), request.getConfirmPassword())) {
+        if (!Objects.equals(request.getNewPassword(), request.getConfirmPassword())) {
             throw new BusinessException("As senhas não conferem.");
         }
 

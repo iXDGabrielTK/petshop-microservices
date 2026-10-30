@@ -144,17 +144,17 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("Deve lançar BusinessException quando request ou email forem nulos")
-        void deveLancarBusinessExceptionQuandoRequestOuEmailNulo() {
+        @DisplayName("Deve lançar NullPointerException quando request ou email forem nulos")
+        void deveLancarExcecaoQuandoRequestOuEmailNulo() {
             assertThatThrownBy(() -> authService.register(null))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessage("Dados de registro inválidos");
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("request não pode ser nulo");
 
             RegisterRequest reqSemEmail = new RegisterRequest();
             reqSemEmail.setNome("Sem Email");
             assertThatThrownBy(() -> authService.register(reqSemEmail))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessage("Dados de registro inválidos");
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("email não pode ser nulo");
         }
     }
 
@@ -249,16 +249,16 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("Deve lançar BusinessException quando request ou email forem nulos")
-        void deveLancarBusinessExceptionQuandoRequestOuEmailNulo() {
+        @DisplayName("Deve lançar NullPointerException quando request ou email forem nulos")
+        void deveLancarExcecaoQuandoRequestOuEmailNulo() {
             assertThatThrownBy(() -> authService.forgotPassword(null))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessage("Email obrigatório");
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("request não pode ser nulo");
 
             ForgotPasswordRequest reqSemEmail = new ForgotPasswordRequest();
             assertThatThrownBy(() -> authService.forgotPassword(reqSemEmail))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessage("Email obrigatório");
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("email não pode ser nulo");
         }
     }
 
@@ -361,16 +361,16 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("Deve lançar BusinessException quando request ou token forem nulos")
-        void deveLancarBusinessExceptionQuandoRequestOuTokenNulo() {
+        @DisplayName("Deve lançar NullPointerException quando request ou token forem nulos")
+        void deveLancarExcecaoQuandoRequestOuTokenNulo() {
             assertThatThrownBy(() -> authService.resetPassword(null))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessage("Dados de redefinição de senha inválidos");
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("request não pode ser nulo");
 
             ResetPasswordRequest reqSemToken = new ResetPasswordRequest();
             assertThatThrownBy(() -> authService.resetPassword(reqSemToken))
-                    .isInstanceOf(BusinessException.class)
-                    .hasMessage("Dados de redefinição de senha inválidos");
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("token não pode ser nulo");
         }
 
         @Test
