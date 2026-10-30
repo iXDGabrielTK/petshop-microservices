@@ -45,7 +45,7 @@ public class PagamentoController {
 
     @PostMapping("/webhook/confirmar/{pagamentoId}")
     public ResponseEntity<Void> webhookConfirmar(@PathVariable Long pagamentoId,
-                                                 @RequestBody Map<String, String> payload) {
+                                                 @Valid @RequestBody Map<String, String> payload) {
 
         BigDecimal valorReal = new BigDecimal(payload.get("valor_recebido"));
         String nsu = payload.get("nsu");
