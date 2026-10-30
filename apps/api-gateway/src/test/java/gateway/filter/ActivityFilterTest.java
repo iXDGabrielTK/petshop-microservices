@@ -11,7 +11,6 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
-import org.springframework.data.domain.Range;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.core.ReactiveZSetOperations;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
@@ -49,9 +48,6 @@ class ActivityFilterTest {
     @Captor
     private ArgumentCaptor<Double> scoreCaptor;
 
-    @Captor
-    private ArgumentCaptor<Range<Double>> rangeCaptor;
-
     private ActivityFilter activityFilter;
     private ServerWebExchange exchange;
 
@@ -60,8 +56,6 @@ class ActivityFilterTest {
         lenient().when(redisTemplate.opsForZSet()).thenReturn(zSetOperations);
         lenient().when(zSetOperations.add(anyString(), anyString(), anyDouble()))
                 .thenReturn(Mono.just(Boolean.TRUE));
-        lenient().when(zSetOperations.removeRangeByScore(anyString(), any()))
-                .thenReturn(Mono.just(0L));
         lenient().when(chain.filter(any()))
                 .thenReturn(Mono.empty());
 
@@ -76,14 +70,12 @@ class ActivityFilterTest {
     class SucessoTests {
 
         @Test
-        @DisplayName("Deve registrar timestamp atual no ZSet, purgar registros com mais de 1h e repassar a cadeia sem quebrar o pipeline")
+        @DisplayName("Deve registrar timestamp atual no ZSet e repassar a cadeia sem executar purga na requisição")
         void deveExecutarFiltroComSucesso() {
             long before = System.currentTimeMillis();
 
             when(zSetOperations.add(anyString(), anyString(), anyDouble()))
                     .thenReturn(Mono.just(Boolean.TRUE));
-            when(zSetOperations.removeRangeByScore(anyString(), any()))
-                    .thenReturn(Mono.just(1L));
             when(chain.filter(same(exchange)))
                     .thenReturn(Mono.empty());
 
@@ -108,23 +100,8 @@ class ActivityFilterTest {
                     .isGreaterThanOrEqualTo(before)
                     .isLessThanOrEqualTo(after);
 
-            // 2. Validação da remoção de registros mais velhos que 1 hora
-            verify(zSetOperations).removeRangeByScore(keyCaptor.capture(), rangeCaptor.capture());
-            assertThat(keyCaptor.getValue()).isEqualTo(TelemetriaKeys.ATIVIDADE_ZSET);
-
-            Range<Double> range = rangeCaptor.getValue();
-            assertThat(range).isNotNull();
-
-            // Limite inferior: 0.0 inclusive
-            assertThat(range.getLowerBound().getValue()).contains(0.0);
-            assertThat(range.getLowerBound().isInclusive()).isTrue();
-
-            // Limite superior: score - 3600000 (1 hora atrás)
-            assertThat(range.getUpperBound().getValue()).isPresent();
-            double upperBound = range.getUpperBound().getValue().get();
-            long expectedOneHourAgo = score.longValue() - 3600000L;
-            assertThat((long) upperBound).isEqualTo(expectedOneHourAgo);
-            assertThat(range.getUpperBound().isInclusive()).isTrue();
+            // 2. Garantir que removeRangeByScore NÃO é chamado no caminho crítico da requisição
+            verify(zSetOperations, never()).removeRangeByScore(anyString(), any());
 
             // 3. Validação do repasse na cadeia com o mesmo ServerWebExchange
             verify(chain).filter(exchange);
@@ -152,30 +129,10 @@ class ActivityFilterTest {
         }
 
         @Test
-        @DisplayName("Deve tolerar timeout do Redis no removeRangeByScore sem quebrar o pipeline e prosseguir na cadeia")
-        void deveTolerarFalhaNoRemoveRangeByScoreSemQuebrarPipeline() {
-            when(zSetOperations.add(anyString(), anyString(), anyDouble()))
-                    .thenReturn(Mono.just(Boolean.TRUE));
-            RuntimeException redisEx = new RuntimeException("Redis timeout on purge");
-            when(zSetOperations.removeRangeByScore(anyString(), any()))
-                    .thenReturn(Mono.error(redisEx));
-            when(chain.filter(same(exchange)))
-                    .thenReturn(Mono.empty());
-
-            StepVerifier.create(activityFilter.filter(exchange, chain))
-                    .verifyComplete();
-
-            verify(zSetOperations).removeRangeByScore(anyString(), any());
-            verify(chain).filter(exchange);
-        }
-
-        @Test
         @DisplayName("Deve propagar erro downstream quando o chain subsequente falhar")
         void devePropagarErroQuandoChainFalhar() {
             when(zSetOperations.add(anyString(), anyString(), anyDouble()))
                     .thenReturn(Mono.just(Boolean.TRUE));
-            when(zSetOperations.removeRangeByScore(anyString(), any()))
-                    .thenReturn(Mono.just(0L));
 
             RuntimeException chainEx = new RuntimeException("Downstream route failure");
             when(chain.filter(same(exchange)))

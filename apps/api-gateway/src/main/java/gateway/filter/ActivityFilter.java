@@ -5,7 +5,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
-import org.springframework.data.domain.Range;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -14,6 +13,7 @@ import reactor.core.publisher.Mono;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class ActivityFilter implements GlobalFilter {
@@ -22,6 +22,8 @@ public class ActivityFilter implements GlobalFilter {
 
     private final ReactiveRedisTemplate<String, String> redisTemplate;
     private static final String ACTIVITY_KEY = TelemetriaKeys.ATIVIDADE_ZSET;
+    private static final long LOG_SUPPRESSION_INTERVAL_MS = 10_000L;
+    private final AtomicLong lastLogTimestamp = new AtomicLong(0);
 
     public ActivityFilter(ReactiveRedisTemplate<String, String> redisTemplate) {
         this.redisTemplate = Objects.requireNonNull(redisTemplate, "redisTemplate não pode ser nulo");
@@ -33,19 +35,23 @@ public class ActivityFilter implements GlobalFilter {
         Objects.requireNonNull(chain, "chain não pode ser nulo");
 
         long now = Instant.now().toEpochMilli();
-        long umaHoraAtras = now - 3600000;
 
         return redisTemplate.opsForZSet()
                 .add(ACTIVITY_KEY, UUID.randomUUID().toString(), (double) now)
-                .then(redisTemplate.opsForZSet()
-                        .removeRangeByScore(
-                                ACTIVITY_KEY,
-                                Range.closed(0.0, (double) umaHoraAtras)
-                        ))
                 .onErrorResume(e -> {
-                    log.warn("Falha na telemetria de atividade Redis (não bloqueante): {}", e.getMessage());
+                    logTelemetryError(e);
                     return Mono.empty();
                 })
                 .then(chain.filter(exchange));
+    }
+
+    private void logTelemetryError(Throwable e) {
+        long current = System.currentTimeMillis();
+        long last = lastLogTimestamp.get();
+        if (current - last > LOG_SUPPRESSION_INTERVAL_MS) {
+            if (lastLogTimestamp.compareAndSet(last, current)) {
+                log.warn("Falha na telemetria de atividade Redis (não bloqueante): {}", e.getMessage());
+            }
+        }
     }
 }

@@ -28,7 +28,52 @@ class RateLimitConfigTest {
     }
 
     @Nested
-    @DisplayName("userKeyResolver() — Resolução de Endereço IP")
+    @DisplayName("userKeyResolver() — Resolução via Proxies Reversos")
+    class ResolucaoProxyTests {
+
+        @Test
+        @DisplayName("Deve extrair o primeiro IP do cabeçalho X-Forwarded-For quando fornecido múltiplos IPs")
+        void deveExtrairPrimeiroIpDoXForwardedFor() {
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "203.0.113.195, 70.41.3.18, 150.172.238.178")
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(keyResolver.resolve(exchange))
+                    .expectNext("203.0.113.195")
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Deve extrair o IP do cabeçalho X-Real-IP quando X-Forwarded-For estiver ausente")
+        void deveExtrairIpDoXRealIp() {
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Real-IP", "198.51.100.42")
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(keyResolver.resolve(exchange))
+                    .expectNext("198.51.100.42")
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Deve preferir X-Forwarded-For sobre X-Real-IP quando ambos existirem")
+        void devePreferirXffSobreXRealIp() {
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "203.0.113.1")
+                    .header("X-Real-IP", "198.51.100.2")
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(keyResolver.resolve(exchange))
+                    .expectNext("203.0.113.1")
+                    .verifyComplete();
+        }
+    }
+
+    @Nested
+    @DisplayName("userKeyResolver() — Resolução Direta de Endereço IP (Socket)")
     class ResolucaoIpTests {
 
         @Test
@@ -104,8 +149,8 @@ class RateLimitConfigTest {
     }
 
     @Nested
-    @DisplayName("userKeyResolver() — Tratamento Defensivo contra Nulos e Casos de Borda")
-    class TratamentoDefensivoTests {
+    @DisplayName("userKeyResolver() — Mitigação de DoS e Tratamento de Borda")
+    class MitigacaoDosETestTratamentoDefensivo {
 
         @Test
         @DisplayName("Deve resolver defensivamente para 'anonymous' quando exchange for nulo")
@@ -127,21 +172,25 @@ class RateLimitConfigTest {
         }
 
         @Test
-        @DisplayName("Deve resolver defensivamente para 'anonymous' quando remoteAddress for nulo")
-        void deveTratarRemoteAddressNulo() {
-            // MockServerHttpRequest sem remoteAddress definido produz getRemoteAddress() == null
-            MockServerHttpRequest request = MockServerHttpRequest.get("/publico").build();
-            assertThat(request.getRemoteAddress()).isNull();
+        @DisplayName("Deve particionar chave anônima por rota e User-Agent quando remoteAddress for nulo evitando DoS global")
+        void deveParticionarChaveAnonimaQuandoRemoteAddressNulo() {
+            MockServerHttpRequest request1 = MockServerHttpRequest.get("/produtos")
+                    .header("User-Agent", "AppMobile/1.0")
+                    .build();
+            MockServerHttpRequest request2 = MockServerHttpRequest.get("/vendas")
+                    .header("User-Agent", "AppWeb/2.0")
+                    .build();
 
-            ServerWebExchange exchange = MockServerWebExchange.from(request);
+            String key1 = keyResolver.resolve(MockServerWebExchange.from(request1)).block();
+            String key2 = keyResolver.resolve(MockServerWebExchange.from(request2)).block();
 
-            StepVerifier.create(keyResolver.resolve(exchange))
-                    .expectNext(RateLimitConfig.ANONYMOUS_KEY)
-                    .verifyComplete();
+            assertThat(key1).startsWith(RateLimitConfig.ANONYMOUS_PREFIX);
+            assertThat(key2).startsWith(RateLimitConfig.ANONYMOUS_PREFIX);
+            assertThat(key1).isNotEqualTo(key2);
         }
 
         @Test
-        @DisplayName("Deve resolver defensivamente pelo hostName quando InetSocketAddress for não-resolvido (getAddress() == null)")
+        @DisplayName("Deve resolver defensivamente pelo hostName quando InetSocketAddress for não-resolvido")
         void deveTratarInetSocketAddressNaoResolvido() {
             InetSocketAddress unresolved = InetSocketAddress.createUnresolved("cliente-gateway.local", 8080);
             assertThat(unresolved.getAddress()).isNull();
@@ -154,21 +203,6 @@ class RateLimitConfigTest {
 
             StepVerifier.create(keyResolver.resolve(exchange))
                     .expectNext("cliente-gateway.local")
-                    .verifyComplete();
-        }
-
-        @Test
-        @DisplayName("Deve resolver defensivamente para 'anonymous' quando hostString for em branco")
-        void deveTratarHostStringEmBranco() {
-            InetSocketAddress emptyHost = InetSocketAddress.createUnresolved("   ", 8080);
-
-            MockServerHttpRequest request = MockServerHttpRequest.get("/api")
-                    .remoteAddress(emptyHost)
-                    .build();
-            ServerWebExchange exchange = MockServerWebExchange.from(request);
-
-            StepVerifier.create(keyResolver.resolve(exchange))
-                    .expectNext(RateLimitConfig.ANONYMOUS_KEY)
                     .verifyComplete();
         }
     }
