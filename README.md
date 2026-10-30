@@ -141,45 +141,16 @@ petshop-microservices/
 * Java 21 (Opcional, caso queira rodar diretamente na IDE).
 
 ### 1. Configurar Variáveis de Ambiente
-Crie um arquivo `.env` na raiz do projeto conforme o exemplo:
+O projeto utiliza um arquivo `.env` na raiz para configurar as credenciais e conexões do cluster Docker Compose (instâncias PostgreSQL de cada serviço, RabbitMQ, Redis, chaves JWT/RSA, Mailtrap e credenciais iniciais).
 
-```env
-# Bancos de Dados
-DB_HOST_AUTH=postgres-auth
-DB_PORT_AUTH=5432
-DB_NAME_AUTH=petshop_auth
-DB_USER_AUTH=postgres
-DB_PASS_AUTH=postgres
+O modelo completo pré-configurado para execução local está disponível em [`.env.example`](.env.example). Para utilizá-lo, crie seu arquivo `.env` executando:
 
-DB_HOST_INV=postgres-inv
-DB_PORT_INV=5432
-DB_NAME_INV=postgres-inv
-DB_USER_INV=postgres
-DB_PASS_INV=postgres
-
-# RabbitMQ
-RABBITMQ_DEFAULT_USER=guest
-RABBITMQ_DEFAULT_PASS=guest
-
-# Chaves RSA em Base64 (Linha única)
-JWT_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAJD...
-JWT_PUBLIC_KEY=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkO...
-
-# Mailtrap
-MAILTRAP_HOST=smtp.mailtrap.io
-MAILTRAP_PORT=2525
-MAILTRAP_USER=seu_user
-MAILTRAP_PASS=sua_senha
-
-# Redis & Frontend
-SPRING_DATA_REDIS_HOST=petshop-redis
-SPRING_DATA_REDIS_PORT=6379
-FRONTEND_BASE_URL=http://localhost:3000
-
-# Seed Inicial de Administrador
-INITIAL_ADMIN_EMAIL=admin@petshop.com
-INITIAL_ADMIN_PASSWORD=admin_super_secret
+```bash
+cp .env.example .env
 ```
+
+> [!TIP]
+> As variáveis padrão do [`.env.example`](.env.example) já são compatíveis com o ambiente de desenvolvimento local. Caso deseje alterar portas, senhas ou URLs, edite o arquivo `.env` gerado antes de iniciar os containers.
 
 ### 2. Subir o Cluster
 ```bash
