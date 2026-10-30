@@ -8,14 +8,14 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.context.request.ServletWebRequest;
+import org.springframework.web.context.request.WebRequest;
 
+import java.lang.reflect.Proxy;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -110,11 +110,17 @@ class GlobalExceptionHandlerTest {
 
         MethodArgumentNotValidException ex = new MethodArgumentNotValidException(parameter, bindingResult);
 
+        WebRequest webRequest = (WebRequest) Proxy.newProxyInstance(
+                WebRequest.class.getClassLoader(),
+                new Class<?>[]{WebRequest.class},
+                (proxy, m, methodArgs) -> null
+        );
+
         ResponseEntity<Object> response = handler.handleMethodArgumentNotValid(
                 ex,
                 new HttpHeaders(),
                 HttpStatus.BAD_REQUEST,
-                new ServletWebRequest(new MockHttpServletRequest())
+                webRequest
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);

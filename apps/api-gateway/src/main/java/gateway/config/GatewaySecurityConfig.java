@@ -60,6 +60,7 @@ public class GatewaySecurityConfig {
 
                         .pathMatchers(HttpMethod.POST, "/usuarios/register").permitAll()
                         .pathMatchers("/usuarios/**", "/oauth2/**", "/vendas/**", "/produtos/**", "/movimentacoes/**", "/dashboard/**").permitAll()
+                        .pathMatchers("/pagamentos/webhook/**").permitAll()
                         .pathMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**").permitAll()
                         .pathMatchers("/actuator/**").permitAll()
 

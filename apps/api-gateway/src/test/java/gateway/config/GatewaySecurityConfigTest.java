@@ -146,6 +146,7 @@ class GatewaySecurityConfigTest {
                             .GET("/dashboard/stats", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("stats_ok"))
                             .GET("/actuator/health", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("healthy"))
                             .GET("/v3/api-docs/swagger-config", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("docs_ok"))
+                            .POST("/pagamentos/webhook/confirmar/1", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("webhook_ok"))
                             .POST("/pagamentos/checkout", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("pago"))
                             .GET("/rota-privada", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("privado"))
                             .build()
@@ -166,6 +167,7 @@ class GatewaySecurityConfigTest {
             client.get().uri("/dashboard/stats").exchange().expectStatus().isOk();
             client.get().uri("/actuator/health").exchange().expectStatus().isOk();
             client.get().uri("/v3/api-docs/swagger-config").exchange().expectStatus().isOk();
+            client.post().uri("/pagamentos/webhook/confirmar/1").exchange().expectStatus().isOk();
         }
 
         @Test

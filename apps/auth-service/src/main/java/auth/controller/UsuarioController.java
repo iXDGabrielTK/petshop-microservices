@@ -61,12 +61,4 @@ public class UsuarioController {
 
         return ResponseEntity.noContent().build();
     }
-
-    /**
-     * Sobrecarga para compatibilidade retroativa com testes legados ou chamadores diretos.
-     */
-    public ResponseEntity<Void> updateSettings(UserSettingsRequest request, Usuario usuario) {
-        return updateSettings(request, (Object) usuario);
-    }
-
 }
