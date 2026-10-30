@@ -168,6 +168,105 @@ class PagamentoControllerTest {
 
             verifyNoInteractions(pagamentoService);
         }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando valor_recebido for omitido do JSON")
+        void deveRetornar400QuandoValorRecebidoOmitido() throws Exception {
+            String json = """
+                    {
+                        "nsu": "NSU-123456"
+                    }
+                    """;
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Dados Inválidos"))
+                    .andExpect(jsonPath("$.fields.valor_recebido").value("valor_recebido é obrigatório"));
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando nsu for omitido do JSON")
+        void deveRetornar400QuandoNsuOmitido() throws Exception {
+            String json = """
+                    {
+                        "valor_recebido": 100.00
+                    }
+                    """;
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Dados Inválidos"))
+                    .andExpect(jsonPath("$.fields.nsu").value("nsu é obrigatório"));
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando valor_recebido for uma string não numérica")
+        void deveRetornar400QuandoValorRecebidoNaoNumerico() throws Exception {
+            String json = """
+                    {
+                        "valor_recebido": "nao-eh-numero",
+                        "nsu": "NSU-123456"
+                    }
+                    """;
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando payload for um JSON malformado")
+        void deveRetornar400QuandoJsonMalformado() throws Exception {
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"valor_recebido\": "))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando corpo da requisição for vazio")
+        void deveRetornar400QuandoCorpoVazio() throws Exception {
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(""))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando service lançar BusinessException ao confirmar pagamento")
+        void deveRetornar400QuandoServiceLancarBusinessException() throws Exception {
+            String payloadValido = """
+                    {
+                        "valor_recebido": 150.50,
+                        "nsu": "NSU-123456"
+                    }
+                    """;
+
+            doThrow(new common.exception.BusinessException("Pagamento não encontrado para o ID: 42"))
+                    .when(pagamentoService).confirmarPagamentoWebhook(42L, new BigDecimal("150.50"), "NSU-123456");
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(payloadValido))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Regra de Negócio Violada"))
+                    .andExpect(jsonPath("$.detail").value("Pagamento não encontrado para o ID: 42"));
+        }
     }
 
     @Nested
@@ -181,6 +280,18 @@ class PagamentoControllerTest {
                     .andExpect(status().isOk());
 
             verify(pagamentoService).falharPagamentoWebhook(42L);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando service lançar BusinessException ao falhar pagamento")
+        void deveRetornar400QuandoFalharLancarBusinessException() throws Exception {
+            doThrow(new common.exception.BusinessException("Pagamento não encontrado para o ID: 42"))
+                    .when(pagamentoService).falharPagamentoWebhook(42L);
+
+            mockMvc.perform(post("/pagamentos/webhook/falhar/42"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Regra de Negócio Violada"))
+                    .andExpect(jsonPath("$.detail").value("Pagamento não encontrado para o ID: 42"));
         }
     }
 
@@ -198,6 +309,18 @@ class PagamentoControllerTest {
                     .andExpect(jsonPath("$.status").value("CONFIRMADO"));
 
             verify(pagamentoService).buscarStatusPagamento(42L);
+        }
+
+        @Test
+        @DisplayName("Deve retornar 400 Bad Request quando service lançar BusinessException ao buscar status")
+        void deveRetornar400QuandoStatusLancarBusinessException() throws Exception {
+            when(pagamentoService.buscarStatusPagamento(42L))
+                    .thenThrow(new common.exception.BusinessException("Pagamento não encontrado"));
+
+            mockMvc.perform(get("/pagamentos/42/status"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Regra de Negócio Violada"))
+                    .andExpect(jsonPath("$.detail").value("Pagamento não encontrado"));
         }
     }
 

@@ -77,6 +77,19 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("handleOptimisticLockingFailure deve mapear ObjectOptimisticLockingFailureException para HTTP 409")
+    void deveTratarObjectOptimisticLockingFailure() {
+        org.springframework.orm.ObjectOptimisticLockingFailureException ex =
+                new org.springframework.orm.ObjectOptimisticLockingFailureException(Object.class, 1L);
+        ResponseEntity<ProblemDetail> response = handler.handleOptimisticLockingFailure(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getTitle()).isEqualTo("Conflito de Concorrência");
+        assertThat(response.getBody().getDetail()).contains("O registro foi alterado por outro usuário");
+    }
+
+    @Test
     @DisplayName("handleBadCredentialsException deve mapear falha de credenciais para HTTP 401")
     void deveTratarBadCredentialsException() {
         ProblemDetail problem = handler.handleBadCredentialsException();

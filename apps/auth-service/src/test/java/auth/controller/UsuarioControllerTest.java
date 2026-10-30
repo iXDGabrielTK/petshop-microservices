@@ -82,7 +82,7 @@ class UsuarioControllerTest {
 
         UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
 
-        ResponseEntity<Void> response = usuarioController.updateSettings(request, (Object) jwt);
+        ResponseEntity<Void> response = usuarioController.updateSettings(request, jwt);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(usuarioService).updateSettings(88L, request);
@@ -97,7 +97,7 @@ class UsuarioControllerTest {
 
         UserSettingsRequest request = new UserSettingsRequest(Theme.SYSTEM);
 
-        ResponseEntity<Void> response = usuarioController.updateSettings(request, (Object) jwt);
+        ResponseEntity<Void> response = usuarioController.updateSettings(request, jwt);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(usuarioService).updateSettingsByEmail("lucas@petshop.com", request);
@@ -112,7 +112,7 @@ class UsuarioControllerTest {
 
         UserSettingsRequest request = new UserSettingsRequest(Theme.LIGHT);
 
-        ResponseEntity<Void> response = usuarioController.updateSettings(request, (Object) userDetails);
+        ResponseEntity<Void> response = usuarioController.updateSettings(request, userDetails);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(usuarioService).updateSettings(55L, request);
@@ -123,7 +123,17 @@ class UsuarioControllerTest {
     void updateSettingsComPrincipalInvalido() {
         UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
 
-        assertThatThrownBy(() -> usuarioController.updateSettings(request, (Object) "string-desconhecida"))
+        assertThatThrownBy(() -> usuarioController.updateSettings(request, "string-desconhecida"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Principal de autenticação não suportado");
+    }
+
+    @Test
+    @DisplayName("updateSettings() deve lançar IllegalArgumentException quando principal for nulo")
+    void updateSettingsComPrincipalNulo() {
+        UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
+
+        assertThatThrownBy(() -> usuarioController.updateSettings(request, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Principal de autenticação não suportado");
     }
