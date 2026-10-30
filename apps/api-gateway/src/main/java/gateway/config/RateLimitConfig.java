@@ -24,9 +24,11 @@ public class RateLimitConfig {
             // 1. Prioriza cabeçalhos de proxy reverso (X-Forwarded-For e X-Real-IP)
             String xff = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
             if (xff != null && !xff.isBlank()) {
-                String clientIp = xff.split(",")[0].trim();
-                if (!clientIp.isBlank()) {
-                    return Mono.just(clientIp);
+                for (String part : xff.split(",")) {
+                    String clientIp = part.trim();
+                    if (!clientIp.isBlank()) {
+                        return Mono.just(clientIp);
+                    }
                 }
             }
 

@@ -58,6 +58,19 @@ class RateLimitConfigTest {
         }
 
         @Test
+        @DisplayName("Deve extrair o primeiro IP válido do cabeçalho X-Forwarded-For quando houver tokens vazios ou vírgula inicial")
+        void deveExtrairPrimeiroIpValidoComTokensVazios() {
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", ",   , 203.0.113.195, 70.41.3.18")
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(keyResolver.resolve(exchange))
+                    .expectNext("203.0.113.195")
+                    .verifyComplete();
+        }
+
+        @Test
         @DisplayName("Deve preferir X-Forwarded-For sobre X-Real-IP quando ambos existirem")
         void devePreferirXffSobreXRealIp() {
             MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")

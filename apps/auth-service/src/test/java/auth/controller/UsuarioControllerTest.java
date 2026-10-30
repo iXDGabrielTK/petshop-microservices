@@ -60,8 +60,83 @@ class UsuarioControllerTest {
     }
 
     @Test
-    @DisplayName("me() deve lançar BadCredentialsException quando Jwt for nulo")
-    void meDeveLancarBadCredentialsExceptionQuandoJwtNulo() {
+    @DisplayName("me() deve extrair username de UserDetailsImpl quando autenticado via Sessão")
+    void meDeveRetornarDadosDeUserDetailsImpl() {
+        auth.security.user.UserDetailsImpl userDetails = new auth.security.user.UserDetailsImpl(
+                15L, "Gabriel Session", "session@petshop.com", "hash", java.util.Collections.emptyList()
+        );
+
+        UserResponse expected = new UserResponse(
+                15L, "Gabriel Session", "session@petshop.com", Set.of("ROLE_USER"), "DARK"
+        );
+        when(usuarioService.obterDadosUsuarioLogado("session@petshop.com")).thenReturn(expected);
+
+        ResponseEntity<UserResponse> response = usuarioController.me(userDetails);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isEqualTo(expected);
+        verify(usuarioService).obterDadosUsuarioLogado("session@petshop.com");
+    }
+
+    @Test
+    @DisplayName("me() deve extrair email de Usuario quando autenticado com entidade de domínio")
+    void meDeveRetornarDadosDeUsuarioEntidade() {
+        Usuario usuario = new Usuario("Maria", "maria@petshop.com", "hash");
+        ReflectionTestUtils.setField(usuario, "id", 30L);
+
+        UserResponse expected = new UserResponse(
+                30L, "Maria", "maria@petshop.com", Set.of("ROLE_USER"), "LIGHT"
+        );
+        when(usuarioService.obterDadosUsuarioLogado("maria@petshop.com")).thenReturn(expected);
+
+        ResponseEntity<UserResponse> response = usuarioController.me(usuario);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isEqualTo(expected);
+        verify(usuarioService).obterDadosUsuarioLogado("maria@petshop.com");
+    }
+
+    @Test
+    @DisplayName("me() deve utilizar claim 'email' como fallback quando 'sub' for nulo no JWT")
+    void meDeveUsarClaimEmailComoFallback() {
+        Jwt jwt = mock(Jwt.class);
+        when(jwt.getClaimAsString("sub")).thenReturn(null);
+        when(jwt.getClaimAsString("email")).thenReturn("fallback@petshop.com");
+
+        UserResponse expected = new UserResponse(
+                40L, "Fallback User", "fallback@petshop.com", Set.of("ROLE_USER"), "SYSTEM"
+        );
+        when(usuarioService.obterDadosUsuarioLogado("fallback@petshop.com")).thenReturn(expected);
+
+        ResponseEntity<UserResponse> response = usuarioController.me(jwt);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("me() deve lançar BadCredentialsException quando JWT não possuir sub nem email")
+    void meDeveLancarBadCredentialsQuandoJwtSemSubENemEmail() {
+        Jwt jwt = mock(Jwt.class);
+        when(jwt.getClaimAsString("sub")).thenReturn(null);
+        when(jwt.getClaimAsString("email")).thenReturn(null);
+
+        assertThatThrownBy(() -> usuarioController.me(jwt))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessage("Identificação do usuário ausente no token de autenticação");
+    }
+
+    @Test
+    @DisplayName("me() deve lançar AccessDeniedException quando principal for de tipo desconhecido")
+    void meDeveLancarAccessDeniedExceptionQuandoPrincipalDesconhecido() {
+        assertThatThrownBy(() -> usuarioController.me("objeto-string-invalido"))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessage("Principal de autenticação não suportado");
+    }
+
+    @Test
+    @DisplayName("me() deve lançar BadCredentialsException quando principal for nulo")
+    void meDeveLancarBadCredentialsExceptionQuandoPrincipalNulo() {
         assertThatThrownBy(() -> usuarioController.me(null))
                 .isInstanceOf(BadCredentialsException.class)
                 .hasMessage("Usuário não autenticado");
@@ -111,6 +186,37 @@ class UsuarioControllerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(usuarioService).updateSettingsByEmail("lucas@petshop.com", request);
+    }
+
+    @Test
+    @DisplayName("updateSettings() deve usar claim 'email' como fallback quando 'user_id' e 'sub' forem nulos no JWT")
+    void updateSettingsComJwtFallbackEmail() {
+        Jwt jwt = mock(Jwt.class);
+        when(jwt.getClaims()).thenReturn(java.util.Collections.emptyMap());
+        when(jwt.getClaimAsString("sub")).thenReturn(null);
+        when(jwt.getClaimAsString("email")).thenReturn("fallback-settings@petshop.com");
+
+        UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
+
+        ResponseEntity<Void> response = usuarioController.updateSettings(request, jwt);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(usuarioService).updateSettingsByEmail("fallback-settings@petshop.com", request);
+    }
+
+    @Test
+    @DisplayName("updateSettings() deve lançar BadCredentialsException quando JWT não possuir user_id, sub nem email")
+    void updateSettingsComJwtSemIdentificacao() {
+        Jwt jwt = mock(Jwt.class);
+        when(jwt.getClaims()).thenReturn(java.util.Collections.emptyMap());
+        when(jwt.getClaimAsString("sub")).thenReturn(null);
+        when(jwt.getClaimAsString("email")).thenReturn(null);
+
+        UserSettingsRequest request = new UserSettingsRequest(Theme.DARK);
+
+        assertThatThrownBy(() -> usuarioController.updateSettings(request, jwt))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessage("Identificação do usuário ausente no token de autenticação");
     }
 
     @Test

@@ -26,14 +26,32 @@ public class UsuarioController {
     /**
      * Retorna os dados do usuário autenticado atual.
      * Endpoint usado pelo Frontend para recuperar sessão após F5.
+     * Suporta autenticação tanto via JWT (Resource Server) quanto via Session (UserDetailsImpl / Usuario).
      */
     @GetMapping("/me")
-    public ResponseEntity<UserResponse> me(@AuthenticationPrincipal Jwt jwt) {
-        if (jwt == null) {
+    public ResponseEntity<UserResponse> me(@AuthenticationPrincipal Object principal) {
+        if (principal == null) {
             throw new BadCredentialsException("Usuário não autenticado");
         }
 
-        String email = jwt.getClaimAsString("sub");
+        String email;
+        if (principal instanceof Jwt jwt) {
+            email = jwt.getClaimAsString("sub");
+            if (email == null) {
+                email = jwt.getClaimAsString("email");
+            }
+        } else if (principal instanceof UserDetailsImpl userDetails) {
+            email = userDetails.getUsername();
+        } else if (principal instanceof Usuario usuario) {
+            email = usuario.getEmail();
+        } else {
+            throw new AccessDeniedException("Principal de autenticação não suportado");
+        }
+
+        if (email == null || email.isBlank()) {
+            throw new BadCredentialsException("Identificação do usuário ausente no token de autenticação");
+        }
+
         UserResponse response = usuarioService.obterDadosUsuarioLogado(email);
 
         return ResponseEntity.ok(response);
@@ -42,7 +60,7 @@ public class UsuarioController {
     /**
      * Atualiza as configurações do usuário autenticado.
      * Endpoint usado pelo Frontend para salvar preferências do usuário.
-     * Suporta autenticação tanto via JWT (Resource Server) quanto via Session (UserDetailsImpl).
+     * Suporta autenticação tanto via JWT (Resource Server) quanto via Session (UserDetailsImpl / Usuario).
      */
     @PatchMapping("/settings")
     public ResponseEntity<Void> updateSettings(
@@ -58,7 +76,14 @@ public class UsuarioController {
             if (userIdClaim instanceof Number number) {
                 usuarioService.updateSettings(number.longValue(), request);
             } else {
-                usuarioService.updateSettingsByEmail(jwt.getClaimAsString("sub"), request);
+                String email = jwt.getClaimAsString("sub");
+                if (email == null) {
+                    email = jwt.getClaimAsString("email");
+                }
+                if (email == null || email.isBlank()) {
+                    throw new BadCredentialsException("Identificação do usuário ausente no token de autenticação");
+                }
+                usuarioService.updateSettingsByEmail(email, request);
             }
         } else if (principal instanceof UserDetailsImpl userDetails) {
             usuarioService.updateSettings(userDetails.getId(), request);
