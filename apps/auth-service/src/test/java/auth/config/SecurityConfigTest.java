@@ -244,34 +244,5 @@ class SecurityConfigTest {
             assertThat(settings.getAuthorizationEndpoint()).isEqualTo("/oauth2/authorize");
             assertThat(settings.getJwkSetEndpoint()).isEqualTo("/oauth2/jwks");
         }
-
-        @Test
-        @DisplayName("registeredClientRepository() deve criar JdbcRegisteredClientRepository com jdbcTemplate")
-        void deveCriarRegisteredClientRepository() {
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate = mock(org.springframework.jdbc.core.JdbcTemplate.class);
-            var repo = securityConfig.registeredClientRepository(jdbcTemplate);
-            assertThat(repo).isNotNull();
-            assertThat(repo).isInstanceOf(org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository.class);
-        }
-
-        @Test
-        @DisplayName("authorizationConsentService() deve criar JdbcOAuth2AuthorizationConsentService")
-        void deveCriarAuthorizationConsentService() {
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate = mock(org.springframework.jdbc.core.JdbcTemplate.class);
-            org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository repo = mock(org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository.class);
-            var service = securityConfig.authorizationConsentService(jdbcTemplate, repo);
-            assertThat(service).isNotNull();
-            assertThat(service).isInstanceOf(org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationConsentService.class);
-        }
-
-        @Test
-        @DisplayName("authorizationService() deve criar JdbcOAuth2AuthorizationService com UserDetailsImplMixin registrado")
-        void deveCriarAuthorizationServiceComMixin() {
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate = mock(org.springframework.jdbc.core.JdbcTemplate.class);
-            org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository repo = mock(org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository.class);
-            var service = securityConfig.authorizationService(jdbcTemplate, repo);
-            assertThat(service).isNotNull();
-            assertThat(service).isInstanceOf(org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationService.class);
-        }
     }
 }

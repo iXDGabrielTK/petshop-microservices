@@ -16,30 +16,30 @@ class RabbitMQConfigTest {
     private final RabbitMQConfig rabbitMQConfig = new RabbitMQConfig();
 
     @Test
-    @DisplayName("Deve configurar fila DLQ durável corretamente")
+    @DisplayName("Deve configurar fila DLQ durável com nome canônico esperado")
     void deveConfigurarDlqQueue() {
         Queue dlqQueue = rabbitMQConfig.dlqQueue();
         assertThat(dlqQueue).isNotNull();
-        assertThat(dlqQueue.getName()).isEqualTo(RabbitMQConfig.DLQ_QUEUE_NAME);
+        assertThat(dlqQueue.getName()).isEqualTo("auth.v1.password-reset.send-email.dlq");
         assertThat(dlqQueue.isDurable()).isTrue();
     }
 
     @Test
-    @DisplayName("Deve configurar exchange DLQ como TopicExchange")
+    @DisplayName("Deve configurar exchange DLQ como TopicExchange com nome canônico")
     void deveConfigurarDlqExchange() {
         TopicExchange dlqExchange = rabbitMQConfig.dlqExchange();
         assertThat(dlqExchange).isNotNull();
-        assertThat(dlqExchange.getName()).isEqualTo(RabbitMQConfig.DLQ_EXCHANGE_NAME);
+        assertThat(dlqExchange.getName()).isEqualTo("auth.v1.events.dlx");
     }
 
     @Test
-    @DisplayName("Deve configurar binding da DLQ")
+    @DisplayName("Deve configurar binding da DLQ com destino, exchange e routing key corretos")
     void deveConfigurarDlqBinding() {
         Binding dlqBinding = rabbitMQConfig.dlqBinding();
         assertThat(dlqBinding).isNotNull();
-        assertThat(dlqBinding.getDestination()).isEqualTo(RabbitMQConfig.DLQ_QUEUE_NAME);
-        assertThat(dlqBinding.getExchange()).isEqualTo(RabbitMQConfig.DLQ_EXCHANGE_NAME);
-        assertThat(dlqBinding.getRoutingKey()).isEqualTo(RabbitMQConfig.DLQ_ROUTING_KEY);
+        assertThat(dlqBinding.getDestination()).isEqualTo("auth.v1.password-reset.send-email.dlq");
+        assertThat(dlqBinding.getExchange()).isEqualTo("auth.v1.events.dlx");
+        assertThat(dlqBinding.getRoutingKey()).isEqualTo("auth.password.reset.dlq");
     }
 
     @Test
@@ -47,20 +47,20 @@ class RabbitMQConfigTest {
     void deveConfigurarAuthExchange() {
         TopicExchange exchange = rabbitMQConfig.authExchange();
         assertThat(exchange).isNotNull();
-        assertThat(exchange.getName()).isEqualTo(RabbitMQConfig.EXCHANGER_NAME);
+        assertThat(exchange.getName()).isEqualTo("auth.v1.events");
     }
 
     @Test
-    @DisplayName("Deve configurar fila de password reset com dead letter exchange e routing key configurados")
+    @DisplayName("Deve configurar fila de password reset durável com dead letter exchange e routing key")
     void deveConfigurarPasswordResetQueueComDlx() {
         Queue queue = rabbitMQConfig.passwordResetQueue();
         assertThat(queue).isNotNull();
-        assertThat(queue.getName()).isEqualTo(RabbitMQConfig.QUEUE_NAME);
+        assertThat(queue.getName()).isEqualTo("auth.v1.password-reset.send-email");
         assertThat(queue.isDurable()).isTrue();
         assertThat(queue.getArguments().get("x-dead-letter-exchange"))
-                .isEqualTo(RabbitMQConfig.DLQ_EXCHANGE_NAME);
+                .isEqualTo("auth.v1.events.dlx");
         assertThat(queue.getArguments().get("x-dead-letter-routing-key"))
-                .isEqualTo(RabbitMQConfig.DLQ_ROUTING_KEY);
+                .isEqualTo("auth.password.reset.dlq");
     }
 
     @Test
@@ -68,9 +68,9 @@ class RabbitMQConfigTest {
     void deveConfigurarBindingPrincipal() {
         Binding binding = rabbitMQConfig.binding();
         assertThat(binding).isNotNull();
-        assertThat(binding.getDestination()).isEqualTo(RabbitMQConfig.QUEUE_NAME);
-        assertThat(binding.getExchange()).isEqualTo(RabbitMQConfig.EXCHANGER_NAME);
-        assertThat(binding.getRoutingKey()).isEqualTo(RabbitMQConfig.ROUTING_KEY);
+        assertThat(binding.getDestination()).isEqualTo("auth.v1.password-reset.send-email");
+        assertThat(binding.getExchange()).isEqualTo("auth.v1.events");
+        assertThat(binding.getRoutingKey()).isEqualTo("auth.password.reset");
     }
 
     @Test
