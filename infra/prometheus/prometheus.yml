@@ -21,3 +21,8 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
     static_configs:
       - targets: ['api-gateway:8080']
+
+  - job_name: 'inv-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['inv-service:8083']

@@ -144,6 +144,8 @@ public class SecurityConfig {
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .ignoringRequestMatchers(
                                 "/usuarios/register",
+                                "/usuarios/forgot-password",
+                                "/usuarios/reset-password",
                                 "/oauth2/**",
                                 "/api/**",
                                 "/actuator/**",
@@ -157,7 +159,7 @@ public class SecurityConfig {
                                 "/*.png", "/*.gif", "/*.svg", "/*.jpg", "/*.html", "/*.css", "/*.js"
                         ).permitAll()
                         .requestMatchers("/actuator/**", "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
-                        .requestMatchers("/usuarios/register", "/usuarios/forgot-password", "/error").permitAll()
+                        .requestMatchers("/usuarios/register", "/usuarios/forgot-password", "/usuarios/reset-password", "/error").permitAll()
                         .requestMatchers("/logout").permitAll()
                         .anyRequest().authenticated()
                 )

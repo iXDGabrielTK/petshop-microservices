@@ -4,6 +4,7 @@ import auth.dto.request.*;
 import auth.dto.response.*;
 import auth.model.Usuario;
 import auth.service.AuthService;
+import common.exception.ResourceNotFoundException;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -78,8 +79,12 @@ public class AuthController {
      * @return ResponseEntity com mensagem genérica ou erro apropriado
      */
     @PostMapping("/forgot-password")
-    public ResponseEntity<GenericResponse> forgotPassword(@RequestBody ForgotPasswordRequest request) {
-        authService.forgotPassword(request);
+    public ResponseEntity<GenericResponse> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        try {
+            authService.forgotPassword(request);
+        } catch (ResourceNotFoundException e) {
+            // Mitigação de enumeração de contas: mantém retorno neutro se o email não existir
+        }
         return ResponseEntity.ok(new GenericResponse("Se o email existir, um link de recuperação foi enviado."));
     }
 
@@ -100,7 +105,7 @@ public class AuthController {
      * @return ResponseEntity com mensagem de sucesso ou erro apropriado
      */
     @PostMapping("/reset-password")
-    public ResponseEntity<GenericResponse> resetPassword(@RequestBody ResetPasswordRequest request) {
+    public ResponseEntity<GenericResponse> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         authService.resetPassword(request);
         return ResponseEntity.ok(new GenericResponse("Senha alterada com sucesso!"));
     }

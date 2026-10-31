@@ -1,6 +1,7 @@
 package inv.checkout.infrastructure.web.controller;
 
 import inv.checkout.domain.model.StatusPagamento;
+import inv.checkout.infrastructure.web.dto.ConfirmarPagamentoWebhookRequest;
 import inv.checkout.infrastructure.web.dto.CriarIntencaoPagamentoRequest;
 import inv.checkout.infrastructure.web.dto.IntencaoPagamentoResponse;
 import inv.checkout.infrastructure.web.dto.PagamentoStatusResponse;
@@ -8,9 +9,6 @@ import inv.checkout.usecase.PagamentoService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.math.BigDecimal;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/pagamentos")
@@ -45,12 +43,9 @@ public class PagamentoController {
 
     @PostMapping("/webhook/confirmar/{pagamentoId}")
     public ResponseEntity<Void> webhookConfirmar(@PathVariable Long pagamentoId,
-                                                 @RequestBody Map<String, String> payload) {
+                                                 @Valid @RequestBody ConfirmarPagamentoWebhookRequest request) {
 
-        BigDecimal valorReal = new BigDecimal(payload.get("valor_recebido"));
-        String nsu = payload.get("nsu");
-
-        pagamentoService.confirmarPagamentoWebhook(pagamentoId, valorReal, nsu);
+        pagamentoService.confirmarPagamentoWebhook(pagamentoId, request.valor_recebido(), request.nsu());
         return ResponseEntity.ok().build();
     }
 

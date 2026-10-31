@@ -43,12 +43,18 @@ public class UsuarioService {
         Usuario usuario = usuarioRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
 
-        if (request.theme() != null) {
-            try {
-                usuario.setTheme(request.theme());
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Tema não suportado: " + request.theme());
-            }
+        if (request != null && request.theme() != null) {
+            usuario.setTheme(request.theme());
+        }
+    }
+
+    @Transactional
+    public void updateSettingsByEmail(String email, UserSettingsRequest request) {
+        Usuario usuario = usuarioRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+
+        if (request != null && request.theme() != null) {
+            usuario.setTheme(request.theme());
         }
     }
 
