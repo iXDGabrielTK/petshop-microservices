@@ -17,9 +17,9 @@ O **Auth Service** é o provedor de identidade centralizado do sistema, implemen
 ### Gestão de Contas & Handshake Frontend
 * `POST /usuarios/register` - Cadastro de novos operadores com sanitização HTML contra XSS.
 * `GET /usuarios/me` - Handshake de sessão do frontend após F5 (suporta JWT e Sessão de forma polimórfica; erros semânticos HTTP 401 e HTTP 403 com RFC 7807).
-* `PATCH /usuarios/settings` - Atualização de preferências visuais do usuário (`theme`: `LIGHT`, `DARK`, `SYSTEM`).
-* `POST /usuarios/forgot-password` - Solicitação de recuperação de senha com proteção anti-enumeração de contas (resposta neutra HTTP 200).
-* `POST /usuarios/reset-password` - Redefinição pública de senha via token assinado efêmero.
+* `PATCH /usuarios/settings` - Atualização de preferências visuais do usuário (`theme`: `LIGHT`, `DARK`, `SYSTEM`; suporte polimórfico a JWT e Sessão; validação `@Valid` com HTTP 400).
+* `POST /usuarios/forgot-password` - Solicitação de recuperação de senha com proteção anti-enumeração de contas (resposta neutra HTTP 200; isento de CSRF).
+* `POST /usuarios/reset-password` - Redefinição pública de senha via token efêmero (`permitAll()`; isento de CSRF).
 
 ---
 

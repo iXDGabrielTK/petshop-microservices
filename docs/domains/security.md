@@ -71,6 +71,8 @@ proxy_set_header X-Forwarded-For $remote_addr;
 > [!WARNING]
 > **Prevenção de Spoofing via `X-Forwarded-For`:**  
 > Tratar o primeiro IP de `X-Forwarded-For` como identidade só é seguro se o proxy de borda **SOBRESCREVER** o header (`proxy_set_header X-Forwarded-For $remote_addr;`). **Nunca utilize `$proxy_add_x_forwarded_for`** quando o rate limit confia no primeiro IP, pois essa diretiva preserva o header enviado pelo cliente e apenas concatena o IP real ao final (`<ip-injetado-pelo-atacante>, <ip-real>`), permitindo que um invasor falsifique sua identidade a cada requisição. O Gateway também não pode ficar acessível diretamente da internet, apenas a partir do proxy confiável.
+> 
+> Caso a Cloudflare seja conectada **diretamente** ao API Gateway (sem Nginx intermediário), como o comportamento padrão da CDN é concatenar ao `X-Forwarded-For`, deve-se configurar uma *Cloudflare Transform Rule (Modify Request Header)* para sobrescrever `X-Real-IP` com `http.request.headers["cf-connecting-ip"][0]`, ou usar Nginx intermediário com `real_ip_header CF-Connecting-IP;`.
 
 > [!NOTE]
 > **Comportamento Atual vs Ponto de Melhoria no Código (RateLimitConfig):**  
@@ -174,7 +176,7 @@ Recupera os dados do usuário autenticado após recarregamento de página (F5) o
   - Se retornar **HTTP 403**: Bloqueia a navegação e exibe tela de privilégios insuficientes.
 
 ### B. Endpoint `PATCH /usuarios/settings` (Preferências de Usuário)
-Atualiza configurações visuais do operador autenticado (suporta JWT via `user_id`/`sub` e sessão):
+Atualiza configurações visuais do operador autenticado (suporta JWT via `user_id`/`sub`/`email` e sessão via `UserDetailsImpl`/`Usuario`):
 * **Payload da Requisição (`UserSettingsRequest`):**
   ```json
   {
@@ -183,10 +185,20 @@ Atualiza configurações visuais do operador autenticado (suporta JWT via `user_
   ```
   *(Valores válidos: `LIGHT`, `DARK`, `SYSTEM`).*
 * **Resposta de Sucesso:** HTTP 204 No Content.
+* **Tratamento Semântico de Falhas (RFC 7807):**
+  - **Dados Inválidos (HTTP 400 Bad Request):** Caso o campo `theme` seja nulo ou receba um valor divergente do enum, a validação do `@Valid` dispara erro com payload padronizado (`title: "Dados Inválidos"`).
+  - **Não Autenticado (HTTP 401 Unauthorized):** Quando o principal for nulo ou o token não contiver `sub`/`email`/`user_id`, lança `BadCredentialsException` (`title: "Falha na Autenticação"`).
+  - **Acesso Negado (HTTP 403 Forbidden):** Caso o principal seja de tipo desconhecido, lança `AccessDeniedException` (`title: "Acesso Negado"`).
 
 ### C. Política Anti-Enumeração em `/usuarios/forgot-password` e Liberação de `/usuarios/reset-password`
 * **`POST /usuarios/forgot-password` (Mitigação de Account Enumeration):**
-  - Recebe payload `@Valid ForgotPasswordRequest` com campo `email`.
+  - Isento de proteção CSRF no `SecurityConfig` (`ignoringRequestMatchers`).
+  - Recebe payload `@Valid ForgotPasswordRequest`:
+    ```json
+    {
+      "email": "operador@petshop.com"
+    }
+    ```
   - Caso o e-mail exista no banco de dados, gera um `PasswordResetToken` efêmero e publica a mensagem `auth.v1.password-reset` no RabbitMQ para envio assíncrono de e-mail.
   - Caso o e-mail **não exista** (`ResourceNotFoundException`), a exceção é capturada internamente e a API retorna intencionalmente a mesma resposta **HTTP 200 OK** com a mensagem neutra:
     ```json
@@ -197,7 +209,18 @@ Atualiza configurações visuais do operador autenticado (suporta JWT via `user_
     Isso impede que atacantes façam varredura no endpoint para descobrir quais e-mails estão cadastrados na base (aderente à norma OWASP ASVS).
 * **`POST /usuarios/reset-password` (Redefinição Pública):**
   - Isento de proteção CSRF e liberado publicamente no `SecurityConfig` (`permitAll()`) para permitir o consumo por links enviados por e-mail.
-  - Valida o token e confirmação da nova senha (`ResetPasswordRequest`). Retorna HTTP 200 OK em caso de sucesso ou HTTP 400 (`BusinessException`) se as senhas divergirem.
+  - Recebe payload `@Valid ResetPasswordRequest`:
+    ```json
+    {
+      "token": "45d5a9e3-8f0a-4221-a7b2-132d7138f0a1",
+      "newPassword": "NovaSenhaSegura123!",
+      "confirmPassword": "NovaSenhaSegura123!"
+    }
+    ```
+  - **Respostas:**
+    - **HTTP 200 OK:** Senha alterada com sucesso (`{"message": "Senha alterada com sucesso!"}`).
+    - **HTTP 400 Bad Request (RFC 7807):** Se as senhas divergirem (`detail: "As senhas não conferem."`) ou o token estiver expirado (`detail: "Token expirado"`).
+    - **HTTP 404 Not Found (RFC 7807):** Se o token não for encontrado no banco (`detail: "Token inválido"`).
 
 ---
 

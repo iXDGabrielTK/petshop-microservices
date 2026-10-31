@@ -13,7 +13,7 @@ O **API Gateway** é o ponto de entrada único para o ecossistema Pet Shop, gere
   * Suporte a proxies reversos através dos cabeçalhos `X-Forwarded-For` e `X-Real-IP`.
   * Particionamento preventivo contra DoS (`anon_<hash>`) para clientes anônimos sem IP identificável.
 * **Precedência e Isolamento de Rotas:**
-  * `order: 1` — Rota de Webhook de Pagamento (`/pagamentos/webhook/**`) com prioridade e **isenta de rate limit**, evitando descarte de notificações de parceiros de pagamento.
+  * `order: 1` — Rota de Webhook de Pagamento (`/pagamentos/webhook/**`) com prioridade e **isenta de rate limit**, evitando descarte de notificações de parceiros de pagamento (precede a rota genérica `order: 2` para resolver a sobreposição com `/pagamentos/**`).
   * `order: 2` — Rota de Negócio do `inv-service` (`/produtos/**`, `/vendas/**`, `/movimentacoes/**`, `/dashboard/**`, `/pagamentos/**`) protegida por Rate Limiting.
   * `order: 0` — Rota de Identidade do `auth-service` (`/oauth2/**`, `/usuarios/**`) protegida por Rate Limiting.
 * **Telemetria de Atividade Resiliente no Redis:**
