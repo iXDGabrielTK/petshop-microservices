@@ -20,6 +20,28 @@ src/main/java/inv/
 
 ---
 
+## 🚀 Endpoints Principais
+
+### Checkout & Webhooks
+* `POST /vendas` - Abertura de venda e reserva atômica de itens em lote ordenado (`produtoId ASC`).
+* `GET /vendas/{id}/status` - Long Polling não-bloqueante (`DeferredResult`) do status da venda para PDVs em checkout.
+* `POST /pagamentos/intencao/{vendaId}` - Registro de intenção de pagamento com UUID de idempotência.
+* `GET /pagamentos/{id}/status` - Consulta do status da intenção ou confirmação de pagamento.
+* `POST /pagamentos/webhook/confirmar/{pagamentoId}` - Webhook de confirmação de pagamento recebido de adquirentes com validação de payload via `ConfirmarPagamentoWebhookRequest` (`@Positive valor_recebido`, `@NotBlank nsu`; respostas RFC 7807 em HTTP 400).
+* `POST /pagamentos/webhook/falhar/{pagamentoId}` - Webhook para sinalização de recusa ou falha de processamento na operadora.
+
+### Catálogo de Produtos & Auditoria de Estoque
+* `POST /produtos` - Cadastro de novos produtos no catálogo (`ROLE_ADMIN`).
+* `GET /produtos` - Listagem paginada do catálogo de produtos com suporte a busca por nome ou termo genérico.
+* `GET /produtos/{id}` - Consulta detalhada de produto por identificador único.
+* `GET /produtos/ean/{ean}` - Busca otimizada de produto por código de barras EAN (8 a 14 dígitos).
+* `GET /movimentacoes` - Trilha histórica de auditoria de movimentações de estoque (entradas, saídas, reservas e estornos).
+
+### Dashboard & Analytics (BFF Interno)
+* `GET /dashboard/stats` - Visão consolidada de indicadores de faturamento, ticket médio e produtos em baixa para o dashboard gerencial.
+
+---
+
 ## 📖 Documentação Detalhada
 
 * 📑 **[Visão Geral da Arquitetura](../../docs/architecture/system-overview.md)**
