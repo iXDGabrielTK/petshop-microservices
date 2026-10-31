@@ -25,6 +25,7 @@ Toda a arquitetura, regras de negócio e decisões de engenharia estão cataloga
 * 🛒 **[Domínio de Checkout (Máquinas de Estado, Webhooks e Long Polling)](docs/domains/checkout.md)**
 * 📦 **[Domínio de Inventário (Estoque Atômico e Alertas Anti-Spam)](docs/domains/inventory.md)**
 * 🔐 **[Segurança & Gestão de Identidade (OIDC, RSA e Rate Limiting)](docs/domains/security.md)**
+* 📝 **[Histórico de Mudanças & PRs (Keep a Changelog)](CHANGELOG.md)**
 
 ---
 
@@ -129,6 +130,7 @@ petshop-microservices/
 │           └── shared/                 # Transactional Outbox (SKIP LOCKED) e Configurações
 │
 ├── infra/                              # Stack de Observabilidade (Prometheus, Grafana, Loki)
+├── CHANGELOG.md                        # Histórico de mudanças estruturado por PR
 └── docker-compose.yml                  # Orquestração local de containers
 ```
 
@@ -160,7 +162,7 @@ docker-compose up --build
 ### 3. Acessar Swagger / OpenAPI Unificado
 * Documentação das APIs: [http://localhost:8080/swagger-ui/index.html](http://localhost:8080/swagger-ui/index.html)
 * Grafana: [http://localhost:3000](http://localhost:3000) (`admin` / `admin`)
-* Prometheus: [http://localhost:9090](http://localhost:9090)
+* Prometheus: [http://localhost:9090](http://localhost:9090) (Scrape ativo em `api-gateway:8080` e `inv-service:8083`)
 * RabbitMQ Management: [http://localhost:15672](http://localhost:15672) (`guest` / `guest`)
 
 ---
