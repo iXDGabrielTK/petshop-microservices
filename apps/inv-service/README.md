@@ -20,6 +20,17 @@ src/main/java/inv/
 
 ---
 
+## 🚀 Endpoints Principais (Checkout & Webhooks)
+
+* `POST /vendas` - Abertura de venda e reserva atômica de itens em lote ordenado (`produtoId ASC`).
+* `GET /vendas/{id}/status` - Long Polling não-bloqueante (`DeferredResult`) do status da venda para PDVs em checkout.
+* `POST /pagamentos/intencao/{vendaId}` - Registro de intenção de pagamento com UUID de idempotência.
+* `GET /pagamentos/{id}/status` - Consulta do status da intenção ou confirmação de pagamento.
+* `POST /pagamentos/webhook/confirmar/{pagamentoId}` - Webhook de confirmação de pagamento recebido de adquirentes com validação de payload via `ConfirmarPagamentoWebhookRequest` (`@Positive valor_recebido`, `@NotBlank nsu`; respostas RFC 7807 em HTTP 400).
+* `POST /pagamentos/webhook/falhar/{pagamentoId}` - Webhook para sinalização de recusa ou falha de processamento na operadora.
+
+---
+
 ## 📖 Documentação Detalhada
 
 * 📑 **[Visão Geral da Arquitetura](../../docs/architecture/system-overview.md)**

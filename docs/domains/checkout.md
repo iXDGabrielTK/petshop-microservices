@@ -104,7 +104,44 @@ O componente [`VendaExpiracaoJob`](../../apps/inv-service/src/main/java/inv/chec
 
 ---
 
-## 5. ADRs Vinculados a Este Domínio
+## 5. Especificação do Contrato de Webhooks de Pagamento
+
+Os webhooks de liquidação externa comunicam-se diretamente com o [`PagamentoController`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/controller/PagamentoController.java) para confirmar ou rejeitar transações de cartão e Pix:
+
+* **Endpoint Principal:** `POST /pagamentos/webhook/confirmar/{pagamentoId}`
+* **Endpoint de Falha:** `POST /pagamentos/webhook/falhar/{pagamentoId}`
+* **Precedência e Isenção no API Gateway:** A rota dedicada `inv-webhook` (`order: 1`) intercepta o padrão `/pagamentos/webhook/**` antes da rota corporativa geral de estoque (`order: 2`). Esta rota é **isenta de `RequestRateLimiter`**, garantindo que notificações legítimas e rajadas de confirmação emitidas pelas adquirentes não sofram descarte (HTTP 429).
+* **Contrato de Validação DTO ([`ConfirmarPagamentoWebhookRequest`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/dto/ConfirmarPagamentoWebhookRequest.java)):**
+  ```json
+  {
+    "valor_recebido": 150.50,
+    "nsu": "NSU-987654321"
+  }
+  ```
+* **Regras de Integridade do Payload:**
+  - `valor_recebido`: `@NotNull(message = "valor_recebido é obrigatório")`, `@Positive(message = "valor_recebido deve ser positivo")`
+  - `nsu`: `@NotBlank(message = "nsu é obrigatório")`
+* **Tratamento Semântico de Erro (RFC 7807):**
+  Payloads sem corpo, valores negativos, nulos ou strings de NSU vazias/em branco disparam validação do Bean Validation interceptada pelo `GlobalExceptionHandler`, respondendo com **HTTP 400 Bad Request**:
+  ```json
+  {
+    "type": "https://petshop.com/errors/invalid-data",
+    "title": "Dados Inválidos",
+    "status": 400,
+    "detail": "Erro de validação nos campos",
+    "fields": {
+      "valor_recebido": "valor_recebido deve ser positivo",
+      "nsu": "nsu é obrigatório"
+    },
+    "timestamp": "2026-10-30T21:00:00Z"
+  }
+  ```
+* **Concorrência e Idempotência:**
+  A recepção do webhook dispara `pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu)` e publica `PagamentoConfirmadoEvent` via RabbitMQ. O consumidor do evento adquire lock pessimista (`findByIdWithLock`) na venda correspondente, aplica a liquidação, confirma a baixa definitiva no estoque (`EstoqueCommandService.confirmarBaixa`) e registra a transação imutável no Ledger contábil.
+
+---
+
+## 6. ADRs Vinculados a Este Domínio
 
 * 📑 **[ADR-0002: Controle Híbrido de Concorrência e Estoque Atômico](../adr/0002-atomic-sql-inventory-and-hybrid-locking.md)**
 * 📑 **[ADR-0003: Long Polling Não-Bloqueante com DeferredResult](../adr/0003-async-long-polling-pos-deferred-result.md)**
