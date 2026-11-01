@@ -10,6 +10,7 @@ import inv.checkout.infrastructure.web.dto.ItemVendaRequest;
 import inv.checkout.infrastructure.web.dto.VendaRequest;
 import inv.checkout.usecase.PagamentoService;
 import inv.checkout.usecase.VendaService;
+import inv.finance.domain.model.LancamentoFinanceiro;
 import inv.finance.infrastructure.persistence.LancamentoFinanceiroRepository;
 import inv.inventory.domain.model.MovimentacaoEstoque;
 import inv.inventory.domain.model.Produto;
@@ -219,8 +220,13 @@ class VendaEventHandlerIT {
         List<MovimentacaoEstoque> movimentacoes = movimentacaoRepository.findAll();
         assertThat(movimentacoes).hasSize(1);
         assertThat(movimentacoes.getFirst().getTipo()).isEqualTo(TipoMovimentacao.RESERVA);
+        assertThat(movimentacoes.getFirst().getQuantidade()).isEqualByComparingTo("2.000");
+        assertThat(movimentacoes.getFirst().getVendaId()).isEqualTo(venda.getId());
 
-        // 4. Apenas o lançamento pré-inserido existe em lancamentos_financeiros
-        assertThat(lancamentoRepository.count()).isEqualTo(1);
+        // 4. Apenas o lançamento pré-inserido existe em lancamentos_financeiros com o mesmo uuidRef
+        List<LancamentoFinanceiro> lancamentos = lancamentoRepository.findAll();
+        assertThat(lancamentos).hasSize(1);
+        assertThat(lancamentos.getFirst().getReferencia()).isEqualTo(uuidRef);
+        assertThat(lancamentos.getFirst().getValor()).isEqualByComparingTo("100.00");
     }
 }
