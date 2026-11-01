@@ -25,12 +25,14 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.UnexpectedRollbackException;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -161,5 +163,64 @@ class VendaEventHandlerIT {
 
         // Nenhum lançamento financeiro novo foi persistido
         assertThat(lancamentoRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("E0 / F1 — Colisão determinística em uk_lancamento_referencia deve falhar com DataIntegrityViolationException e reverter transação")
+    void colisaoUkLancamentoReferenciaDeveFalharEReverterTransacao() {
+        Produto produto = new Produto();
+        produto.setNome("Ração Teste Colisão Fin");
+        produto.setCodigoBarras("7890000000102");
+        produto.setUnidadeMedida(UnidadeMedida.UN);
+        produto.setPrecoVenda(new BigDecimal("50.00"));
+        produto.setEstoqueDisponivel(new BigDecimal("10.000"));
+        produto.setEstoqueReservado(new BigDecimal("0.000"));
+        produto.setEstoqueMinimo(new BigDecimal("2.000"));
+        produto = produtoRepository.saveAndFlush(produto);
+
+        // Condição: Venda aberta em AGUARDANDO_PAGAMENTO com produto reservado (10.000 iniciais, 2.000 reservados)
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(produto.getId(), new BigDecimal("2.000"))
+        )));
+
+        UUID uuidRef = UUID.randomUUID();
+        Long pagamentoId = pagamentoService.criarIntencaoPagamento(
+                venda.getId(), MetodoPagamento.PIX, new BigDecimal("100.00"), uuidRef);
+        pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-TX-COLISAO");
+
+        // Pré-insere linha em lancamentos_financeiros com o mesmo uuidRef
+        jdbcTemplate.update(
+                "INSERT INTO lancamentos_financeiros (venda_id, referencia, tipo, valor) VALUES (?, ?, ?, ?)",
+                venda.getId(), uuidRef, "CREDITO", new BigDecimal("100.00")
+        );
+
+        String payload = """
+                {"vendaId":%d,"pagamentoId":%d}
+                """.formatted(venda.getId(), pagamentoId);
+
+        // Ação / Gatilho: Invocar vendaEventHandler.handlePagamentoConfirmado(payload)
+        // Asserção: Falha lançando DataIntegrityViolationException ou UnexpectedRollbackException
+        assertThatThrownBy(() -> vendaEventHandler.handlePagamentoConfirmado(payload))
+                .isInstanceOfAny(DataIntegrityViolationException.class, UnexpectedRollbackException.class);
+
+        // Asserção: Transação sofre rollback integral
+        // 1. Venda permanece AGUARDANDO_PAGAMENTO, valor_pago inalterado
+        Venda vendaAposFalha = vendaRepository.findById(venda.getId()).orElseThrow();
+        assertThat(vendaAposFalha.getStatus()).isEqualTo(StatusVenda.AGUARDANDO_PAGAMENTO);
+        assertThat(vendaAposFalha.getValorPago()).isEqualByComparingTo("0.00");
+        assertThat(vendaAposFalha.getDataHoraConclusao()).isNull();
+
+        // 2. Produto preserva saldo reservado (10.000 inicial - 2.000 reservado = 8.000 disponível, 2.000 reservado)
+        Produto produtoAposFalha = produtoRepository.findById(produto.getId()).orElseThrow();
+        assertThat(produtoAposFalha.getEstoqueDisponivel()).isEqualByComparingTo("8.000");
+        assertThat(produtoAposFalha.getEstoqueReservado()).isEqualByComparingTo("2.000");
+
+        // 3. Nenhuma movimentação SAIDA registrada (apenas a RESERVA inicial da venda)
+        List<MovimentacaoEstoque> movimentacoes = movimentacaoRepository.findAll();
+        assertThat(movimentacoes).hasSize(1);
+        assertThat(movimentacoes.getFirst().getTipo()).isEqualTo(TipoMovimentacao.RESERVA);
+
+        // 4. Apenas o lançamento pré-inserido existe em lancamentos_financeiros
+        assertThat(lancamentoRepository.count()).isEqualTo(1);
     }
 }
