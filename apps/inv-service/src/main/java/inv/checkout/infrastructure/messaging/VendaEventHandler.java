@@ -85,7 +85,7 @@ public class VendaEventHandler {
 
             if (rootCause instanceof ConstraintViolationException cause) {
                 String constraintName = cause.getConstraintName();
-                if ("uk_pagamento_uuid".equals(constraintName) || "uk_lancamento_referencia".equals(constraintName)) {
+                if ("uk_lancamento_referencia".equals(constraintName)) {
                     log.info("Webhook duplicado ignorado com segurança (Constraint: {}).", constraintName);
                     return;
                 }
