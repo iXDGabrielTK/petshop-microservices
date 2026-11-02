@@ -522,4 +522,150 @@ class EstoqueServiceLoteTest {
                     .isInstanceOf(NullPointerException.class);
         }
     }
+
+    @Nested
+    @DisplayName("Devolução física de estoque (F7 / Q3 / Q4 / Q5)")
+    class DevolucaoDeEstoque {
+
+        @Test
+        @DisplayName("Cenário 1 — Consolidação de duplicados e ordenação estrita produtoId ASC (Q3, Q4)")
+        void devolverEstoqueConsolidaDuplicadosEOrdenaPorProdutoIdAsc() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(100L, List.of(
+                    new ItemComando(3L, new BigDecimal("1.000")),
+                    new ItemComando(1L, new BigDecimal("2.000")),
+                    new ItemComando(2L, new BigDecimal("1.500")),
+                    new ItemComando(1L, new BigDecimal("0.500"))
+            ));
+
+            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(eq(100L), anyLong(), eq(TipoMovimentacao.DEVOLUCAO)))
+                    .thenReturn(false);
+            when(produtoRepository.getReferenceById(anyLong())).thenAnswer(inv -> {
+                Produto p = new Produto();
+                p.setId(inv.getArgument(0));
+                return p;
+            });
+            when(produtoRepository.devolverEstoqueAtomo(1L, new BigDecimal("2.500"))).thenReturn(new BigDecimal("12.500"));
+            when(produtoRepository.devolverEstoqueAtomo(2L, new BigDecimal("1.500"))).thenReturn(new BigDecimal("11.500"));
+            when(produtoRepository.devolverEstoqueAtomo(3L, new BigDecimal("1.000"))).thenReturn(new BigDecimal("11.000"));
+
+            estoqueService.devolverEstoque(comando);
+
+            ArgumentCaptor<MovimentacaoEstoque> captor = ArgumentCaptor.forClass(MovimentacaoEstoque.class);
+            verify(movimentacaoRepository, times(3)).save(captor.capture());
+            List<MovimentacaoEstoque> movs = captor.getAllValues();
+
+            assertThat(movs).hasSize(3);
+            assertThat(movs.get(0).getProduto().getId()).isEqualTo(1L);
+            assertThat(movs.get(0).getQuantidade()).isEqualByComparingTo("2.500");
+            assertThat(movs.get(0).getTipo()).isEqualTo(TipoMovimentacao.DEVOLUCAO);
+            assertThat(movs.get(0).getVendaId()).isEqualTo(100L);
+            assertThat(movs.get(0).getObservacao()).isEqualTo("Devolução de venda concluída. Venda #100");
+
+            assertThat(movs.get(1).getProduto().getId()).isEqualTo(2L);
+            assertThat(movs.get(1).getQuantidade()).isEqualByComparingTo("1.500");
+            assertThat(movs.get(1).getTipo()).isEqualTo(TipoMovimentacao.DEVOLUCAO);
+            assertThat(movs.get(1).getVendaId()).isEqualTo(100L);
+
+            assertThat(movs.get(2).getProduto().getId()).isEqualTo(3L);
+            assertThat(movs.get(2).getQuantidade()).isEqualByComparingTo("1.000");
+            assertThat(movs.get(2).getTipo()).isEqualTo(TipoMovimentacao.DEVOLUCAO);
+            assertThat(movs.get(2).getVendaId()).isEqualTo(100L);
+
+            InOrder inOrder = inOrder(movimentacaoRepository, produtoRepository);
+            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(100L, 1L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(produtoRepository).getReferenceById(1L);
+            inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
+            inOrder.verify(produtoRepository).devolverEstoqueAtomo(1L, new BigDecimal("2.500"));
+
+            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(100L, 2L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(produtoRepository).getReferenceById(2L);
+            inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
+            inOrder.verify(produtoRepository).devolverEstoqueAtomo(2L, new BigDecimal("1.500"));
+
+            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(100L, 3L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(produtoRepository).getReferenceById(3L);
+            inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
+            inOrder.verify(produtoRepository).devolverEstoqueAtomo(3L, new BigDecimal("1.000"));
+
+            verify(produtoRepository, never()).findById(anyLong());
+            verify(produtoRepository, never()).buscarMetadadosEstoque(any());
+        }
+
+        @Test
+        @DisplayName("Cenário 2 — Precedência Fail-Fast do INSERT sobre o UPDATE (Q5)")
+        void devolverEstoqueGarantePrecedenciaDoInsertSobreUpdate() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(101L, List.of(
+                    new ItemComando(10L, new BigDecimal("4.000"))
+            ));
+
+            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(101L, 10L, TipoMovimentacao.DEVOLUCAO)).thenReturn(false);
+            when(produtoRepository.getReferenceById(10L)).thenReturn(new Produto());
+            when(produtoRepository.devolverEstoqueAtomo(10L, new BigDecimal("4.000"))).thenReturn(new BigDecimal("14.000"));
+
+            estoqueService.devolverEstoque(comando);
+
+            InOrder inOrder = inOrder(movimentacaoRepository, produtoRepository);
+            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(101L, 10L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
+            inOrder.verify(produtoRepository).devolverEstoqueAtomo(10L, new BigDecimal("4.000"));
+        }
+
+        @Test
+        @DisplayName("Cenário 3 (a) — Idempotência por produto: item já registrado é ignorado sem persistência nem UPDATE (Q5)")
+        void devolverEstoqueIgnoraItemJaDevolvido() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(102L, List.of(
+                    new ItemComando(1L, new BigDecimal("2.000")),
+                    new ItemComando(2L, new BigDecimal("3.000"))
+            ));
+
+            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(102L, 1L, TipoMovimentacao.DEVOLUCAO)).thenReturn(true);
+            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(102L, 2L, TipoMovimentacao.DEVOLUCAO)).thenReturn(false);
+            Produto p2 = new Produto();
+            p2.setId(2L);
+            when(produtoRepository.getReferenceById(2L)).thenReturn(p2);
+            when(produtoRepository.devolverEstoqueAtomo(2L, new BigDecimal("3.000"))).thenReturn(new BigDecimal("13.000"));
+
+            estoqueService.devolverEstoque(comando);
+
+            verify(movimentacaoRepository, never()).save(argThat(m -> m != null && m.getProduto() != null && Long.valueOf(1L).equals(m.getProduto().getId())));
+            verify(produtoRepository, never()).devolverEstoqueAtomo(eq(1L), any());
+
+            verify(movimentacaoRepository, times(1)).save(argThat(m -> m != null && m.getProduto() != null && Long.valueOf(2L).equals(m.getProduto().getId())));
+            verify(produtoRepository, times(1)).devolverEstoqueAtomo(2L, new BigDecimal("3.000"));
+        }
+
+        @Test
+        @DisplayName("Cenário 3 (b) — Lista vazia deve retornar imediatamente sem interagir com repositórios (Q5)")
+        void devolverEstoqueListaVaziaENoOp() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of());
+
+            estoqueService.devolverEstoque(comando);
+
+            verifyNoInteractions(movimentacaoRepository, produtoRepository);
+        }
+
+        @Test
+        @DisplayName("Cenário 3 (c) — Produto inexistente (UPDATE retorna null) lança ResourceNotFoundException (Q5)")
+        void devolverEstoqueProdutoInexistenteLancaResourceNotFoundException() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(104L, List.of(
+                    new ItemComando(999L, new BigDecimal("1.000"))
+            ));
+
+            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(104L, 999L, TipoMovimentacao.DEVOLUCAO)).thenReturn(false);
+            when(produtoRepository.getReferenceById(999L)).thenReturn(new Produto());
+            when(produtoRepository.devolverEstoqueAtomo(999L, new BigDecimal("1.000"))).thenReturn(null);
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage("Produto não encontrado para devolução: 999");
+        }
+
+        @Test
+        @DisplayName("Defesa contra comando nulo deve lançar NullPointerException com mensagem explicativa")
+        void devolverEstoqueRejeitaComandoNulo() {
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(null))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("comando");
+        }
+    }
 }
