@@ -12,6 +12,8 @@ import inv.inventory.infrastructure.messaging.EstoqueBaixoMessage;
 import inv.inventory.infrastructure.persistence.MovimentacaoRepository;
 import inv.inventory.infrastructure.persistence.ProdutoMetadadosEstoque;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -25,6 +27,8 @@ import java.util.stream.Collectors;
 
 @Service
 class EstoqueService implements EstoqueCommandService {
+
+    private static final Logger log = LoggerFactory.getLogger(EstoqueService.class);
 
     /** Ordem global de aquisição de row locks em `produtos` (ADR-0002, adendo DEBT-ARCH-002 / F5). */
     static final Comparator<ItemComando> ORDEM_DE_LOCK = Comparator.comparingLong(ItemComando::produtoId);
@@ -83,6 +87,40 @@ class EstoqueService implements EstoqueCommandService {
             }
             registrarMovimentacao(item.produtoId(), item.quantidade(), TipoMovimentacao.CANCELAMENTO_RESERVA,
                     "Estorno de reserva. Venda #" + comando.vendaId(), comando.vendaId());
+        }
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void devolverEstoque(ComandoEstoqueVenda comando) {
+        Objects.requireNonNull(comando, "comando");
+        if (comando.itens().isEmpty()) {
+            return;
+        }
+
+        NavigableMap<Long, BigDecimal> consolidado = new TreeMap<>();
+        for (ItemComando item : comando.itens()) {
+            consolidado.merge(item.produtoId(), item.quantidade(), BigDecimal::add);
+        }
+
+        for (Map.Entry<Long, BigDecimal> entry : consolidado.entrySet()) {
+            Long produtoId = entry.getKey();
+            BigDecimal quantidadeTotal = entry.getValue();
+
+            if (movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(
+                    comando.vendaId(), produtoId, TipoMovimentacao.DEVOLUCAO)) {
+                log.info("Devolução de estoque já registrada para vendaId={} e produtoId={}. Ignorando.",
+                        comando.vendaId(), produtoId);
+                continue;
+            }
+
+            registrarMovimentacao(produtoId, quantidadeTotal, TipoMovimentacao.DEVOLUCAO,
+                    "Devolução de venda concluída. Venda #" + comando.vendaId(), comando.vendaId());
+
+            BigDecimal novoSaldo = produtoRepository.devolverEstoqueAtomo(produtoId, quantidadeTotal);
+            if (novoSaldo == null) {
+                throw new ResourceNotFoundException("Produto não encontrado para devolução: " + produtoId);
+            }
         }
     }
 

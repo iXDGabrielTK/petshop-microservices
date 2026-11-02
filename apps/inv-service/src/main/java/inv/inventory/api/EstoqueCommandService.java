@@ -23,4 +23,12 @@ public interface EstoqueCommandService {
 
     /** Cancel: devolve o saldo reservado ao disponível e registra movimentação CANCELAMENTO_RESERVA. */
     void estornarReserva(ComandoEstoqueVenda comando);
+
+    /**
+     * Devolução física de venda concluída: exige transação ativa (Propagation.MANDATORY),
+     * consolida quantidades repetidas por produtoId em ordem crescente (produtoId ASC)
+     * e registra movimentação DEVOLUCAO idempotente por (vendaId, produtoId) antes de
+     * recompor o saldo disponível.
+     */
+    void devolverEstoque(ComandoEstoqueVenda comando);
 }

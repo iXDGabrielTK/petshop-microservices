@@ -4,5 +4,6 @@ public enum TipoMovimentacao {
     ENTRADA,
     SAIDA,
     RESERVA,
-    CANCELAMENTO_RESERVA
+    CANCELAMENTO_RESERVA,
+    DEVOLUCAO
 }

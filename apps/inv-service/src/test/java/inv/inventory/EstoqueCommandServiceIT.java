@@ -31,6 +31,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.event.ApplicationEvents;
 import org.springframework.test.context.event.RecordApplicationEvents;
+import org.postgresql.util.PSQLException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -39,6 +41,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -128,6 +131,9 @@ class EstoqueCommandServiceIT {
                 .isInstanceOf(IllegalTransactionStateException.class);
 
         assertThatThrownBy(() -> estoqueCommandService.estornarReserva(comando))
+                .isInstanceOf(IllegalTransactionStateException.class);
+
+        assertThatThrownBy(() -> estoqueCommandService.devolverEstoque(comando))
                 .isInstanceOf(IllegalTransactionStateException.class);
     }
 
@@ -273,6 +279,283 @@ class EstoqueCommandServiceIT {
         assertThat(stats.getEntityInsertCount())
                 .as("Devem ser inseridas exatamente 3 movimentações de estoque")
                 .isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("Cenário 4 — Obrigatoriedade de transação ativa (Propagation.MANDATORY) em devolverEstoque")
+    void devolverEstoqueSemTransacaoAtivaLancaIllegalTransactionStateException() {
+        ComandoEstoqueVenda comando = new ComandoEstoqueVenda(1L, List.of(
+                new ItemComando(1L, new BigDecimal("1.000"))
+        ));
+
+        assertThatThrownBy(() -> estoqueCommandService.devolverEstoque(comando))
+                .isInstanceOf(IllegalTransactionStateException.class);
+    }
+
+    @Test
+    @DisplayName("Cenário 5 — Ciclo completo reservar -> confirmarBaixa -> devolverEstoque e idempotência sequencial (F7, Q3, Q4, Q5)")
+    void cicloCompletoReservarBaixarDevolverEIdempotenciaSequencial() {
+        Produto p1 = salvarProduto("7891000000080", "Produto P1 Devolução",
+                new BigDecimal("50.00"), new BigDecimal("20.000"), new BigDecimal("5.000"));
+        Produto p2 = salvarProduto("7891000000097", "Produto P2 Devolução",
+                new BigDecimal("30.00"), new BigDecimal("20.000"), new BigDecimal("5.000"));
+
+        long vendaId = criarVendaFixture();
+        // Itens com produtoId repetido e fora de ordem: [P2: 1.000, P1: 2.000, P2: 3.000]
+        ComandoEstoqueVenda comando = new ComandoEstoqueVenda(vendaId, List.of(
+                new ItemComando(p2.getId(), new BigDecimal("1.000")),
+                new ItemComando(p1.getId(), new BigDecimal("2.000")),
+                new ItemComando(p2.getId(), new BigDecimal("3.000"))
+        ));
+
+        // 1. Reservar: P1 reserva 2.000 (disponível -> 18.000, reservado -> 2.000); P2 reserva 1.000 + 3.000 = 4.000 (disponível -> 16.000, reservado -> 4.000)
+        txTemplate.executeWithoutResult(status -> estoqueCommandService.reservar(comando));
+
+        Produto p1Reserva = produtoRepository.findById(p1.getId()).orElseThrow();
+        assertThat(p1Reserva.getEstoqueDisponivel()).isEqualByComparingTo("18.000");
+        assertThat(p1Reserva.getEstoqueReservado()).isEqualByComparingTo("2.000");
+
+        Produto p2Reserva = produtoRepository.findById(p2.getId()).orElseThrow();
+        assertThat(p2Reserva.getEstoqueDisponivel()).isEqualByComparingTo("16.000");
+        assertThat(p2Reserva.getEstoqueReservado()).isEqualByComparingTo("4.000");
+
+        // 2. Confirmar baixa definitiva (SAIDA): zera o reservado de ambos
+        txTemplate.executeWithoutResult(status -> estoqueCommandService.confirmarBaixa(comando));
+
+        Produto p1Baixa = produtoRepository.findById(p1.getId()).orElseThrow();
+        assertThat(p1Baixa.getEstoqueDisponivel()).isEqualByComparingTo("18.000");
+        assertThat(p1Baixa.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        Produto p2Baixa = produtoRepository.findById(p2.getId()).orElseThrow();
+        assertThat(p2Baixa.getEstoqueDisponivel()).isEqualByComparingTo("16.000");
+        assertThat(p2Baixa.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        // 3. Primeira chamada de devolverEstoque: recompoe disponível para 20.000 em ambos e grava exatamente 2 movimentações DEVOLUCAO
+        txTemplate.executeWithoutResult(status -> estoqueCommandService.devolverEstoque(comando));
+
+        Produto p1Devolvido = produtoRepository.findById(p1.getId()).orElseThrow();
+        assertThat(p1Devolvido.getEstoqueDisponivel()).isEqualByComparingTo("20.000");
+        assertThat(p1Devolvido.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        Produto p2Devolvido = produtoRepository.findById(p2.getId()).orElseThrow();
+        assertThat(p2Devolvido.getEstoqueDisponivel()).isEqualByComparingTo("20.000");
+        assertThat(p2Devolvido.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        List<MovimentacaoEstoque> movsDevolucao = movimentacaoRepository.findAll().stream()
+                .filter(m -> m.getTipo() == TipoMovimentacao.DEVOLUCAO)
+                .toList();
+        assertThat(movsDevolucao).hasSize(2);
+        assertThat(movsDevolucao).allSatisfy(m -> {
+            assertThat(m.getVendaId()).isEqualTo(vendaId);
+            assertThat(m.getObservacao()).isEqualTo("Devolução de venda concluída. Venda #" + vendaId);
+        });
+
+        MovimentacaoEstoque movP1 = movsDevolucao.stream()
+                .filter(m -> m.getProduto().getId().equals(p1.getId()))
+                .findFirst().orElseThrow();
+        assertThat(movP1.getQuantidade()).isEqualByComparingTo("2.000");
+
+        MovimentacaoEstoque movP2 = movsDevolucao.stream()
+                .filter(m -> m.getProduto().getId().equals(p2.getId()))
+                .findFirst().orElseThrow();
+        assertThat(movP2.getQuantidade()).isEqualByComparingTo("4.000");
+
+        long totalMovimentacoesAposPrimeira = movimentacaoRepository.count();
+
+        // 4. Segunda chamada consecutiva para a mesma venda: no-op idempotente
+        txTemplate.executeWithoutResult(status -> estoqueCommandService.devolverEstoque(comando));
+
+        Produto p1AposSegunda = produtoRepository.findById(p1.getId()).orElseThrow();
+        assertThat(p1AposSegunda.getEstoqueDisponivel()).isEqualByComparingTo("20.000");
+        assertThat(p1AposSegunda.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        Produto p2AposSegunda = produtoRepository.findById(p2.getId()).orElseThrow();
+        assertThat(p2AposSegunda.getEstoqueDisponivel()).isEqualByComparingTo("20.000");
+        assertThat(p2AposSegunda.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        assertThat(movimentacaoRepository.count())
+                .as("Contagem de movimentações deve permanecer inalterada na segunda chamada idempotente")
+                .isEqualTo(totalMovimentacoesAposPrimeira);
+
+        List<MovimentacaoEstoque> movsDevolucaoSegunda = movimentacaoRepository.findAll().stream()
+                .filter(m -> m.getTipo() == TipoMovimentacao.DEVOLUCAO)
+                .toList();
+        assertThat(movsDevolucaoSegunda).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("Cenário 6 — Validação de catálogo, plano EXPLAIN e violação física da V8 (Q5, Q8)")
+    void validacaoCatalogoIndiceV8PlanoExplainEViolacaoFisica() {
+        // 1. Catálogo pg_index: indisvalid deve ser true para uk_movimentacoes_venda_produto_devolucao
+        Boolean indisvalid = jdbcTemplate.queryForObject("""
+                SELECT ix.indisvalid
+                  FROM pg_class i
+                  JOIN pg_index ix ON ix.indexrelid = i.oid
+                 WHERE i.relname = 'uk_movimentacoes_venda_produto_devolucao'
+                """, Boolean.class);
+        assertThat(indisvalid)
+                .as("Índice uk_movimentacoes_venda_produto_devolucao deve existir e ser válido (indisvalid == true)")
+                .isTrue();
+
+        // 2. EXPLAIN: verifica uso do índice único parcial sob force_custom_plan e force_generic_plan
+        txTemplate.executeWithoutResult(status -> {
+            jdbcTemplate.execute("SET LOCAL enable_seqscan = off");
+
+            // force_custom_plan
+            jdbcTemplate.execute("SET LOCAL plan_cache_mode = 'force_custom_plan'");
+            String explainCustom = String.join("\n", jdbcTemplate.queryForList("""
+                    EXPLAIN (FORMAT TEXT)
+                    SELECT 1 FROM movimentacoes_estoque
+                     WHERE venda_id = 100 AND produto_id = 1 AND tipo = 'DEVOLUCAO'
+                    """, String.class));
+            assertThat(explainCustom)
+                    .as("Plano customizado deve utilizar o índice uk_movimentacoes_venda_produto_devolucao")
+                    .contains("uk_movimentacoes_venda_produto_devolucao");
+
+            // force_generic_plan
+            jdbcTemplate.execute("SET LOCAL plan_cache_mode = 'force_generic_plan'");
+            jdbcTemplate.execute("""
+                    PREPARE plan_devolucao_test (bigint, bigint) AS
+                    SELECT 1 FROM movimentacoes_estoque
+                     WHERE venda_id = $1 AND produto_id = $2 AND tipo = 'DEVOLUCAO'
+                    """);
+            try {
+                String explainGeneric = String.join("\n", jdbcTemplate.queryForList("""
+                        EXPLAIN (FORMAT TEXT) EXECUTE plan_devolucao_test(100, 1)
+                        """, String.class));
+                assertThat(explainGeneric)
+                        .as("Plano genérico deve utilizar o índice uk_movimentacoes_venda_produto_devolucao")
+                        .contains("uk_movimentacoes_venda_produto_devolucao");
+            } finally {
+                jdbcTemplate.execute("DEALLOCATE plan_devolucao_test");
+            }
+        });
+
+        // 3. Violação física da constraint única parcial: segunda MovimentacaoEstoque DEVOLUCAO para mesmo (vendaId, produtoId)
+        Produto produto = salvarProduto("7891000000088", "Produto Conflito V8",
+                new BigDecimal("40.00"), new BigDecimal("10.000"), new BigDecimal("2.000"));
+        long vendaId = criarVendaFixture();
+
+        txTemplate.executeWithoutResult(status -> {
+            MovimentacaoEstoque mov1 = new MovimentacaoEstoque();
+            mov1.setProduto(produto);
+            mov1.setQuantidade(new BigDecimal("1.000"));
+            mov1.setTipo(TipoMovimentacao.DEVOLUCAO);
+            mov1.setDataHora(LocalDateTime.now());
+            mov1.setObservacao("Primeira devolução");
+            mov1.setVendaId(vendaId);
+            movimentacaoRepository.saveAndFlush(mov1);
+        });
+
+        MovimentacaoEstoque mov2 = new MovimentacaoEstoque();
+        mov2.setProduto(produto);
+        mov2.setQuantidade(new BigDecimal("2.000"));
+        mov2.setTipo(TipoMovimentacao.DEVOLUCAO);
+        mov2.setDataHora(LocalDateTime.now());
+        mov2.setObservacao("Segunda devolução duplicada");
+        mov2.setVendaId(vendaId);
+
+        assertThatThrownBy(() -> txTemplate.executeWithoutResult(status -> movimentacaoRepository.saveAndFlush(mov2)))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasRootCauseInstanceOf(PSQLException.class)
+                .satisfies(ex -> {
+                    DataIntegrityViolationException dive = (DataIntegrityViolationException) ex;
+                    PSQLException psqlEx = (PSQLException) dive.getRootCause();
+                    assertThat(psqlEx.getSQLState()).isEqualTo("23505");
+                    assertThat(psqlEx.getServerErrorMessage()).isNotNull();
+                    assertThat(psqlEx.getServerErrorMessage().getConstraint())
+                            .isEqualTo("uk_movimentacoes_venda_produto_devolucao");
+                });
+
+        // 4. Contraprova: índice parcial uk_movimentacoes_venda_produto_devolucao NÃO restringe múltiplos registros
+        // de outros tipos (RESERVA, SAIDA) para o mesmo (vendaId, produtoId)
+        txTemplate.executeWithoutResult(status -> {
+            MovimentacaoEstoque res1 = new MovimentacaoEstoque();
+            res1.setProduto(produto);
+            res1.setQuantidade(new BigDecimal("1.000"));
+            res1.setTipo(TipoMovimentacao.RESERVA);
+            res1.setDataHora(LocalDateTime.now());
+            res1.setObservacao("Reserva 1");
+            res1.setVendaId(vendaId);
+            movimentacaoRepository.saveAndFlush(res1);
+
+            MovimentacaoEstoque res2 = new MovimentacaoEstoque();
+            res2.setProduto(produto);
+            res2.setQuantidade(new BigDecimal("2.000"));
+            res2.setTipo(TipoMovimentacao.RESERVA);
+            res2.setDataHora(LocalDateTime.now());
+            res2.setObservacao("Reserva 2 duplicada na mesma venda");
+            res2.setVendaId(vendaId);
+            movimentacaoRepository.saveAndFlush(res2);
+
+            MovimentacaoEstoque saida1 = new MovimentacaoEstoque();
+            saida1.setProduto(produto);
+            saida1.setQuantidade(new BigDecimal("1.000"));
+            saida1.setTipo(TipoMovimentacao.SAIDA);
+            saida1.setDataHora(LocalDateTime.now());
+            saida1.setObservacao("Saída 1");
+            saida1.setVendaId(vendaId);
+            movimentacaoRepository.saveAndFlush(saida1);
+
+            MovimentacaoEstoque saida2 = new MovimentacaoEstoque();
+            saida2.setProduto(produto);
+            saida2.setQuantidade(new BigDecimal("2.000"));
+            saida2.setTipo(TipoMovimentacao.SAIDA);
+            saida2.setDataHora(LocalDateTime.now());
+            saida2.setObservacao("Saída 2 duplicada na mesma venda");
+            saida2.setVendaId(vendaId);
+            movimentacaoRepository.saveAndFlush(saida2);
+        });
+
+        List<MovimentacaoEstoque> movsMesmoPar = movimentacaoRepository.findAll().stream()
+                .filter(m -> m.getVendaId() != null && m.getVendaId().equals(vendaId) && m.getProduto().getId().equals(produto.getId()))
+                .toList();
+        assertThat(movsMesmoPar)
+                .as("Mesmo par (vendaId, produtoId) deve conter 1 DEVOLUCAO, 2 RESERVA e 2 SAIDA sem violar o índice parcial")
+                .hasSize(5);
+
+        // 5. Contraprova 2: DEVOLUCAO para o mesmo produto em VENDA DIFERENTE é permitida
+        long outraVendaId = criarVendaFixture();
+        txTemplate.executeWithoutResult(status -> {
+            MovimentacaoEstoque movOutraVenda = new MovimentacaoEstoque();
+            movOutraVenda.setProduto(produto);
+            movOutraVenda.setQuantidade(new BigDecimal("1.000"));
+            movOutraVenda.setTipo(TipoMovimentacao.DEVOLUCAO);
+            movOutraVenda.setDataHora(LocalDateTime.now());
+            movOutraVenda.setObservacao("Devolução em outra venda");
+            movOutraVenda.setVendaId(outraVendaId);
+            movimentacaoRepository.saveAndFlush(movOutraVenda);
+        });
+    }
+
+    @Test
+    @DisplayName("Falha em item subsequente em devolverEstoque reverte integralmente o UPDATE e a movimentação do 1º item")
+    void falhaEmItemSubsequenteEmDevolverEstoqueReverteLoteInteiro() {
+        Produto p1 = salvarProduto("7891000000099", "Produto Devolução Rollback",
+                new BigDecimal("25.00"), new BigDecimal("10.000"), new BigDecimal("2.000"));
+
+        long vendaId = criarVendaFixture();
+        long produtoIdInexistente = 999999L;
+        ComandoEstoqueVenda comando = new ComandoEstoqueVenda(vendaId, List.of(
+                new ItemComando(p1.getId(), new BigDecimal("2.000")),
+                new ItemComando(produtoIdInexistente, new BigDecimal("1.000"))
+        ));
+
+        assertThatThrownBy(() -> txTemplate.executeWithoutResult(status -> estoqueCommandService.devolverEstoque(comando)))
+                .isInstanceOf(RuntimeException.class);
+
+        Produto p1Apos = produtoRepository.findById(p1.getId()).orElseThrow();
+        assertThat(p1Apos.getEstoqueDisponivel())
+                .as("Estoque disponível do 1º item deve permanecer inalterado após rollback")
+                .isEqualByComparingTo("10.000");
+        assertThat(p1Apos.getEstoqueReservado()).isEqualByComparingTo("0.000");
+
+        List<MovimentacaoEstoque> movsDevolucao = movimentacaoRepository.findAll().stream()
+                .filter(m -> m.getTipo() == TipoMovimentacao.DEVOLUCAO && m.getVendaId() != null && m.getVendaId() == vendaId)
+                .toList();
+        assertThat(movsDevolucao)
+                .as("Nenhuma movimentação de DEVOLUCAO deve ser persistida para a venda após rollback da transação")
+                .isEmpty();
     }
 
     private Produto salvarProduto(String codigoBarras, String nome, BigDecimal precoVenda,
