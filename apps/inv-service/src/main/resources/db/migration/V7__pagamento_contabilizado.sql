@@ -10,4 +10,5 @@ UPDATE pagamentos p
  WHERE p.venda_id = v.id
    AND p.status = 'CONFIRMADO'
    AND p.excedente = FALSE
-   AND v.valor_pago > 0;
+   AND v.valor_pago > 0
+   AND p.contabilizado = FALSE;
