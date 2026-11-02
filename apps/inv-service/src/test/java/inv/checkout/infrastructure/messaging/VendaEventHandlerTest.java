@@ -83,7 +83,7 @@ class VendaEventHandlerTest {
                 """;
 
         assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
-                .isInstanceOf(RuntimeException.class)
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                 .hasCauseInstanceOf(BusinessException.class)
                 .hasRootCauseMessage("Pagamento não pertence à venda informada.");
 
@@ -375,7 +375,7 @@ class VendaEventHandlerTest {
                 """;
 
         assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
-                .isInstanceOf(RuntimeException.class)
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                 .hasCauseInstanceOf(BusinessException.class)
                 .hasRootCauseMessage("Venda em status inválido para confirmação de pagamento: ABERTA");
 
@@ -405,7 +405,7 @@ class VendaEventHandlerTest {
                 """;
 
         assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
-                .isInstanceOf(RuntimeException.class)
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                 .hasCauseInstanceOf(BusinessException.class)
                 .hasRootCauseMessage("Venda em status inválido para confirmação de pagamento: CANCELAMENTO_SOLICITADO");
 
@@ -425,7 +425,7 @@ class VendaEventHandlerTest {
                 """;
 
         assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
-                .isInstanceOf(RuntimeException.class)
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                 .hasCauseInstanceOf(BusinessException.class)
                 .hasRootCauseMessage("Venda não encontrada");
 
@@ -447,7 +447,7 @@ class VendaEventHandlerTest {
                 """;
 
         assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
-                .isInstanceOf(RuntimeException.class)
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                 .hasCauseInstanceOf(BusinessException.class)
                 .hasRootCauseMessage("Pagamento não encontrado");
 
@@ -468,20 +468,32 @@ class VendaEventHandlerTest {
     }
 
     @Test
-    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException encapsulando BusinessException")
-    void deveLancarAmqpRejectAndDontRequeueExceptionQuandoErroDeNegocio() {
-        when(vendaRepository.findByIdWithLock(999L)).thenReturn(Optional.empty());
+    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException quando estoqueCommandService lançar BusinessException")
+    void deveLancarAmqpRejectAndDontRequeueExceptionQuandoEstoqueLancarBusinessException() {
+        Long vendaId = 10L;
+        Long pagamentoId = 50L;
+
+        Venda venda = criarVendaAguardandoPagamento(vendaId, 100L, "Produto", new BigDecimal("50.00"), new BigDecimal("1.000"));
+        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
+        pagamento.confirmar(new BigDecimal("50.00"), "NSU-100");
+
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+        doThrow(new BusinessException("Inconsistência de estoque"))
+                .when(estoqueCommandService).confirmarBaixa(any());
 
         String payload = """
-                {"vendaId":999,"pagamentoId":50}
+                {"vendaId":10,"pagamentoId":50}
                 """;
 
         assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                 .hasCauseInstanceOf(BusinessException.class)
-                .hasRootCauseMessage("Venda não encontrada");
+                .hasRootCauseMessage("Inconsistência de estoque");
 
-        verifyNoInteractions(pagamentoRepository, estoqueCommandService, eventPublisher);
+        verify(eventPublisher, never()).publishEvent(any(VendaPagaEvent.class));
+        verify(vendaRepository, never()).save(any());
     }
 
     @Test
