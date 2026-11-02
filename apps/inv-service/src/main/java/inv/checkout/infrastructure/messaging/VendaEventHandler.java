@@ -21,9 +21,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,10 +41,6 @@ public class VendaEventHandler {
     private final MeterRegistry meterRegistry;
 
     @RabbitListener(queues = RabbitMQConfig.QUEUE_PAGAMENTO_CONFIRMADO)
-    @Retryable(
-            retryFor = { OptimisticLockingFailureException.class },
-            backoff = @Backoff(delay = 50, multiplier = 2.0, maxDelay = 1000, random = true)
-    )
     @Transactional
     public void handlePagamentoConfirmado(String payload) {
         try {
