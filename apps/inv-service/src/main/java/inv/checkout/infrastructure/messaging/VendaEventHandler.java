@@ -19,11 +19,8 @@ import inv.shared.event.VendaPagaEvent;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.core.NestedExceptionUtils;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -118,18 +115,6 @@ public class VendaEventHandler {
             // Condição 4: Demais estados incompatíveis com pagamento
             throw new BusinessException("Venda em status inválido para confirmação de pagamento: " + venda.getStatus());
 
-        } catch (DataIntegrityViolationException e) {
-            Throwable rootCause = NestedExceptionUtils.getRootCause(e);
-
-            if (rootCause instanceof ConstraintViolationException cause) {
-                String constraintName = cause.getConstraintName();
-                if ("uk_lancamento_referencia".equals(constraintName)) {
-                    log.info("Webhook duplicado ignorado com segurança (Constraint: {}).", constraintName);
-                    return;
-                }
-            }
-            log.error("Erro de integridade relacional não mapeado.", e);
-            throw e;
         } catch (Exception e) {
             log.error("Erro ao processar evento. Voltará para a fila.", e);
             throw new RuntimeException(e);
