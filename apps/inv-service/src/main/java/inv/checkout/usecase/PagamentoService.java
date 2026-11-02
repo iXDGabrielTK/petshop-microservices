@@ -64,7 +64,11 @@ public class PagamentoService {
         Pagamento pagamento = pagamentoRepository.findById(pagamentoId)
                 .orElseThrow(() -> new BusinessException("Pagamento não encontrado para o ID: " + pagamentoId));
 
-        pagamento.confirmar(valor, nsu);
+        boolean confirmado = pagamento.confirmar(valor, nsu);
+        if (!confirmado) {
+            return;
+        }
+
         pagamentoRepository.save(pagamento);
 
         eventPublisher.publishEvent(new PagamentoConfirmadoEvent(pagamento.getVenda().getId(), pagamento.getId()));

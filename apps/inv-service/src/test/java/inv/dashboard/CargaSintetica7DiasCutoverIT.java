@@ -445,7 +445,9 @@ class CargaSintetica7DiasCutoverIT {
         v.adicionarItem(produto.getId(), produto.getNome(), produto.getPrecoVenda(), new BigDecimal(quantidade));
         v.irParaPagamento();
         Pagamento p = new Pagamento(v, metodo, valorTotal, UUID.randomUUID());
-        p.processar();
+        if (metodo.isExigeProcessamento()) {
+            p.processar();
+        }
         p.confirmar(valorTotal, "NSU-" + UUID.randomUUID().toString().substring(0, 8));
         v.registrarPagamentoConfirmado(p);
         v.concluir();

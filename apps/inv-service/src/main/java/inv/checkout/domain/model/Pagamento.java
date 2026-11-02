@@ -76,19 +76,24 @@ public class Pagamento {
         this.status = StatusPagamento.PROCESSANDO;
     }
 
-    public void confirmar(BigDecimal valorRecebido, String nsu) {
+    public boolean confirmar(BigDecimal valorRecebido, String nsu) {
         if (this.status == StatusPagamento.CONFIRMADO) {
-            return;
+            return false;
         }
 
         if (this.metodo.isExigeProcessamento() && this.status != StatusPagamento.PROCESSANDO) {
             throw new BusinessException("Transição inválida: Pagamento exige processamento prévio.");
         }
 
+        if (!this.metodo.isExigeProcessamento() && this.status != StatusPagamento.PENDENTE) {
+            throw new BusinessException("Transição inválida: Pagamento com status " + this.status + " não pode ser confirmado.");
+        }
+
         this.valorRecebido = valorRecebido;
         this.nsuTransacao = nsu;
         this.status = StatusPagamento.CONFIRMADO;
         this.dataHoraPagamento = LocalDateTime.now();
+        return true;
     }
 
     public void falhar() {

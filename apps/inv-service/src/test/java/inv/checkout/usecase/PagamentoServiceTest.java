@@ -51,8 +51,8 @@ class PagamentoServiceTest {
     class ConfirmarPagamentoWebhookTests {
 
         @Test
-        @DisplayName("Cenário 1 / F3 — Webhook duplicado em pagamento já CONFIRMADO deve salvar e publicar evento redundante (estado pré-E1)")
-        void webhookDuplicadoEmPagamentoJaConfirmadoDeveSalvarEPublicarNovamente() {
+        @DisplayName("Cenário 2 / F3 — Webhook duplicado em pagamento já CONFIRMADO deve agir como no-op idempotente sem salvar ou publicar novamente")
+        void webhookDuplicadoEmPagamentoJaConfirmadoDeveSerIdempotenteSemSalvarOuPublicarNovamente() {
             // ARRANGE
             Long pagamentoId = 50L;
             Long vendaId = 10L;
@@ -72,25 +72,26 @@ class PagamentoServiceTest {
             assertThat(primeiraDataHora).isNotNull();
             verify(pagamentoRepository, times(1)).save(pagamento);
             verify(eventPublisher, times(1)).publishEvent(any(PagamentoConfirmadoEvent.class));
+            verify(eventPublisher, times(1)).publishEvent(eq(new PagamentoConfirmadoEvent(vendaId, pagamentoId)));
 
             // ACT 2 — Segunda entrega de webhook (retry/duplicação do gateway)
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
 
-            // ASSERT — Caracterização de F3: pagamento.confirmar() é no-op, mas o service executa save e publishEvent incondicionalmente
+            // ASSERT — Idempotência de F3: pagamento.confirmar() retorna false, save e publishEvent NÃO são invocados novamente
             assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
             assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(valor);
             assertThat(pagamento.getNsuTransacao()).isEqualTo(nsu);
             assertThat(pagamento.getDataHoraPagamento()).isEqualTo(primeiraDataHora);
 
-            // No estado pré-E1, save e publishEvent foram invocados 2 vezes no total
-            verify(pagamentoRepository, times(2)).save(pagamento);
-            verify(eventPublisher, times(2)).publishEvent(any(PagamentoConfirmadoEvent.class));
-            verify(eventPublisher, times(2)).publishEvent(eq(new PagamentoConfirmadoEvent(vendaId, pagamentoId)));
+            // save e publishEvent permanecem tendo sido invocados apenas 1 vez (da primeira entrega)
+            verify(pagamentoRepository, times(1)).save(pagamento);
+            verify(eventPublisher, times(1)).publishEvent(any(PagamentoConfirmadoEvent.class));
+            verify(eventPublisher, times(1)).publishEvent(eq(new PagamentoConfirmadoEvent(vendaId, pagamentoId)));
         }
 
         @Test
-        @DisplayName("Cenário 1 / F3 — Webhook duplicado em pagamento PIX já CONFIRMADO deve salvar e publicar evento redundante (estado pré-E1)")
-        void webhookDuplicadoEmPagamentoPixJaConfirmadoDeveSalvarEPublicarNovamente() {
+        @DisplayName("Cenário 2 / F3 — Webhook duplicado em pagamento PIX já CONFIRMADO deve agir como no-op idempotente")
+        void webhookDuplicadoEmPagamentoPixJaConfirmadoDeveSerIdempotente() {
             Long pagamentoId = 60L;
             Long vendaId = 20L;
             BigDecimal valor = new BigDecimal("45.90");
@@ -108,21 +109,22 @@ class PagamentoServiceTest {
             assertThat(primeiraDataHora).isNotNull();
             verify(pagamentoRepository, times(1)).save(pagamento);
             verify(eventPublisher, times(1)).publishEvent(any(PagamentoConfirmadoEvent.class));
+            verify(eventPublisher, times(1)).publishEvent(eq(new PagamentoConfirmadoEvent(vendaId, pagamentoId)));
 
             // ACT 2 — Segunda entrega redundante de webhook
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
 
-            // ASSERT — Caracterização de F3 para método sem processamento prévio
+            // ASSERT — Idempotência de F3 para método sem processamento prévio
             assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
             assertThat(pagamento.getDataHoraPagamento()).isEqualTo(primeiraDataHora);
-            verify(pagamentoRepository, times(2)).save(pagamento);
-            verify(eventPublisher, times(2)).publishEvent(any(PagamentoConfirmadoEvent.class));
-            verify(eventPublisher, times(2)).publishEvent(eq(new PagamentoConfirmadoEvent(vendaId, pagamentoId)));
+            verify(pagamentoRepository, times(1)).save(pagamento);
+            verify(eventPublisher, times(1)).publishEvent(any(PagamentoConfirmadoEvent.class));
+            verify(eventPublisher, times(1)).publishEvent(eq(new PagamentoConfirmadoEvent(vendaId, pagamentoId)));
         }
 
         @Test
-        @DisplayName("F3 — Webhook em pagamento previamente CONFIRMADO persiste e publica mesmo sem alterar campos da entidade")
-        void webhookEmPagamentoPreviamenteConfirmadoDeveSalvarEPublicarMesmoSemAlterarEntidade() {
+        @DisplayName("Cenário 2 / F3 — Webhook em pagamento previamente CONFIRMADO não deve salvar nem publicar evento")
+        void webhookEmPagamentoPreviamenteConfirmadoNaoDeveSalvarNemPublicar() {
             // ARRANGE
             Long pagamentoId = 51L;
             Long vendaId = 11L;
@@ -142,9 +144,9 @@ class PagamentoServiceTest {
             assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(valorInicial);
             assertThat(pagamento.getNsuTransacao()).isEqualTo(nsuInicial);
 
-            // Mas save e publishEvent foram invocados
-            verify(pagamentoRepository, times(1)).save(pagamento);
-            verify(eventPublisher, times(1)).publishEvent(new PagamentoConfirmadoEvent(vendaId, pagamentoId));
+            // E save e publishEvent NÃO são invocados (no-op estrito)
+            verify(pagamentoRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
         }
 
         @Test
@@ -323,66 +325,63 @@ class PagamentoServiceTest {
         }
 
         @Test
-        @DisplayName("Cenário 2 / Pré-E1 — Caracteriza que PIX em status FALHOU transita para CONFIRMADO por ausência de guarda de validação")
-        void preE1_devePermitirConfirmacaoDePixEmStatusFalhouDevidoAFaltaDeValidacao() {
+        @DisplayName("Cenário 2 / F3 — Deve lançar BusinessException ao tentar confirmar PIX em status FALHOU")
+        void deveLancarBusinessExceptionQuandoPixEmStatusFalhou() {
             Long pagamentoId = 62L;
-            Long vendaId = 22L;
-            BigDecimal valor = new BigDecimal("75.00");
-            String nsu = "PIX-FALHOU-01";
-
-            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.PIX, StatusPagamento.FALHOU);
+            Pagamento pagamento = criarPagamento(pagamentoId, 22L, MetodoPagamento.PIX, StatusPagamento.FALHOU);
             when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
 
-            pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
+            assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("75.00"), "PIX-FALHOU-01"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Pagamento com status FALHOU não pode ser confirmado.");
 
-            assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
-            assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(valor);
-            assertThat(pagamento.getNsuTransacao()).isEqualTo(nsu);
-            assertThat(pagamento.getDataHoraPagamento()).isNotNull();
-
-            verify(pagamentoRepository, times(1)).save(pagamento);
-            verify(eventPublisher, times(1)).publishEvent(new PagamentoConfirmadoEvent(vendaId, pagamentoId));
+            verify(pagamentoRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
         }
 
         @Test
-        @DisplayName("Cenário 2 / Pré-E1 — Caracteriza que PIX em status ESTORNADO transita para CONFIRMADO por ausência de guarda de validação")
-        void preE1_devePermitirConfirmacaoDePixEmStatusEstornadoDevidoAFaltaDeValidacao() {
+        @DisplayName("Cenário 2 / F3 — Deve lançar BusinessException ao tentar confirmar PIX em status ESTORNADO")
+        void deveLancarBusinessExceptionQuandoPixEmStatusEstornado() {
             Long pagamentoId = 63L;
-            Long vendaId = 23L;
-            BigDecimal valor = new BigDecimal("85.00");
-            String nsu = "PIX-ESTORNADO-01";
-
-            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.PIX, StatusPagamento.ESTORNADO);
+            Pagamento pagamento = criarPagamento(pagamentoId, 23L, MetodoPagamento.PIX, StatusPagamento.ESTORNADO);
             when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
 
-            pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
+            assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("85.00"), "PIX-ESTORNADO-01"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Pagamento com status ESTORNADO não pode ser confirmado.");
 
-            assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
-            assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(valor);
-            assertThat(pagamento.getNsuTransacao()).isEqualTo(nsu);
-
-            verify(pagamentoRepository, times(1)).save(pagamento);
-            verify(eventPublisher, times(1)).publishEvent(new PagamentoConfirmadoEvent(vendaId, pagamentoId));
+            verify(pagamentoRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
         }
 
         @Test
-        @DisplayName("Cenário 2 / Pré-E1 — Caracteriza que DINHEIRO em status FALHOU transita para CONFIRMADO por ausência de guarda de validação")
-        void preE1_devePermitirConfirmacaoDeDinheiroEmStatusFalhouDevidoAFaltaDeValidacao() {
+        @DisplayName("Cenário 2 / F3 — Deve lançar BusinessException ao tentar confirmar DINHEIRO em status FALHOU")
+        void deveLancarBusinessExceptionQuandoDinheiroEmStatusFalhou() {
             Long pagamentoId = 64L;
-            Long vendaId = 24L;
-            BigDecimal valor = new BigDecimal("90.00");
-            String nsu = "DINHEIRO-FALHOU";
-
-            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.DINHEIRO, StatusPagamento.FALHOU);
+            Pagamento pagamento = criarPagamento(pagamentoId, 24L, MetodoPagamento.DINHEIRO, StatusPagamento.FALHOU);
             when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
 
-            pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
+            assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("90.00"), "DINHEIRO-FALHOU"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Pagamento com status FALHOU não pode ser confirmado.");
 
-            assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
-            assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(valor);
+            verify(pagamentoRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
 
-            verify(pagamentoRepository, times(1)).save(pagamento);
-            verify(eventPublisher, times(1)).publishEvent(new PagamentoConfirmadoEvent(vendaId, pagamentoId));
+        @Test
+        @DisplayName("Cenário 2 / F3 — Deve lançar BusinessException ao tentar confirmar DINHEIRO em status ESTORNADO")
+        void deveLancarBusinessExceptionQuandoDinheiroEmStatusEstornado() {
+            Long pagamentoId = 65L;
+            Pagamento pagamento = criarPagamento(pagamentoId, 25L, MetodoPagamento.DINHEIRO, StatusPagamento.ESTORNADO);
+            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+            assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("95.00"), "DINHEIRO-ESTORNADO"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Pagamento com status ESTORNADO não pode ser confirmado.");
+
+            verify(pagamentoRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
         }
 
         @Test
