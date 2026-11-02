@@ -1,7 +1,9 @@
 package inv.checkout.infrastructure.messaging;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import common.exception.BusinessException;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.StatusPagamento;
 import inv.checkout.domain.model.StatusVenda;
@@ -451,6 +453,53 @@ class VendaEventHandlerTest {
 
         verifyNoInteractions(estoqueCommandService, eventPublisher);
         verify(vendaRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException quando payload for JSON inválido")
+    void deveLancarAmqpRejectAndDontRequeueExceptionQuandoPayloadForJsonInvalido() {
+        String payloadInvalido = "{invalido: json}";
+
+        assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payloadInvalido))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasCauseInstanceOf(JsonProcessingException.class);
+
+        verifyNoInteractions(vendaRepository, pagamentoRepository, estoqueCommandService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException encapsulando BusinessException")
+    void deveLancarAmqpRejectAndDontRequeueExceptionQuandoErroDeNegocio() {
+        when(vendaRepository.findByIdWithLock(999L)).thenReturn(Optional.empty());
+
+        String payload = """
+                {"vendaId":999,"pagamentoId":50}
+                """;
+
+        assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasCauseInstanceOf(BusinessException.class)
+                .hasRootCauseMessage("Venda não encontrada");
+
+        verifyNoInteractions(pagamentoRepository, estoqueCommandService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("Retry — DEVE relançar RuntimeException genérica para falhas transitórias de infraestrutura")
+    void deveRelancarRuntimeExceptionQuandoFalhaTransitoria() {
+        when(vendaRepository.findByIdWithLock(10L)).thenThrow(new IllegalStateException("Conexão com PostgreSQL recusada"));
+
+        String payload = """
+                {"vendaId":10,"pagamentoId":50}
+                """;
+
+        assertThatThrownBy(() -> handler.handlePagamentoConfirmado(payload))
+                .isExactlyInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasCauseInstanceOf(IllegalStateException.class)
+                .hasRootCauseMessage("Conexão com PostgreSQL recusada");
+
+        verifyNoInteractions(pagamentoRepository, estoqueCommandService, eventPublisher);
     }
 
     private static Venda criarVendaAguardandoPagamento(

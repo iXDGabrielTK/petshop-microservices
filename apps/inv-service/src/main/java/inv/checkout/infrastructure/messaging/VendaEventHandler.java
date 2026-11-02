@@ -1,5 +1,6 @@
 package inv.checkout.infrastructure.messaging;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import common.exception.BusinessException;
 import inv.checkout.domain.model.Pagamento;
@@ -19,6 +20,7 @@ import inv.shared.event.VendaPagaEvent;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -108,6 +110,9 @@ public class VendaEventHandler {
             // Condição 4: Demais estados incompatíveis com pagamento
             throw new BusinessException("Venda em status inválido para confirmação de pagamento: " + venda.getStatus());
 
+        } catch (JsonProcessingException | BusinessException e) {
+            log.error("Erro não-retentável ao processar evento de confirmação de pagamento. Mensagem enviada para DLQ.", e);
+            throw new AmqpRejectAndDontRequeueException(e);
         } catch (Exception e) {
             log.error("Erro ao processar evento. Voltará para a fila.", e);
             throw new RuntimeException(e);
