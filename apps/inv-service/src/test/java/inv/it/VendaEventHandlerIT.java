@@ -39,6 +39,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.event.ApplicationEvents;
 import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.UnexpectedRollbackException;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -115,7 +116,7 @@ class VendaEventHandlerIT {
     private VendaPagaEventListener vendaPagaEventListener;
 
     @Autowired
-    private TransactionTemplate transactionTemplate;
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private ApplicationEvents applicationEvents;
@@ -285,7 +286,7 @@ class VendaEventHandlerIT {
             executor.submit(() -> {
                 try {
                     startLatch.await();
-                    transactionTemplate.executeWithoutResult(status -> {
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
                         vendaPagaEventListener.onVendaPaga(evento);
                     });
                 } catch (Throwable t) {
