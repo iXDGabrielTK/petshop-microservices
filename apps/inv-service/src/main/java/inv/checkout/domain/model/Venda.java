@@ -78,12 +78,22 @@ public class Venda {
             throw new BusinessException("A venda não aceita pagamentos no status: " + this.status);
         }
 
-        this.pagamentos.add(pagamento);
-        this.valorPago = this.valorPago.add(pagamento.getValorRecebido());
+        if (pagamento.isContabilizado()) {
+            return;
+        }
+
+        if (!this.pagamentos.contains(pagamento)) {
+            this.pagamentos.add(pagamento);
+        }
+
+        BigDecimal valor = pagamento.getValorRecebido() != null ? pagamento.getValorRecebido() : BigDecimal.ZERO;
+        this.valorPago = this.valorPago.add(valor);
 
         if (this.valorPago.compareTo(this.valorTotal) >= 0) {
             this.valorTroco = this.valorPago.subtract(this.valorTotal);
         }
+
+        pagamento.marcarComoContabilizado();
     }
 
     public void concluir() {
