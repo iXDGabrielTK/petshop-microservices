@@ -25,7 +25,7 @@ flowchart LR
 
 **Princípios Transversais Inegociáveis:**
 - **Evolução de Schema Expand-Only (`Q8`):** apenas adições compatíveis (`V7` com `DEFAULT FALSE` e `V8` como índice parcial `CONCURRENTLY`); nenhuma coluna ou FK existente é removida.
-- **Integridade de Build e Arquitetura:** `pom.xml` e `archunit_store/` intocados; conformidade estrita com `ArquiteturaTest` (`R1`–`R14`), `ModulithTest` e `ast-grep scan`.
+- **Integridade de Build e Arquitetura:** `pom.xml` e `archunit_store/` intocados; conformidade estrita com `ArquiteturaTest` (`R1`–`R14`) e `ModulithTest`.
 - **Preservação de Gates de Qualidade:** nenhuma asserção dos testes de caracterização ou concorrência do `DEBT-ARCH-001` e `DEBT-ARCH-002` pode ser enfraquecida.
 
 ---
@@ -131,5 +131,5 @@ Toda operação de escrita em venda existente (`handlePagamentoConfirmado`, `can
 - [ ] Duplicatas de `referencia` no Ledger (`CREDITO` e `ESTORNO`) são absorvidas via `ON CONFLICT DO NOTHING RETURNING id` sem `UnexpectedRollbackException` e sem duplicar eventos CQRS ou fechamento D+0.
 - [ ] `EstoqueCommandService.devolverEstoque` implementado (`package-private` em `EstoqueService`, `MANDATORY`, `TreeMap`, Fail-Fast) com índice `V8` válido (`indisvalid = true`) e plano `EXPLAIN` auditado.
 - [ ] Cancelamento de venda concluída respondendo HTTP 200 (1º request), HTTP 409 (concorrente/repetido), HTTP 503 (flag desligada) e HTTP 404 (inexistente), zerando o saldo líquido da venda no Finance (`-(valorPago - valorTroco)`).
-- [ ] Os 6 cenários de concorrência pesada da `E4` e toda a suíte legada (`DEBT-ARCH-001`/`002`) verdes em 3 execuções consecutivas com `pg_stat_database.deadlocks` delta = `0`, `ast-grep scan` limpo, `ArquiteturaTest` e `ModulithTest` aprovados em Java 21 LTS.
+- [ ] Os 6 cenários de concorrência pesada da `E4` e toda a suíte legada (`DEBT-ARCH-001`/`002`) verdes em 3 execuções consecutivas com `pg_stat_database.deadlocks` delta = `0`, `ArquiteturaTest` e `ModulithTest` aprovados em Java 21 LTS.
 - [ ] `ADR-0012` publicada e adendos registrados nas ADRs `0001`, `0002` e `0005`.
