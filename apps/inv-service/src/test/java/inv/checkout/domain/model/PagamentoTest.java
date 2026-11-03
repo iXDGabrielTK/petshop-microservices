@@ -5,6 +5,8 @@ import inv.shared.domain.MetodoPagamento;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -329,6 +331,84 @@ class PagamentoTest {
             assertThatThrownBy(pagamento::falhar)
                     .isInstanceOf(BusinessException.class)
                     .hasMessage("Transição inválida para falha de pagamento.");
+        }
+    }
+
+    @Nested
+    @DisplayName("estornar()")
+    class EstornarTests {
+
+        @Test
+        @DisplayName("Deve estornar com sucesso pagamento CONFIRMADO, contabilizado e não excedente")
+        void deveEstornarPagamentoConfirmadoEContabilizadoComSucesso() {
+            Venda venda = new Venda();
+            UUID uuid = UUID.randomUUID();
+            Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("100.00"), uuid);
+            pagamento.confirmar(new BigDecimal("100.00"), "PIX-1");
+            pagamento.marcarComoContabilizado();
+
+            pagamento.estornar();
+
+            assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
+            assertThat(pagamento.getValorEsperado()).isEqualByComparingTo("100.00");
+            assertThat(pagamento.getValorRecebido()).isEqualByComparingTo("100.00");
+            assertThat(pagamento.getNsuTransacao()).isEqualTo("PIX-1");
+            assertThat(pagamento.getUuidReferencia()).isEqualTo(uuid);
+            assertThat(pagamento.getVenda()).isSameAs(venda);
+        }
+
+        @ParameterizedTest(name = "status inválido: {0}")
+        @EnumSource(value = StatusPagamento.class, names = {"PENDENTE", "PROCESSANDO", "FALHOU", "ESTORNADO"})
+        @DisplayName("Deve lançar BusinessException ao tentar estornar pagamento que não está CONFIRMADO")
+        void deveLancarExcecaoAoTentarEstornarPagamentoNaoConfirmado(StatusPagamento statusNaoConfirmado) {
+            Venda venda = new Venda();
+            Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID());
+            ReflectionTestUtils.setField(pagamento, "status", statusNaoConfirmado);
+            pagamento.marcarComoContabilizado();
+
+            assertThatThrownBy(pagamento::estornar)
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Apenas pagamentos confirmados, contabilizados e não excedentes podem ser estornados.");
+        }
+
+        @Test
+        @DisplayName("Deve lançar BusinessException ao tentar estornar pagamento CONFIRMADO mas não contabilizado")
+        void deveLancarExcecaoAoTentarEstornarPagamentoNaoContabilizado() {
+            Venda venda = new Venda();
+            Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID());
+            pagamento.confirmar(new BigDecimal("100.00"), "PIX-1");
+            // contabilizado continua false por padrão
+
+            assertThatThrownBy(pagamento::estornar)
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Apenas pagamentos confirmados, contabilizados e não excedentes podem ser estornados.");
+        }
+
+        @Test
+        @DisplayName("Deve lançar BusinessException ao tentar estornar pagamento CONFIRMADO e contabilizado porém excedente")
+        void deveLancarExcecaoAoTentarEstornarPagamentoExcedente() {
+            Venda venda = new Venda();
+            Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID());
+            pagamento.confirmar(new BigDecimal("100.00"), "PIX-1");
+            pagamento.marcarComoContabilizado();
+            pagamento.marcarComoExcedenteParaEstorno();
+
+            assertThatThrownBy(pagamento::estornar)
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Apenas pagamentos confirmados, contabilizados e não excedentes podem ser estornados.");
+        }
+
+        @Test
+        @DisplayName("Deve lançar BusinessException ao tentar estornar pagamento CONFIRMADO porém não contabilizado e excedente")
+        void deveLancarExcecaoAoTentarEstornarPagamentoNaoContabilizadoEExcedente() {
+            Venda venda = new Venda();
+            Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID());
+            pagamento.confirmar(new BigDecimal("100.00"), "PIX-1");
+            pagamento.marcarComoExcedenteParaEstorno();
+
+            assertThatThrownBy(pagamento::estornar)
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Transição inválida: Apenas pagamentos confirmados, contabilizados e não excedentes podem ser estornados.");
         }
     }
 }
