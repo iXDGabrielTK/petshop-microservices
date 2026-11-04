@@ -76,6 +76,7 @@ class DevolucaoConcorrenciaDeadlockIT {
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> "50");
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        registry.add("spring.rabbitmq.listener.simple.auto-startup", () -> "false");
         registry.add("features.cancelamento-venda-concluida.enabled", () -> "true");
         registry.add("finance.projection.diaria.enabled", () -> "false");
     }

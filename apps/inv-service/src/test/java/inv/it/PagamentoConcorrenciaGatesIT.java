@@ -29,6 +29,7 @@ import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PersistenceUnitUtil;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -69,7 +70,7 @@ import static org.awaitility.Awaitility.await;
 /**
  * Suíte de validação dos Gates de Concorrência e Isolamento do PR 4 (DEBT-ARCH-003 / E4 — Invariante 5):
  * - Gate 1: Rajada simultânea de webhooks e eventos de confirmação para o mesmo pagamento (absorção na Camada 2).
- * - Gate 2: Política de lock_timeout (SQLState 55P03) sob contenção de lock pessimista e roteamento/descarte DLQ.
+ * - Gate 2: Política de lock_timeout (SQLState 55P03) sob contenção de lock pessimista e contrato de exceções (retry/descarte sem requeue).
  * - Gate 4: Nível de isolamento READ COMMITTED e garantia de que pagamentos não é carregado na sessão JPA antes do lock.
  */
 @RecordApplicationEvents
@@ -89,6 +90,7 @@ class PagamentoConcorrenciaGatesIT {
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> "30");
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        registry.add("spring.rabbitmq.listener.simple.auto-startup", () -> "false");
         registry.add("features.cancelamento-venda-concluida.enabled", () -> "true");
         registry.add("finance.projection.diaria.enabled", () -> "true");
     }
@@ -167,6 +169,12 @@ class PagamentoConcorrenciaGatesIT {
         jdbcTemplate.update("DELETE FROM vendas");
         produtoRepository.deleteAll();
         applicationEvents.clear();
+    }
+
+    @AfterEach
+    void tearDown() {
+        jdbcTemplate.execute("ALTER SYSTEM SET lock_timeout = '10s'");
+        jdbcTemplate.execute("SELECT pg_reload_conf()");
     }
 
     @Test
@@ -296,13 +304,13 @@ class PagamentoConcorrenciaGatesIT {
     }
 
     @Test
-    @DisplayName("Gate 2 (Invariante 5.2) — Contenção em lock pessimista estoura lock_timeout (55P03) com rollback íntegro e roteamento/descarte para DLQ")
-    void gate2_contencaoLockPessimistaEstouraLockTimeoutComRollbackEDescarteOuDlq() throws Exception {
-        // Restaura o lock_timeout=500ms parametrizado na inicialização do container PostgreSQL
-        jdbcTemplate.execute("ALTER SYSTEM RESET lock_timeout");
-        jdbcTemplate.execute("SELECT pg_reload_conf()");
-
+    @DisplayName("Gate 2 (Invariante 5.2) — Contenção em lock pessimista estoura lock_timeout (55P03) com rollback íntegro e contrato de exceções para retry e descarte sem requeue")
+    void gate2_contencaoLockPessimistaEstouraLockTimeoutComRollbackEContratoExcecoes() throws Exception {
         try {
+            // Restaura o lock_timeout=500ms parametrizado na inicialização do container PostgreSQL
+            jdbcTemplate.execute("ALTER SYSTEM RESET lock_timeout");
+            jdbcTemplate.execute("SELECT pg_reload_conf()");
+
             String lockTimeoutConfig = jdbcTemplate.queryForObject("SHOW lock_timeout", String.class);
             assertThat(lockTimeoutConfig).isEqualTo("500ms");
 
@@ -388,7 +396,7 @@ class PagamentoConcorrenciaGatesIT {
             vendaEventHandler.handlePagamentoConfirmado(payload); // reentrega absorvida na Condição 1 (ACK)
             assertThat(lancamentoRepository.count()).isEqualTo(1L);
 
-            // 4. Falha não-retentável (violação de integridade/negócio ou JSON inválido) lança AmqpRejectAndDontRequeueException -> DLQ direta
+            // 4. Falha não-retentável (violação de integridade/negócio ou JSON inválido) lança AmqpRejectAndDontRequeueException -> contrato para descarte sem requeue
             assertThatThrownBy(() -> vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":999999,\"pagamentoId\":" + pagamentoId + "}"))
                     .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                     .hasCauseInstanceOf(BusinessException.class);
@@ -428,7 +436,7 @@ class PagamentoConcorrenciaGatesIT {
 
         // 2. Prova determinística com transações concorrentes:
         // Thread 2 (sessão JPA explícita) e Thread 3 (VendaEventHandler.handlePagamentoConfirmado) aguardam em findByIdWithLock
-        // enquanto Thread 1 contabiliza e commita. A sincronização usa pg_locks (WHERE NOT granted >= 2), sem Thread.sleep.
+        // enquanto Thread 1 contabiliza e commita. A sincronização usa pg_locks (SELECT COUNT(*) WHERE NOT granted) >= 2, sem Thread.sleep.
         CountDownLatch latchT1DetemLock = new CountDownLatch(1);
         CountDownLatch latchWaitersProntos = new CountDownLatch(2);
         AtomicReference<String> isolamentoT2 = new AtomicReference<>();

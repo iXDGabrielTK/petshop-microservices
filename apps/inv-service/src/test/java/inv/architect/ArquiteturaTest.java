@@ -154,8 +154,27 @@ public class ArquiteturaTest {
             .should().notBePublic()
             .as("Implementações de contratos da Published Language não devem ser públicas (forçam injeção pela interface)");
 
-    // R15 — Toda escrita/transição em Venda existente deve adquirir lock pessimista via VendaRepository.findByIdWithLock
-    // (DEBT-ARCH-003 E4 / Gate 3: previne colisões otimistas no @Version e garante hierarquia de locks vendas -> produtos)
+    /**
+     * R15 — Toda escrita/transição em Venda existente deve adquirir lock pessimista via VendaRepository.findByIdWithLock
+     * (DEBT-ARCH-003 E4 / Gate 3: previne colisões otimistas no @Version e garante hierarquia de locks vendas -> produtos).
+     *
+     * <p><b>Convenção de Nomes e Limitações da Heurística R15:</b></p>
+     * <ul>
+     *   <li><b>Convenção de métodos de leitura:</b> A regra trata como mutador qualquer método invocado em {@code Venda}
+     *       cujo nome não comece com os prefixos {@code get} ou {@code is} (exceto exceções explícitas {@code estaPaga},
+     *       {@code equals}, {@code hashCode} e {@code toString}). Caso um método puramente de leitura futuro seja introduzido
+     *       com outra nomenclatura (por exemplo, {@code temItens()} ou {@code possuiPendencias()}), ele seria apontado
+     *       como violação se chamado sem lock, exigindo inclusão explícita em {@code isMetodoSomenteLeituraVenda}.</li>
+     *   <li><b>Heurística de bytecode intra-procedural:</b> A verificação analisa a ordenação de chamadas por número de linha
+     *       no escopo do próprio método chamador. A extração da aquisição de lock para um método auxiliar privado pode induzir
+     *       falso positivo ou falso negativo.</li>
+     *   <li><b>Rastreamento de argumentos:</b> A regra não inspeciona por fluxo de dados se o ID passado ao lock corresponde
+     *       ao ID da instância de {@code Venda} que está sendo mutada.</li>
+     *   <li><b>Ausência de teste sintético negativo:</b> A suíte não possui teste sintético negativo comprovando falha da regra
+     *       sob violação intencional (lacuna conhecida, atuando como gate estático complementado por testes dinâmicos em
+     *       {@code PagamentoConcorrenciaGatesIT}).</li>
+     * </ul>
+     */
     @ArchTest
     static final ArchRule escritasEmVendaDevemUsarFindByIdWithLock = classes()
             .that().resideInAPackage("inv.checkout..")
