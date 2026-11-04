@@ -4,6 +4,7 @@ import common.exception.BusinessException;
 import common.exception.ResourceNotFoundException;
 import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.domain.model.Venda;
+import inv.checkout.infrastructure.messaging.event.VendaAtualizadaEvent;
 import inv.checkout.infrastructure.persistence.VendaRepository;
 import inv.checkout.infrastructure.web.dto.ItemReciboResponse;
 import inv.checkout.infrastructure.web.dto.ItemVendaRequest;
@@ -15,7 +16,11 @@ import inv.inventory.api.ComandoEstoqueVenda;
 import inv.inventory.api.EstoqueCommandService;
 import inv.inventory.api.ItemComando;
 import inv.inventory.api.ProdutoCheckoutView;
+import inv.shared.event.VendaEstornadaEvent;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
@@ -25,9 +30,12 @@ import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -38,14 +46,27 @@ public class VendaService {
     private final VendaRepository vendaRepository;
     private final CatalogoQueryService catalogoQueryService;
     private final EstoqueCommandService estoqueCommandService;
+    private final ApplicationEventPublisher eventPublisher;
+
+    @Value("${features.cancelamento-venda-concluida.enabled:false}")
+    private boolean cancelamentoConcluidoHabilitado = true;
 
     public VendaService(VendaRepository vendaRepository,
                         CatalogoQueryService catalogoQueryService,
-                        EstoqueCommandService estoqueCommandService) {
+                        EstoqueCommandService estoqueCommandService,
+                        ApplicationEventPublisher eventPublisher) {
         this.vendaRepository = vendaRepository;
         this.catalogoQueryService = catalogoQueryService;
         this.estoqueCommandService = estoqueCommandService;
+        this.eventPublisher = eventPublisher;
     }
+
+    @Autowired(required = false)
+    public void setCancelamentoConcluidoHabilitado(
+            @Value("${features.cancelamento-venda-concluida.enabled:false}") boolean cancelamentoConcluidoHabilitado) {
+        this.cancelamentoConcluidoHabilitado = cancelamentoConcluidoHabilitado;
+    }
+
 
     @Retryable(
             retryFor = { OptimisticLockingFailureException.class, PessimisticLockingFailureException.class },
@@ -127,12 +148,43 @@ public class VendaService {
         vendaRepository.save(venda);
     }
 
+    @Transactional
+    public VendaStatusResponse cancelarVendaConcluida(Long vendaId) {
+        if (!cancelamentoConcluidoHabilitado) {
+            throw new CancelamentoVendaDesabilitadoException("Cancelamento de venda concluída temporariamente desabilitado");
+        }
+
+        Venda venda = vendaRepository.findByIdWithLock(vendaId)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada: " + vendaId));
+
+        if (venda.getStatus() != StatusVenda.CONCLUIDA) {
+            throw new CancelamentoVendaConflitoException(
+                    "Venda #" + vendaId + " não pode ser cancelada pois está no status: " + venda.getStatus());
+        }
+
+        venda.cancelarVendaConcluida();
+        estoqueCommandService.devolverEstoque(comandoPara(venda));
+        venda = vendaRepository.save(venda);
+
+        BigDecimal valorTroco = venda.getValorTroco() != null ? venda.getValorTroco() : BigDecimal.ZERO;
+        BigDecimal valorPago = venda.getValorPago() != null ? venda.getValorPago() : BigDecimal.ZERO;
+        BigDecimal valorEstorno = valorPago.subtract(valorTroco);
+        UUID uuidReferenciaEstorno = UUID.nameUUIDFromBytes(("ESTORNO:" + vendaId).getBytes(StandardCharsets.UTF_8));
+
+        eventPublisher.publishEvent(new VendaEstornadaEvent(vendaId, uuidReferenciaEstorno, valorEstorno));
+        VendaStatusResponse response = VendaStatusResponse.from(venda);
+        eventPublisher.publishEvent(new VendaAtualizadaEvent(vendaId, response));
+
+        return response;
+    }
+
+
     private static ComandoEstoqueVenda comandoPara(Venda venda) {
-        return new ComandoEstoqueVenda(
-                venda.getId(),
+        List<ItemComando> itens = (venda.getItens() == null) ? List.of() :
                 venda.getItens().stream()
                         .map(item -> new ItemComando(item.getProdutoId(), item.getQuantidade()))
-                        .toList());
+                        .toList();
+        return new ComandoEstoqueVenda(venda.getId(), itens);
     }
 
     private Map<Long, ProdutoCheckoutView> carregarCatalogo(VendaRequest pedido) {
