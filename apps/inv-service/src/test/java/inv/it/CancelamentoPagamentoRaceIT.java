@@ -197,6 +197,7 @@ class CancelamentoPagamentoRaceIT {
         assertThat(pag1Fim.isContabilizado()).isTrue();
 
         Pagamento pag2Fim = pagamentoRepository.findById(pag2Id).orElseThrow();
+        assertThat(pag2Fim.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
         assertThat(pag2Fim.isExcedente()).isTrue();
         assertThat(pag2Fim.isContabilizado()).isFalse();
 
@@ -275,6 +276,8 @@ class CancelamentoPagamentoRaceIT {
 
         Pagamento pagFim = pagamentoRepository.findById(pagId).orElseThrow();
         assertThat(pagFim.getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
+        assertThat(pagFim.isContabilizado()).isTrue();
+        assertThat(pagFim.isExcedente()).isFalse();
 
         Produto prodFim = produtoRepository.findById(prod.getId()).orElseThrow();
         assertThat(prodFim.getEstoqueDisponivel()).isEqualByComparingTo("10.000");
@@ -352,6 +355,7 @@ class CancelamentoPagamentoRaceIT {
         assertThat(pag1Fim.getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
 
         Pagamento pag2Fim = pagamentoRepository.findById(pag2Id).orElseThrow();
+        assertThat(pag2Fim.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
         assertThat(pag2Fim.isExcedente()).isTrue();
         assertThat(pag2Fim.isContabilizado()).isFalse();
 
@@ -431,6 +435,7 @@ class CancelamentoPagamentoRaceIT {
             assertThat(p1Fim.getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
 
             Pagamento p2Fim = pagamentoRepository.findById(pag2Id).orElseThrow();
+            assertThat(p2Fim.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
             assertThat(p2Fim.isExcedente()).isTrue();
             assertThat(p2Fim.isContabilizado()).isFalse();
         }

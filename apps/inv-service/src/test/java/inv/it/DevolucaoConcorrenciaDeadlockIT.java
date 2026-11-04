@@ -318,6 +318,7 @@ class DevolucaoConcorrenciaDeadlockIT {
     @DisplayName("Teste 3 (Q5) — Duas chamadas simultâneas a devolverEstoque sem lock de Checkout colidem no índice V8 com 23505")
     void duasChamadasSimultaneasDevolverEstoqueSemLockCheckoutColideNoIndiceV8Com23505() throws Exception {
         TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        long deadlocksServidorInicio = obterDeadlocksServidor();
 
         // Subcenário (a): Corrida livre com CyclicBarrier(2)
         Produto prodA = salvarProduto("7891000300010", "Produto V8 SubA",
@@ -408,6 +409,9 @@ class DevolucaoConcorrenciaDeadlockIT {
                 .filter(m -> m.getTipo() == TipoMovimentacao.DEVOLUCAO && vendaB.getId().equals(m.getVendaId()))
                 .count();
         assertThat(devolucoesB).isEqualTo(1L);
+
+        long deadlocksServidorFim = obterDeadlocksServidor();
+        assertThat(deadlocksServidorFim - deadlocksServidorInicio).isZero();
 
         Mockito.reset(movimentacaoRepository);
     }

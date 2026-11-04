@@ -49,13 +49,15 @@ import static org.awaitility.Awaitility.await;
 class LedgerConcorrenciaIdempotenciaIT {
 
     @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine")
+            .withCommand("postgres", "-c", "deadlock_timeout=100ms");
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "30");
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         registry.add("features.cancelamento-venda-concluida.enabled", () -> "true");
@@ -119,6 +121,7 @@ class LedgerConcorrenciaIdempotenciaIT {
         Venda venda = vendaRepository.save(new Venda());
         Long vendaId = venda.getId();
         BigDecimal valor = new BigDecimal("100.00");
+        long deadlocksInicio = obterDeadlocksServidor();
 
         // ==========================================
         // FASE 1: Concorrência em VendaPagaEvent (CREDITO)
@@ -126,11 +129,12 @@ class LedgerConcorrenciaIdempotenciaIT {
         UUID refCredito = UUID.randomUUID();
         VendaPagaEvent eventCredito = new VendaPagaEvent(vendaId, refCredito, valor);
 
-        CyclicBarrier barreiraCredito = new CyclicBarrier(2);
+        int totalThreads = 10;
+        CyclicBarrier barreiraCredito = new CyclicBarrier(totalThreads);
         Queue<Throwable> errosCredito = new ConcurrentLinkedQueue<>();
 
-        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
-            for (int i = 0; i < 2; i++) {
+        try (ExecutorService pool = Executors.newFixedThreadPool(totalThreads)) {
+            for (int i = 0; i < totalThreads; i++) {
                 pool.submit(() -> {
                     try {
                         barreiraCredito.await(10, TimeUnit.SECONDS);
@@ -167,11 +171,11 @@ class LedgerConcorrenciaIdempotenciaIT {
         UUID refEstorno = UUID.nameUUIDFromBytes(("ESTORNO:" + vendaId).getBytes(StandardCharsets.UTF_8));
         VendaEstornadaEvent eventEstorno = new VendaEstornadaEvent(vendaId, refEstorno, valor);
 
-        CyclicBarrier barreiraEstorno = new CyclicBarrier(2);
+        CyclicBarrier barreiraEstorno = new CyclicBarrier(totalThreads);
         Queue<Throwable> errosEstorno = new ConcurrentLinkedQueue<>();
 
-        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
-            for (int i = 0; i < 2; i++) {
+        try (ExecutorService pool = Executors.newFixedThreadPool(totalThreads)) {
+            for (int i = 0; i < totalThreads; i++) {
                 pool.submit(() -> {
                     try {
                         barreiraEstorno.await(10, TimeUnit.SECONDS);
@@ -228,5 +232,21 @@ class LedgerConcorrenciaIdempotenciaIT {
                 "SELECT COALESCE(SUM(valor), 0) FROM lancamentos_financeiros WHERE venda_id = ?",
                 BigDecimal.class, vendaId);
         assertThat(totalLedger).isNotNull().isEqualByComparingTo("0.00");
+
+        // 4. Invariante 1 — Ausência física de deadlocks aferida no servidor PostgreSQL
+        long deadlocksFim = obterDeadlocksServidor();
+        assertThat(deadlocksFim - deadlocksInicio)
+                .withFailMessage("O servidor PostgreSQL registrou deadlocks durante as entregas concorrentes no Ledger!")
+                .isZero();
+    }
+
+    private long obterDeadlocksServidor() {
+        try {
+            jdbcTemplate.execute("SELECT pg_stat_force_next_flush()");
+        } catch (Exception ignored) {
+        }
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()", Long.class);
+        return count != null ? count : 0L;
     }
 }
