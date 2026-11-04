@@ -4,6 +4,7 @@ import inv.InvServiceApplication;
 import inv.checkout.domain.model.Venda;
 import inv.checkout.infrastructure.persistence.VendaRepository;
 import inv.finance.domain.model.TipoLancamento;
+import inv.finance.infrastructure.messaging.LancamentoRegistradoEvent;
 import inv.finance.infrastructure.messaging.VendaEstornadaEventListener;
 import inv.finance.infrastructure.messaging.VendaPagaEventListener;
 import inv.finance.infrastructure.persistence.LancamentoFinanceiroRepository;
@@ -22,6 +23,8 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -30,6 +33,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.UUID;
@@ -41,9 +46,10 @@ import static org.awaitility.Awaitility.await;
 /**
  * Suíte de concorrência e idempotência no Ledger Financeiro (Teste 6 do DEBT-ARCH-003 / E4).
  * Valida F1, Q6: entregas simultâneas de VendaPagaEvent e VendaEstornadaEvent com chave determinística,
- * sem UnexpectedRollbackException/DataIntegrityViolationException, com reconciliação contábil integral
- * em financial_projection_venda e financial_projection_diaria.
+ * sem UnexpectedRollbackException/DataIntegrityViolationException, com emissão única de LancamentoRegistradoEvent
+ * por operação e reconciliação contábil integral em financial_projection_venda e financial_projection_diaria.
  */
+@RecordApplicationEvents
 @Testcontainers
 @SpringBootTest(classes = InvServiceApplication.class)
 class LedgerConcorrenciaIdempotenciaIT {
@@ -94,6 +100,9 @@ class LedgerConcorrenciaIdempotenciaIT {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    @Autowired
+    private ApplicationEvents applicationEvents;
+
     @BeforeEach
     void setUp() {
         jdbcTemplate.update("DELETE FROM financial_reconciliation_checkpoint");
@@ -110,6 +119,7 @@ class LedgerConcorrenciaIdempotenciaIT {
         jdbcTemplate.update("DELETE FROM outbox");
         jdbcTemplate.update("DELETE FROM lancamentos_financeiros");
         jdbcTemplate.update("DELETE FROM vendas");
+        applicationEvents.clear();
     }
 
     @Test
@@ -157,6 +167,13 @@ class LedgerConcorrenciaIdempotenciaIT {
                 Long.class, vendaId, refCredito);
         assertThat(countCredito).isEqualTo(1L);
 
+        // Exatamente 1 LancamentoRegistradoEvent emitido para a operação de CREDITO
+        List<LancamentoRegistradoEvent> eventosCredito = applicationEvents.stream(LancamentoRegistradoEvent.class)
+                .filter(e -> vendaId.equals(e.vendaId()) && e.tipo() == TipoLancamento.CREDITO)
+                .toList();
+        assertThat(eventosCredito).hasSize(1);
+        assertThat(eventosCredito.getFirst().valorAssinado()).isEqualByComparingTo("100.00");
+
         // Validação da projeção de venda pós-crédito via Awaitility (listener assíncrono)
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             BigDecimal saldo = jdbcTemplate.queryForObject(
@@ -198,6 +215,18 @@ class LedgerConcorrenciaIdempotenciaIT {
                 Long.class, vendaId, refEstorno);
         assertThat(countEstorno).isEqualTo(1L);
 
+        // Exatamente 1 LancamentoRegistradoEvent emitido para a operação de ESTORNO (e 2 no total da venda)
+        List<LancamentoRegistradoEvent> eventosEstorno = applicationEvents.stream(LancamentoRegistradoEvent.class)
+                .filter(e -> vendaId.equals(e.vendaId()) && e.tipo() == TipoLancamento.ESTORNO)
+                .toList();
+        assertThat(eventosEstorno).hasSize(1);
+        assertThat(eventosEstorno.getFirst().valorAssinado()).isEqualByComparingTo("-100.00");
+
+        long totalEventosVenda = applicationEvents.stream(LancamentoRegistradoEvent.class)
+                .filter(e -> vendaId.equals(e.vendaId()))
+                .count();
+        assertThat(totalEventosVenda).isEqualTo(2L);
+
         // Total de lançamentos na tabela do ledger para esta venda: exatamente 2 (1 CREDITO + 1 ESTORNO)
         Long totalLancamentos = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM lancamentos_financeiros WHERE venda_id = ?",
@@ -218,10 +247,16 @@ class LedgerConcorrenciaIdempotenciaIT {
             assertThat((BigDecimal) projVenda.get("total_estornos")).isEqualByComparingTo("100.00");
         });
 
-        // 2. Projeção Diária (financial_projection_diaria): total_creditos = 100.00, total_debitos = 100.00, receita líquida = 0.00
+        // 2. Projeção Diária (financial_projection_diaria): filtro explícito por data_referencia do lançamento
+        LocalDate dataReferencia = jdbcTemplate.queryForObject(
+                "SELECT data_hora::date FROM lancamentos_financeiros WHERE venda_id = ? AND referencia = ?",
+                LocalDate.class, vendaId, refCredito);
+        assertThat(dataReferencia).isNotNull();
+
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             Map<String, Object> projDiaria = jdbcTemplate.queryForMap(
-                    "SELECT total_creditos, total_debitos, (total_creditos - total_debitos) AS liquida FROM financial_projection_diaria LIMIT 1");
+                    "SELECT total_creditos, total_debitos, (total_creditos - total_debitos) AS liquida FROM financial_projection_diaria WHERE data_referencia = ?",
+                    dataReferencia);
             assertThat((BigDecimal) projDiaria.get("total_creditos")).isEqualByComparingTo("100.00");
             assertThat((BigDecimal) projDiaria.get("total_debitos")).isEqualByComparingTo("100.00");
             assertThat((BigDecimal) projDiaria.get("liquida")).isEqualByComparingTo("0.00");

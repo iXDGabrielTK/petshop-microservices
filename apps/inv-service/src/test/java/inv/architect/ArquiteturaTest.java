@@ -1,6 +1,10 @@
 package inv.architect;
 
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaField;
+import com.tngtech.archunit.core.domain.JavaMethod;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
+import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -11,6 +15,9 @@ import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.OptionalInt;
+import java.util.Set;
 
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideOutsideOfPackage;
@@ -146,6 +153,166 @@ public class ArquiteturaTest {
             .and().resideOutsideOfPackage("inv..api..")
             .should().notBePublic()
             .as("Implementações de contratos da Published Language não devem ser públicas (forçam injeção pela interface)");
+
+    // R15 — Toda escrita/transição em Venda existente deve adquirir lock pessimista via VendaRepository.findByIdWithLock
+    // (DEBT-ARCH-003 E4 / Gate 3: previne colisões otimistas no @Version e garante hierarquia de locks vendas -> produtos)
+    @ArchTest
+    static final ArchRule escritasEmVendaDevemUsarFindByIdWithLock = classes()
+            .that().resideInAPackage("inv.checkout..")
+            .should(exigirFindByIdWithLockEmEscritasDeVenda())
+            .as("Toda operação de escrita/transição em Venda existente deve adquirir lock pessimista via VendaRepository.findByIdWithLock");
+
+    private static final String VENDA_CLASS = "inv.checkout.domain.model.Venda";
+    private static final String VENDA_REPO_CLASS = "inv.checkout.infrastructure.persistence.VendaRepository";
+    private static final String PAGAMENTO_REPO_CLASS = "inv.checkout.infrastructure.persistence.PagamentoRepository";
+    private static final Set<String> MUTADORES_CRIACAO_VENDA = Set.of("adicionarItem", "irParaPagamento");
+    private static final Set<String> METODOS_SAVE_REPO = Set.of(
+            "save", "saveAndFlush", "saveAll", "saveAllAndFlush"
+    );
+    private static final Set<String> METODOS_DELETE_REPO = Set.of(
+            "delete", "deleteById", "deleteAll", "deleteAllById", "deleteInBatch", "deleteAllInBatch"
+    );
+
+    private static ArchCondition<JavaClass> exigirFindByIdWithLockEmEscritasDeVenda() {
+        return new ArchCondition<>("adquirir lock pessimista via VendaRepository.findByIdWithLock antes de mutar Venda existente") {
+            private int metodosEscritaValidados = 0;
+
+            @Override
+            public void init(java.util.Collection<JavaClass> allObjectsToTest) {
+                metodosEscritaValidados = 0;
+            }
+
+            @Override
+            public void check(JavaClass item, ConditionEvents events) {
+                if (item.getName().equals(VENDA_CLASS)) {
+                    for (JavaField field : item.getFields()) {
+                        if (!field.getModifiers().contains(JavaModifier.STATIC)
+                                && !field.getModifiers().contains(JavaModifier.PRIVATE)) {
+                            events.add(SimpleConditionEvent.violated(field,
+                                    "Campo " + field.getFullName() + " em Venda deve ser private para impedir escrita sem método de domínio"));
+                        }
+                    }
+                    for (JavaMethod method : item.getMethods()) {
+                        if (method.getName().startsWith("set") && !method.getModifiers().contains(JavaModifier.PRIVATE)) {
+                            events.add(SimpleConditionEvent.violated(method,
+                                    "Método setter " + method.getFullName() + " em Venda não é permitido; mutações devem usar métodos de negócio"));
+                        }
+                    }
+                    return;
+                }
+
+                if (item.getName().equals(VENDA_REPO_CLASS)) {
+                    for (JavaMethod method : item.getMethods()) {
+                        if (method.isAnnotatedWith(org.springframework.data.jpa.repository.Modifying.class)) {
+                            events.add(SimpleConditionEvent.violated(method,
+                                    "Query @Modifying " + method.getFullName() + " em VendaRepository contorna o lock pessimista findByIdWithLock"));
+                        }
+                    }
+                    return;
+                }
+
+                for (JavaMethod method : item.getMethods()) {
+                    boolean instanciaNovaVenda = method.getConstructorCallsFromSelf().stream()
+                            .anyMatch(call -> call.getTargetOwner().getName().equals(VENDA_CLASS));
+
+                    List<JavaMethodCall> chamadasMutadoras = method.getMethodCallsFromSelf().stream()
+                            .filter(call -> call.getTargetOwner().getName().equals(VENDA_CLASS))
+                            .filter(call -> !isMetodoSomenteLeituraVenda(call.getTarget().getName()))
+                            .filter(call -> !(instanciaNovaVenda && MUTADORES_CRIACAO_VENDA.contains(call.getTarget().getName())))
+                            .toList();
+
+                    boolean acessaVendaRepo = method.getFieldAccesses().stream()
+                            .anyMatch(fa -> fa.getTarget().getRawType().getName().equals(VENDA_REPO_CLASS));
+                    boolean acessaOutroRepo = method.getFieldAccesses().stream()
+                            .anyMatch(fa -> !fa.getTarget().getRawType().getName().equals(VENDA_REPO_CLASS)
+                                    && fa.getTarget().getRawType().isAssignableTo(org.springframework.data.repository.Repository.class));
+
+                    List<JavaMethodCall> chamadasEscritaDiretaVendaRepo = !acessaVendaRepo
+                            ? List.of()
+                            : method.getMethodCallsFromSelf().stream()
+                                    .filter(call -> call.getTargetOwner().isAssignableTo(org.springframework.data.repository.Repository.class))
+                                    .filter(call -> METODOS_DELETE_REPO.contains(call.getTarget().getName())
+                                            || (!instanciaNovaVenda && !acessaOutroRepo && METODOS_SAVE_REPO.contains(call.getTarget().getName())))
+                                    .toList();
+
+                    if (chamadasMutadoras.isEmpty() && chamadasEscritaDiretoOuDelete(chamadasEscritaDiretaVendaRepo)) {
+                        continue;
+                    }
+
+                    OptionalInt linhaLock = method.getMethodCallsFromSelf().stream()
+                            .filter(call -> call.getTargetOwner().getName().equals(VENDA_REPO_CLASS)
+                                    && call.getTarget().getName().equals("findByIdWithLock"))
+                            .mapToInt(JavaMethodCall::getLineNumber)
+                            .min();
+
+                    if (linhaLock.isEmpty()) {
+                        String operacao = !chamadasMutadoras.isEmpty()
+                                ? chamadasMutadoras.getFirst().getTarget().getName()
+                                : chamadasEscritaDiretaVendaRepo.getFirst().getTarget().getName();
+                        events.add(SimpleConditionEvent.violated(method,
+                                method.getFullName() + " realiza escrita em Venda existente (" + operacao
+                                        + ") sem adquirir lock pessimista via VendaRepository.findByIdWithLock"));
+                        continue;
+                    }
+
+                    int primeiraMutacao = chamadasMutadoras.stream()
+                            .mapToInt(JavaMethodCall::getLineNumber)
+                            .min()
+                            .orElseGet(() -> chamadasEscritaDiretaVendaRepo.stream()
+                                    .mapToInt(JavaMethodCall::getLineNumber)
+                                    .min()
+                                    .orElse(Integer.MAX_VALUE));
+
+                    if (linhaLock.getAsInt() > primeiraMutacao) {
+                        events.add(SimpleConditionEvent.violated(method,
+                                method.getFullName() + " realiza escrita em Venda na linha " + primeiraMutacao
+                                        + " antes de VendaRepository.findByIdWithLock na linha " + linhaLock.getAsInt()));
+                        continue;
+                    }
+
+                    // Gate 4 complementar: nenhum carregamento de Pagamento/pagamentos pode ocorrer antes do lock pessimista em Venda
+                    OptionalInt leituraPagamentoPreLock = method.getMethodCallsFromSelf().stream()
+                            .filter(call -> call.getTargetOwner().getName().equals(PAGAMENTO_REPO_CLASS)
+                                    || (call.getTargetOwner().getName().equals(VENDA_CLASS)
+                                            && call.getTarget().getName().equals("getPagamentos")))
+                            .mapToInt(JavaMethodCall::getLineNumber)
+                            .filter(line -> line < linhaLock.getAsInt())
+                            .min();
+
+                    if (leituraPagamentoPreLock.isPresent()) {
+                        events.add(SimpleConditionEvent.violated(method,
+                                method.getFullName() + " carrega Pagamento/pagamentos na linha " + leituraPagamentoPreLock.getAsInt()
+                                        + " antes de VendaRepository.findByIdWithLock na linha " + linhaLock.getAsInt()));
+                        continue;
+                    }
+
+                    metodosEscritaValidados++;
+                }
+            }
+
+            private boolean chamadasEscritaDiretoOuDelete(List<JavaMethodCall> chamadas) {
+                return chamadas.isEmpty();
+            }
+
+            @Override
+            public void finish(ConditionEvents events) {
+                if (metodosEscritaValidados < 3) {
+                    events.add(SimpleConditionEvent.violated(VENDA_CLASS,
+                            "Esperava validar pelo menos 3 fluxos de escrita em Venda existente com findByIdWithLock, mas encontrou "
+                                    + metodosEscritaValidados));
+                }
+            }
+
+            private boolean isMetodoSomenteLeituraVenda(String methodName) {
+                return methodName.startsWith("get")
+                        || methodName.startsWith("is")
+                        || methodName.equals("estaPaga")
+                        || methodName.equals("equals")
+                        || methodName.equals("hashCode")
+                        || methodName.equals("toString");
+            }
+        };
+    }
 
     private static ArchCondition<JavaClass> beInterfacesRecordsOrEnums() {
         return new ArchCondition<>("ser interfaces, records ou enums") {

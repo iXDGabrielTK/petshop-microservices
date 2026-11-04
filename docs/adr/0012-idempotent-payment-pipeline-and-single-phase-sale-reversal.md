@@ -104,18 +104,23 @@ Adotamos a **Opção 3**, estruturada nos seguintes pilares técnicos:
 
 ## 6. Estratégia de Validação & Concorrência (Verification & Testing)
 
-A robustez da solução é comprovada por seis cenários de alta concorrência executados contra PostgreSQL no Testcontainers:
+A robustez da solução é comprovada por quatro suítes de alta concorrência (totalizando 12 métodos `@Test`) executadas contra PostgreSQL no Testcontainers e pela regra estática `R15` no ArchUnit:
 
-1. **`DevolucaoConcorrenciaDeadlockIT` (Testes 1 a 4):**
-   * *Teste 1:* 40 cancelamentos simultâneos multi-item com ordem de itens invertida e itens repetidos sob `CyclicBarrier(40)` — 0 deadlocks em `pg_stat_database.deadlocks`, 80 movimentações `DEVOLUCAO` e 40 eventos no Outbox.
+1. **`DevolucaoConcorrenciaDeadlockIT` (Testes 1 a 4 — 4 `@Test`):**
+   * *Teste 1:* 40 cancelamentos simultâneos multi-item combinando ordem direta e ordem invertida com itens repetidos sob `CyclicBarrier(40)` — 0 deadlocks em `pg_stat_database.deadlocks`, 80 movimentações `DEVOLUCAO` e 40 eventos no Outbox.
    * *Teste 2:* Dois cancelamentos simultâneos da mesma venda concluída sob `CyclicBarrier(2)` — exatamente 1 sucesso (HTTP 200), 1 conflito (HTTP 409) e recomposição de estoque única.
    * *Teste 3:* Duas invocações diretas de `devolverEstoque` sem lock de venda sincronizadas por latch — serialização no índice parcial `V8` com colisão `23505` sem adquirir row lock em `produtos`.
    * *Teste 4:* Carga mista de 45 threads simultâneas (15 novas reservas, 15 confirmações de baixa e 15 cancelamentos) — conservação matemática rigorosa do saldo físico e 0 deadlocks.
-2. **`CancelamentoPagamentoRaceIT` (Teste 5):**
-   * *Ordem A, Ordem B1 e Ordem B2:* Validação determinística da hierarquia de locks `vendas -> produtos` sob contenção entre `handlePagamentoConfirmado` e `cancelarVendaConcluida`.
-   * *Bateria Livre:* 20 repetições em `CyclicBarrier(2)` comprovando convergência para venda `CANCELADA`, pagamentos regulares `ESTORNADO`, pagamentos tardios `excedente = true` e incremento determinístico da métrica `pagamento.excedente.total`.
-3. **`LedgerConcorrenciaIdempotenciaIT` (Teste 6):**
-   * Entregas simultâneas de `VendaPagaEvent` e `VendaEstornadaEvent` no Finance com a mesma referência UUID sob `CyclicBarrier(2)` — zero `UnexpectedRollbackException`, exatamente 1 crédito e 1 estorno no Ledger, e conciliação de `saldo == 0.00` em `financial_projection_venda` e receita líquida == `0.00` na projeção diária.
+2. **`CancelamentoPagamentoRaceIT` (Teste 5 — 4 `@Test`):**
+   * *Testes 5.1, 5.2 e 5.3 (Ordem A, Ordem B1 e Ordem B2):* Validação determinística da hierarquia de locks `vendas -> produtos` sob contenção entre `handlePagamentoConfirmado` e `cancelarVendaConcluida`.
+   * *Teste 5.4 (Bateria Livre):* 20 repetições em `CyclicBarrier(2)` comprovando convergência para venda `CANCELADA`, pagamentos regulares `ESTORNADO`, pagamentos tardios `excedente = true` e incremento determinístico da métrica `pagamento.excedente.total`.
+3. **`LedgerConcorrenciaIdempotenciaIT` (Teste 6 — 1 `@Test`):**
+   * Entregas simultâneas de `VendaPagaEvent` e `VendaEstornadaEvent` no Finance com a mesma referência UUID sob `CyclicBarrier(10)` — zero `UnexpectedRollbackException`, exatamente 1 crédito, 1 estorno e 1 `LancamentoRegistradoEvent` emitido por operação, conciliação de `saldo == 0.00` em `financial_projection_venda` e receita líquida == `0.00` na projeção diária filtrada por `data_referencia`.
+4. **`PagamentoConcorrenciaGatesIT` (Gates 1, 2 e 4 — 3 `@Test`) & `ArquiteturaTest` (`R15` — Gate 3):**
+   * *Gate 1:* Rajada de 10 threads simultâneas para o mesmo `pagamentoId` em `confirmarPagamentoWebhook` e `handlePagamentoConfirmado` resulta em 1 contabilização, 1 lançamento e descarte das demais entregas com ACK.
+   * *Gate 2:* Contenção de lock pessimista estoura `lock_timeout` (`SQLState 55P03` -> `PessimisticLockingFailureException`) com rollback íntegro e suporte a retry/DLQ, absorvendo reentregas pós-lock com ACK.
+   * *Gate 3:* Regra `R15` (`escritasEmVendaDevemUsarFindByIdWithLock`) garante que toda mutação em `Venda` existente passa por `VendaRepository.findByIdWithLock`.
+   * *Gate 4:* Comprovação de `SHOW transaction_isolation == "read committed"` e de que `Venda.pagamentos` (`FetchType.LAZY`) não é carregado na sessão JPA antes do lock.
 
 ---
 
