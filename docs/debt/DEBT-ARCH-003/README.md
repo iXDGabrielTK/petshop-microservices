@@ -10,7 +10,7 @@
 | :---: | :--- | :--- | :--- | :---: |
 | **1** | **E0** (Caracterização) + **E1** (Pipeline de Pagamento) | [E0.md](./E0.md), [E1.md](./E1.md) | Suíte de caracterização (`F1`–`F3`), migration `V7` + reconciliação, 5 camadas de idempotência (`F1`–`F5`, `Q1`, `Q7`, `Q8`) | `[x]` Concluído (PR #50) |
 | **2** | **E2** (OHS `devolverEstoque` e Índice Parcial `V8`) | [E2.md](./E2.md) | `TipoMovimentacao.DEVOLUCAO`, migration `V8` + `.conf`, `EstoqueCommandService.devolverEstoque` (`F7`, `Q3`–`Q5`, `Q8`) | `[x]` Concluído (PR #51) |
-| **3** | **E3** (Cancelamento em Fase Única e Outbox) | [E3.md](./E3.md) | `Venda.cancelarVendaConcluida`, `POST /vendas/{id}/cancelar` (HTTP 409/503), `VendaEstornadaEvent` + consumer Finance (`F6`, `Q2`, `Q6`) | `[ ]` Pendente |
+| **3** | **E3** (Cancelamento em Fase Única e Outbox) | [E3.md](./E3.md) | `Venda.cancelarVendaConcluida`, `POST /vendas/{id}/cancelar` (HTTP 409/503), `VendaEstornadaEvent` + consumer Finance (`F6`, `Q2`, `Q6`) | `[x]` Concluído (PR #52) |
 | **4** | **E4** (Concorrência Pesada e Governança ADR) | [E4.md](./E4.md) | 6 ITs de concorrência em `inv.it`, `ADR-0012` e adendos às ADRs `0001`, `0002` e `0005` | `[ ]` Pendente |
 
 ```mermaid

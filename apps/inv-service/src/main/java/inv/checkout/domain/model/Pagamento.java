@@ -103,6 +103,13 @@ public class Pagamento {
         this.status = StatusPagamento.FALHOU;
     }
 
+    public void estornar() {
+        if (this.status != StatusPagamento.CONFIRMADO || !this.contabilizado || this.excedente) {
+            throw new BusinessException("Transição inválida: Apenas pagamentos confirmados, contabilizados e não excedentes podem ser estornados.");
+        }
+        this.status = StatusPagamento.ESTORNADO;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

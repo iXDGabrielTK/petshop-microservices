@@ -108,8 +108,22 @@ public class Venda {
     }
 
     public void cancelar() {
-        if (this.status == StatusVenda.CONCLUIDA) {
-            throw new BusinessException("Vendas concluídas não podem ser simplesmente canceladas. Requer fluxo de devolução.");
+        if (this.status == null || !this.status.podeSerCancelada()) {
+            throw new BusinessException("Venda no status " + this.status + " não pode ser cancelada.");
+        }
+        this.status = StatusVenda.CANCELADA;
+    }
+
+    public void cancelarVendaConcluida() {
+        if (this.status != StatusVenda.CONCLUIDA) {
+            throw new BusinessException("Apenas vendas no status CONCLUIDA podem ser canceladas via estorno. Status atual: " + this.status);
+        }
+        if (this.pagamentos != null) {
+            for (Pagamento pagamento : this.pagamentos) {
+                if (pagamento != null && pagamento.getStatus() == StatusPagamento.CONFIRMADO && pagamento.isContabilizado() && !pagamento.isExcedente()) {
+                    pagamento.estornar();
+                }
+            }
         }
         this.status = StatusVenda.CANCELADA;
     }
