@@ -90,7 +90,7 @@ class CancelamentoVendaConcluidaIT {
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         registry.add("features.cancelamento-venda-concluida.enabled", () -> "true");
-        registry.add("finance.projection.diaria.enabled", () -> "false");
+        registry.add("finance.projection.diaria.enabled", () -> "true");
     }
 
     @MockitoBean
@@ -277,6 +277,7 @@ class CancelamentoVendaConcluidaIT {
         assertThat(lancamentoEstorno.getReferencia()).isEqualTo(uuidEsperado);
 
         // Projeção financeira da venda zerada (saldo == 0.00, total_creditos == 100.00, total_estornos == 100.00)
+        // e projeção diária refletindo crédito de 100.00 e débito/estorno de 100.00 (saldo líquido = 0.00)
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             BigDecimal saldo = jdbcTemplate.queryForObject(
                     "SELECT saldo FROM financial_projection_venda WHERE venda_id = ?",
@@ -288,12 +289,21 @@ class CancelamentoVendaConcluidaIT {
                     "SELECT total_estornos FROM financial_projection_venda WHERE venda_id = ?",
                     BigDecimal.class, vendaId);
 
+            BigDecimal totalCreditosDiario = jdbcTemplate.queryForObject(
+                    "SELECT total_creditos FROM financial_projection_diaria WHERE data_referencia = CURRENT_DATE",
+                    BigDecimal.class);
+            BigDecimal totalDebitosDiario = jdbcTemplate.queryForObject(
+                    "SELECT total_debitos FROM financial_projection_diaria WHERE data_referencia = CURRENT_DATE",
+                    BigDecimal.class);
+
             assertThat(saldo).isEqualByComparingTo("0.00");
             assertThat(totalCreditos).isEqualByComparingTo("100.00");
             assertThat(totalEstornos).isEqualByComparingTo("100.00");
+            assertThat(totalCreditosDiario).isEqualByComparingTo("100.00");
+            assertThat(totalDebitosDiario).isEqualByComparingTo("100.00");
         });
 
-        // 7. Reentrega do evento no listener: valida idempotência estrita sem duplicar lançamento
+        // 7. Reentrega do evento no listener: valida idempotência estrita sem duplicar lançamento nem projeção
         vendaEstornadaEventListener.handleVendaEstornada(outboxMsg.getPayload());
 
         List<LancamentoFinanceiro> lancamentosAposReentrega = lancamentoRepository.findAll().stream()
@@ -305,6 +315,11 @@ class CancelamentoVendaConcluidaIT {
                 "SELECT saldo FROM financial_projection_venda WHERE venda_id = ?",
                 BigDecimal.class, vendaId);
         assertThat(saldoAposReentrega).isEqualByComparingTo("0.00");
+
+        BigDecimal debitosDiariosAposReentrega = jdbcTemplate.queryForObject(
+                "SELECT total_debitos FROM financial_projection_diaria WHERE data_referencia = CURRENT_DATE",
+                BigDecimal.class);
+        assertThat(debitosDiariosAposReentrega).isEqualByComparingTo("100.00");
 
         // 8. 2º POST /vendas/{id}/cancelar: deve retornar 409 Conflict
         mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
