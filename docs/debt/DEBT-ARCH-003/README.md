@@ -62,12 +62,12 @@ flowchart LR
     end
     VS --> ECS & CMD
     VEH --> ECS
-    VS -. publishEvent .-> EVT
+    VS -.->|publishEvent| EVT
     VOL --> OB
-    ES -. implementa .-> ECS
+    ES -.->|implementa| ECS
     ES --> REPO_I
-    OB -. AMQP venda.estornada .-> VEL
-    VEH -. publishEvent VendaPagaEvent .-> VPL
+    OB -.->|AMQP venda.estornada| VEL
+    VEH -.->|publishEvent VendaPagaEvent| VPL
     VPL & VEL --> LFR
 ```
 
