@@ -58,14 +58,14 @@ CREATE TABLE lancamentos_financeiros (
 
 ### Regras Arquiteturais do Ledger
 1. **Zero Updates / Zero Deletes:** Nenhuma instrução `UPDATE` ou `DELETE` é permitida na tabela `lancamentos_financeiros`. Estornos e correções são representados por novos lançamentos com sinal inverso ou `TipoLancamento.ESTORNO`.
-2. **Idempotência por Chave Natural (UUID):** A coluna `referencia` armazena o UUID originado na intenção de pagamento. Se o gateway reenviar o webhook, a tentativa de inserção falhará imediatamente com violação de chave única (`DuplicateKeyException`), impedindo crédito duplicado.
+2. **Idempotência por Chave Natural (UUID) e `ON CONFLICT DO NOTHING`:** A coluna `referencia` armazena o UUID originado na intenção de pagamento ou na chave determinística de estorno (`ESTORNO:<vendaId>`). Se o gateway ou a fila AMQP reenviar a mensagem, a inserção utiliza `INSERT ... ON CONFLICT (referencia) DO NOTHING RETURNING id`, absorvendo a duplicata sem abortar a transação e sem duplicar o valor contábil.
 
 ### Consequências e Trade-offs
 
 * **Positivas (+):**
   * Trilha de auditoria 100% confiável e reproduzível matematicamente.
   * Inserções de alta velocidade sem colisão de locks entre caixas diferentes.
-  * Idempotência garantida pela engine do PostgreSQL.
+  * Idempotência garantida pela engine do PostgreSQL sem penalidade de `rollback-only`.
 * **Negativas / Desafios (-):**
   * O cálculo de saldo em tempo real por `SUM(valor)` pode se tornar custoso à medida que a tabela cresce em milhões de linhas (resolvido via **CQRS Projections** no [ADR-0006](0006-cqrs-asynchronous-projections-and-self-healing-retry.md)).
 
@@ -85,14 +85,44 @@ CREATE TABLE lancamentos_financeiros (
 
 * **Teste de Idempotência Transacional:**
   * Disparar duas requisições simultâneas para registrar o mesmo pagamento com a mesma `referencia` UUID.
-  * **Critério de Aceite:** Apenas 1 lançamento é persistido no banco; a segunda requisição é tratada de forma idempotente sem duplicar o valor contábil.
+  * **Critério de Aceite:** Apenas 1 lançamento é persistido no banco; a segunda requisição é tratada de forma idempotente sem duplicar o valor contábil e sem lançar `UnexpectedRollbackException`.
 * **Teste de Integridade Contábil:**
   * Executar 100 vendas, 20 estornos e validar se a soma dos valores no Ledger bate exatamente com o total conciliado pelo relatório financeiro.
 
 ---
 
-## 7. Referências e Links Relevantes
+## 7. Adendo (Novembro/2026 — DEBT-ARCH-003): Inserção Idempotente com `ON CONFLICT DO NOTHING`, Gate de Eventos CQRS e Chave Determinística de Estorno
+
+Durante a execução do plano **[DEBT-ARCH-003](../debt/DEBT-ARCH-003/README.md)** ([ADR-0012](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)), o mecanismo de idempotência do Ledger foi aprimorado para suportar o pipeline de estornos e eliminar falhas de concorrência com Spring Data JPA:
+
+### A. Substituição de `save()` com `IDENTITY` por `inserirIdempotente` Nativo (Achado F1)
+* **Problema:** O método `save()` do Spring Data JPA lançava `DuplicateKeyException` ao colidir na constraint `uk_lancamento_referencia`. Sob transações ativas do chamador (`@Transactional`), qualquer exceção desse tipo marca a transação JPA como `rollback-only`, provocando `UnexpectedRollbackException` no commit mesmo que o erro fosse capturado em bloco `catch`.
+* **Solução:** Introdução de query nativa em `LancamentoFinanceiroRepository`:
+  ```sql
+  INSERT INTO lancamentos_financeiros (venda_id, referencia, tipo, valor)
+  VALUES (:vendaId, :referencia, :tipo, :valor)
+  ON CONFLICT (referencia) DO NOTHING
+  RETURNING id;
+  ```
+  Isso garante que a engine do PostgreSQL descarte silenciosamente a inserção redundante, retornando `Optional.empty()` sem contaminar a transação.
+
+### B. Gate de Publicação de `LancamentoRegistradoEvent`
+* O evento interno [`LancamentoRegistradoEvent`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/LancamentoRegistradoEvent.java) (consumido pelo `FinancialProjectionListener` para atualizar `financial_projection_venda` e `financial_projection_diaria`) só é emitido quando `idGerado.isPresent()`.
+* Em reentregas concorrentes ou idempotentes, o evento CQRS não é disparado novamente, poupando processamento de checkpoint e retry queues.
+
+### C. Chave Determinística para Estornos de Venda Concluída (Decisão Q6)
+* Para estornos contábeis disparados pelo cancelamento de vendas concluídas, o UUID de referência é derivado deterministicamente a partir do ID da venda:
+  ```java
+  UUID uuidReferenciaEstorno = UUID.nameUUIDFromBytes(("ESTORNO:" + vendaId).getBytes(StandardCharsets.UTF_8));
+  ```
+* Isso assegura que múltiplos cancelamentos ou reentregas AMQP na fila `pdv.venda.estornada.queue` convirjam para exatamente um lançamento contábil de estorno no Ledger.
+
+---
+
+## 8. Referências e Links Relevantes
 
 * [Entidade LancamentoFinanceiro](../../apps/inv-service/src/main/java/inv/finance/domain/model/LancamentoFinanceiro.java)
+* [Repositório LancamentoFinanceiroRepository](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/LancamentoFinanceiroRepository.java)
 * [ADR-0006: Projeções CQRS Assíncronas](0006-cqrs-asynchronous-projections-and-self-healing-retry.md)
+* [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)
 * [Documentação do Domínio Finance](../domains/finance.md)

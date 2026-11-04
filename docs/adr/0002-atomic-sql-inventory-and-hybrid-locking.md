@@ -157,12 +157,33 @@ Além do `EstoqueConcorrenciaIntegrationTest`, a blindagem concorrente é valida
 
 ---
 
-## 8. Referências e Links Relevantes
+## 8. Adendo (Novembro/2026 — DEBT-ARCH-003): 4º Comando em Lote `devolverEstoque`, Índice Parcial `V8`, Formalização de `findByIdWithLock` e Blindagem Concorrente
+
+Durante a execução do plano **[DEBT-ARCH-003](../debt/DEBT-ARCH-003/README.md)** ([ADR-0012](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)), o protocolo de concorrência e o Open Host Service em `inv.inventory.api` foram consolidados para suportar cancelamento atômico pós-faturamento:
+
+### A. 4º Comando em Lote: `devolverEstoque` no Open Host Service
+* **Consolidação em `TreeMap` e Ordem `produtoId ASC`:** Para recompor o estoque de vendas concluídas canceladas, [`EstoqueCommandService`](../../apps/inv-service/src/main/java/inv/inventory/api/EstoqueCommandService.java) introduziu o método `void devolverEstoque(ComandoEstoqueVenda comando)`. Internamente, os itens do lote são agregados em um `TreeMap<Long, BigDecimal>`, garantindo a fusão de itens duplicados e a iteração na ordem estritamente crescente de PK (`produtoId ASC`), preservando a mesma simetria anti-deadlock de `reservar`, `confirmarBaixa` e `estornarReserva`.
+* **Sequência Fail-Fast e Proteção Atômica com Índice `V8`:** Para cada item consolidado, o registro da movimentação `DEVOLUCAO` é persistido antes do `UPDATE` de recomposição em `produtos`. O índice único parcial concorrente `uk_movimentacoes_venda_produto_devolucao` (`V8`) garante que, em caso de chamadas duplicadas concorrentes sem lock de Checkout, a segunda transação seja barrada com `SQLState 23505` imediatamente no índice, sem adquirir row lock em `produtos`.
+
+### B. Fechamento da Observação A5: Lock Pessimista Sistemático em `vendas`
+* Na análise do `DEBT-ARCH-002`, a observação A5 apontava que `VendaEventHandler` e rotinas de liquidação utilizavam leitura simples, sujeitas a colisões otimistas no `@Version`.
+* Com o `DEBT-ARCH-003`, toda alteração de estado em vendas existentes (`handlePagamentoConfirmado`, `cancelarVendaExpirada` e `cancelarVendaConcluida`) foi formalizada com `vendaRepository.findByIdWithLock(vendaId)`. Isso consolida a hierarquia universal de locks `vendas -> produtos` em todo o ciclo de vida da venda.
+
+### C. Suíte Expandida de Concorrência Pesada (`inv.it`)
+A blindagem concorrente é comprovada pelos novos testes:
+* [`DevolucaoConcorrenciaDeadlockIT`](../../apps/inv-service/src/test/java/inv/it/DevolucaoConcorrenciaDeadlockIT.java): 40 cancelamentos simultâneos multi-item invertidos com 0 deadlocks em `pg_stat_database.deadlocks`, conflito 409 determinístico na mesma venda, colisão Fail-Fast no índice `V8` e carga mista de 45 threads com conservação matemática exata de saldo;
+* [`CancelamentoPagamentoRaceIT`](../../apps/inv-service/src/test/java/inv/it/CancelamentoPagamentoRaceIT.java): corridas entre pagamento tardio e cancelamento (Ordens A, B1, B2 e 20 repetições livres sob `CyclicBarrier(2)`);
+* [`LedgerConcorrenciaIdempotenciaIT`](../../apps/inv-service/src/test/java/inv/it/LedgerConcorrenciaIdempotenciaIT.java): entregas simultâneas de créditos e estornos no Ledger com conciliação contábil total.
+
+---
+
+## 9. Referências e Links Relevantes
 
 * [Contrato EstoqueCommandService](../../apps/inv-service/src/main/java/inv/inventory/api/EstoqueCommandService.java)
 * [Implementação EstoqueService (Lote Ordenado)](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java)
 * [Implementação do Repositório Atômico](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/ProdutoRepository.java)
 * [Implementação do VendaService com Retries](../../apps/inv-service/src/main/java/inv/checkout/usecase/VendaService.java)
 * [ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](0011-synchronous-open-host-service-checkout-inventory.md)
+* [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)
 * [Documentação do Domínio de Inventário](../domains/inventory.md)
 * [PostgreSQL Documentation - Concurrency Control & RETURNING clause](https://www.postgresql.org/docs/current/dml-returning.html)
