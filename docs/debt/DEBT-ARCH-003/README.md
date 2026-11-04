@@ -11,7 +11,7 @@
 | **1** | **E0** (Caracterização) + **E1** (Pipeline de Pagamento) | [E0.md](./E0.md), [E1.md](./E1.md) | Suíte de caracterização (`F1`–`F3`), migration `V7` + reconciliação, 5 camadas de idempotência (`F1`–`F5`, `Q1`, `Q7`, `Q8`) | `[x]` Concluído (PR #50) |
 | **2** | **E2** (OHS `devolverEstoque` e Índice Parcial `V8`) | [E2.md](./E2.md) | `TipoMovimentacao.DEVOLUCAO`, migration `V8` + `.conf`, `EstoqueCommandService.devolverEstoque` (`F7`, `Q3`–`Q5`, `Q8`) | `[x]` Concluído (PR #51) |
 | **3** | **E3** (Cancelamento em Fase Única e Outbox) | [E3.md](./E3.md) | `Venda.cancelarVendaConcluida`, `POST /vendas/{id}/cancelar` (HTTP 409/503), `VendaEstornadaEvent` + consumer Finance (`F6`, `Q2`, `Q6`) | `[x]` Concluído (PR #52) |
-| **4** | **E4** (Concorrência Pesada e Governança ADR) | [E4.md](./E4.md) | 6 ITs de concorrência em `inv.it`, `ADR-0012` e adendos às ADRs `0001`, `0002` e `0005` | `[ ]` Pendente |
+| **4** | **E4** (Concorrência Pesada e Governança ADR) | [E4.md](./E4.md) | 4 suítes de concorrência (12 `@Test`) em `inv.it`, regra `R15` em `ArquiteturaTest`, `ADR-0012` e adendos às ADRs `0001`, `0002` e `0005` | `[x]` Concluído |
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
 
 **Princípios Transversais Inegociáveis:**
 - **Evolução de Schema Expand-Only (`Q8`):** apenas adições compatíveis (`V7` com `DEFAULT FALSE` e `V8` como índice parcial `CONCURRENTLY`); nenhuma coluna ou FK existente é removida.
-- **Integridade de Build e Arquitetura:** `pom.xml` e `archunit_store/` intocados; conformidade estrita com `ArquiteturaTest` (`R1`–`R14`) e `ModulithTest`.
+- **Integridade de Build e Arquitetura:** `pom.xml` e `archunit_store/` intocados; conformidade estrita com `ArquiteturaTest` (`R1`–`R15`) e `ModulithTest`.
 - **Preservação de Gates de Qualidade:** nenhuma asserção dos testes de caracterização ou concorrência do `DEBT-ARCH-001` e `DEBT-ARCH-002` pode ser enfraquecida.
 
 ---
@@ -118,7 +118,7 @@ Toda operação de escrita em venda existente (`handlePagamentoConfirmado`, `can
 | **PR 1 (`E0`–`E1`)** | Reverter apenas os commits de código Java, **mantendo `V7__pagamento_contabilizado.sql` no repositório** para evitar `FlywayValidateException`. A coluna `contabilizado` possui `DEFAULT FALSE` e é ignorada pelo código anterior. |
 | **PR 2 (`E2`)** | Reverter o código Java **mantendo `V8__indice_movimentacoes_estoque_devolucao.sql` e `.conf`**. Se o índice `CONCURRENTLY` falhar com `indisvalid = false`, executar `DROP INDEX CONCURRENTLY IF EXISTS uk_movimentacoes_venda_produto_devolucao;` antes de repetir. |
 | **PR 3 (`E3`)** | Desativar imediatamente via `features.cancelamento-venda-concluida.enabled=false` (HTTP 503). Antes de reverter o binário Java, aguardar drenagem de `SELECT count(*) FROM outbox WHERE routing_key = 'venda.estornada'` = `0` e das filas `pdv.venda.estornada.queue`/`.dlq` para evitar `ClassNotFoundException` no `OutboxProcessor`. |
-| **PR 4 (`E4`)** | `git revert` direto (contém exclusivamente testes em `inv.it` e documentação em `docs/adr/`). |
+| **PR 4 (`E4`)** | `git revert` direto (contém exclusivamente testes em `apps/inv-service/src/test/java/inv/` e documentação em `docs/`). |
 
 **Backlog Fora de Escopo (Registrado):** (1) validação de status da venda na criação de intenção de pagamento (`PagamentoService.criarIntencaoPagamento`); (2) reembolso operacional externo no adquirente para pagamentos `excedente = true` e `ESTORNADO`; (3) verificação de `SAIDA` prévia em `devolverEstoque`; (4) migração futura dos handlers HTTP 409/503 para `GlobalExceptionHandler` na `common-lib`.
 
@@ -126,10 +126,10 @@ Toda operação de escrita em venda existente (`handlePagamentoConfirmado`, `can
 
 ## 5. Definition of Done (DoD) Global
 
-- [ ] `V7` aplicada após drenagem comprovada (Outbox e filas `pdv.venda.pagamento.confirmado.queue`/`.dlq` zeradas) e query de reconciliação pós-backfill retornando 0 divergências.
-- [ ] Webhook duplicado gera 0 linhas novas no Outbox; reentrega AMQP retorna ACK sem escrita; pagamento tardio marca `excedente = true` e incrementa `pagamento.excedente.total`.
-- [ ] Duplicatas de `referencia` no Ledger (`CREDITO` e `ESTORNO`) são absorvidas via `ON CONFLICT DO NOTHING RETURNING id` sem `UnexpectedRollbackException` e sem duplicar eventos CQRS ou fechamento D+0.
-- [ ] `EstoqueCommandService.devolverEstoque` implementado (`package-private` em `EstoqueService`, `MANDATORY`, `TreeMap`, Fail-Fast) com índice `V8` válido (`indisvalid = true`) e plano `EXPLAIN` auditado.
-- [ ] Cancelamento de venda concluída respondendo HTTP 200 (1º request), HTTP 409 (concorrente/repetido), HTTP 503 (flag desligada) e HTTP 404 (inexistente), zerando o saldo líquido da venda no Finance (`-(valorPago - valorTroco)`).
-- [ ] Os 6 cenários de concorrência pesada da `E4` e toda a suíte legada (`DEBT-ARCH-001`/`002`) verdes em 3 execuções consecutivas com `pg_stat_database.deadlocks` delta = `0`, `ArquiteturaTest` e `ModulithTest` aprovados em Java 21 LTS.
-- [ ] `ADR-0012` publicada e adendos registrados nas ADRs `0001`, `0002` e `0005`.
+- [x] `V7` aplicada após drenagem comprovada (Outbox e filas `pdv.venda.pagamento.confirmado.queue`/`.dlq` zeradas) e query de reconciliação pós-backfill retornando 0 divergências.
+- [x] Webhook duplicado gera 0 linhas novas no Outbox; reentrega AMQP retorna ACK sem escrita; pagamento tardio marca `excedente = true` e incrementa `pagamento.excedente.total`.
+- [x] Duplicatas de `referencia` no Ledger (`CREDITO` e `ESTORNO`) são absorvidas via `ON CONFLICT DO NOTHING RETURNING id` sem `UnexpectedRollbackException` e sem duplicar eventos CQRS ou fechamento D+0.
+- [x] `EstoqueCommandService.devolverEstoque` implementado (`package-private` em `EstoqueService`, `MANDATORY`, `TreeMap`, Fail-Fast) com índice `V8` válido (`indisvalid = true`) e plano `EXPLAIN` auditado.
+- [x] Cancelamento de venda concluída respondendo HTTP 200 (1º request), HTTP 409 (concorrente/repetido), HTTP 503 (flag desligada) e HTTP 404 (inexistente), zerando o saldo líquido da venda no Finance (`-(valorPago - valorTroco)`).
+- [x] As 4 suítes de concorrência pesada da `E4` (12 `@Test`), os 4 Gates da Invariante 5 e toda a suíte legada (`DEBT-ARCH-001`/`002`) verdes em 3 execuções consecutivas com `pg_stat_database.deadlocks` delta = `0`, `ArquiteturaTest` (`R1`–`R15`) e `ModulithTest` aprovados em Java 21 LTS.
+- [x] `ADR-0012` publicada e adendos registrados nas ADRs `0001`, `0002` e `0005`.
