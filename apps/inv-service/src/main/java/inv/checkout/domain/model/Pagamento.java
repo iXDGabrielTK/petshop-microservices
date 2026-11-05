@@ -44,6 +44,9 @@ public class Pagamento {
     @Column(nullable = false)
     private boolean excedente = false;
 
+    @Column(nullable = false)
+    private boolean contabilizado = false;
+
     private String nsuTransacao;
     private LocalDateTime dataHoraPagamento;
 
@@ -58,6 +61,14 @@ public class Pagamento {
         this.excedente = true;
     }
 
+    public void marcarComoContabilizado() {
+        this.contabilizado = true;
+    }
+
+    public boolean isContabilizado() {
+        return this.contabilizado;
+    }
+
     public void processar() {
         if (this.status != StatusPagamento.PENDENTE) {
             throw new BusinessException("Apenas pagamentos pendentes podem ser processados.");
@@ -65,19 +76,24 @@ public class Pagamento {
         this.status = StatusPagamento.PROCESSANDO;
     }
 
-    public void confirmar(BigDecimal valorRecebido, String nsu) {
+    public boolean confirmar(BigDecimal valorRecebido, String nsu) {
         if (this.status == StatusPagamento.CONFIRMADO) {
-            return;
+            return false;
         }
 
         if (this.metodo.isExigeProcessamento() && this.status != StatusPagamento.PROCESSANDO) {
             throw new BusinessException("Transição inválida: Pagamento exige processamento prévio.");
         }
 
+        if (!this.metodo.isExigeProcessamento() && this.status != StatusPagamento.PENDENTE) {
+            throw new BusinessException("Transição inválida: Pagamento com status " + this.status + " não pode ser confirmado.");
+        }
+
         this.valorRecebido = valorRecebido;
         this.nsuTransacao = nsu;
         this.status = StatusPagamento.CONFIRMADO;
         this.dataHoraPagamento = LocalDateTime.now();
+        return true;
     }
 
     public void falhar() {
@@ -85,5 +101,24 @@ public class Pagamento {
             throw new BusinessException("Transição inválida para falha de pagamento.");
         }
         this.status = StatusPagamento.FALHOU;
+    }
+
+    public void estornar() {
+        if (this.status != StatusPagamento.CONFIRMADO || !this.contabilizado || this.excedente) {
+            throw new BusinessException("Transição inválida: Apenas pagamentos confirmados, contabilizados e não excedentes podem ser estornados.");
+        }
+        this.status = StatusPagamento.ESTORNADO;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Pagamento other)) return false;
+        return this.uuidReferencia != null && this.uuidReferencia.equals(other.getUuidReferencia());
+    }
+
+    @Override
+    public int hashCode() {
+        return Pagamento.class.hashCode();
     }
 }

@@ -6,7 +6,24 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
+import java.util.Optional;
+import java.util.UUID;
+
 public interface LancamentoFinanceiroRepository extends JpaRepository<LancamentoFinanceiro, Long> {
+
+    boolean existsByReferencia(UUID referencia);
+
+    @Query(value = """
+        INSERT INTO lancamentos_financeiros (venda_id, referencia, tipo, valor)
+        VALUES (:vendaId, :referencia, :tipo, :valor)
+        ON CONFLICT (referencia) DO NOTHING
+        RETURNING id
+        """, nativeQuery = true)
+    Optional<Long> inserirIdempotente(@Param("vendaId") Long vendaId,
+                                      @Param("referencia") UUID referencia,
+                                      @Param("tipo") String tipo,
+                                      @Param("valor") BigDecimal valor);
 
     @Query(value = """
         WITH limite AS (

@@ -45,6 +45,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
@@ -203,6 +204,42 @@ class ProjecaoReceitaDiariaIT {
         assertThat(frescor.emDia()).isTrue();
         assertThat(frescor.atraso()).isEqualTo(0);
         assertThat(frescor.pendentesRetry()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("DEBT-ARCH-003 (E3): Estorno contábil na projeção diária — crédito seguido de estorno incrementa total_debitos e zera receita líquida")
+    void deveProcessarEstornoContabilNaProjecaoDiaria() {
+        Venda venda = vendaRepository.save(new Venda());
+        BigDecimal valor = new BigDecimal("100.00");
+
+        // 1. Lançamento inicial de crédito
+        LancamentoFinanceiro lancamentoCredito = lancamentoRepository.save(new LancamentoFinanceiro(
+                venda.getId(), UUID.randomUUID(), TipoLancamento.CREDITO, valor));
+        financialProjectionListener.processarComIdempotencia(new LancamentoRegistradoEvent(
+                lancamentoCredito.getId(), venda.getId(), valor, TipoLancamento.CREDITO));
+
+        // 2. Lançamento de estorno contábil (valor negativo)
+        BigDecimal valorEstornoNegativo = valor.negate();
+        UUID uuidEstorno = UUID.nameUUIDFromBytes(("ESTORNO:" + venda.getId()).getBytes(StandardCharsets.UTF_8));
+        LancamentoFinanceiro lancamentoEstorno = lancamentoRepository.save(new LancamentoFinanceiro(
+                venda.getId(), uuidEstorno, TipoLancamento.ESTORNO, valorEstornoNegativo));
+        financialProjectionListener.processarComIdempotencia(new LancamentoRegistradoEvent(
+                lancamentoEstorno.getId(), venda.getId(), valorEstornoNegativo, TipoLancamento.ESTORNO));
+
+        // Validação da projeção diária: creditos = 100.00, debitos = 100.00, liquida = 0.00
+        List<ReceitaDiariaView> serie = receitaQueryService.serieDiaria(PeriodoContabil.dia(LocalDate.now()));
+        assertThat(serie).hasSize(1);
+        ReceitaDiariaView view = serie.getFirst();
+        assertThat(view.creditos()).isEqualByComparingTo("100.00");
+        assertThat(view.debitos()).isEqualByComparingTo("100.00");
+        assertThat(view.liquida()).isEqualByComparingTo("0.00");
+
+        // Gate contábil: soma da projeção == soma dos lançamentos no ledger
+        BigDecimal totalLedger = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(valor), 0) FROM lancamentos_financeiros", BigDecimal.class);
+        BigDecimal totalProjecao = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(total_creditos - total_debitos), 0) FROM financial_projection_diaria", BigDecimal.class);
+        assertThat(totalProjecao).isEqualByComparingTo(totalLedger).isEqualByComparingTo("0.00");
     }
 
     @Test

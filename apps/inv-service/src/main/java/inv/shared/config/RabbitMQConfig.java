@@ -26,6 +26,11 @@ public class RabbitMQConfig {
     public static final String DLQ_QUEUE_PAGAMENTO_CONFIRMADO = "pdv.venda.pagamento.confirmado.queue.dlq";
     public static final String DLQ_ROUTING_KEY_PAGAMENTO_CONFIRMADO = "venda.pagamento.confirmado.dlq";
 
+    public static final String ROUTING_KEY_VENDA_ESTORNADA = "venda.estornada";
+    public static final String ROUTING_KEY_VENDA_ESTORNADA_DLQ = "venda.estornada.dlq";
+    public static final String QUEUE_VENDA_ESTORNADA = "pdv.venda.estornada.queue";
+    public static final String QUEUE_VENDA_ESTORNADA_DLQ = "pdv.venda.estornada.queue.dlq";
+
     @Bean
     public TopicExchange inventoryExchange() {
         return new TopicExchange(EXCHANGE_NAME);
@@ -74,6 +79,19 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    public Queue vendaEstornadaQueue() {
+        return QueueBuilder.durable(QUEUE_VENDA_ESTORNADA)
+                .withArgument("x-dead-letter-exchange", DLQ_EXCHANGE_PDV)
+                .withArgument("x-dead-letter-routing-key", ROUTING_KEY_VENDA_ESTORNADA_DLQ)
+                .build();
+    }
+
+    @Bean
+    public Queue dlqQueueVendaEstornada() {
+        return QueueBuilder.durable(QUEUE_VENDA_ESTORNADA_DLQ).build();
+    }
+
+    @Bean
     public Binding bindingLowStock() {
         return BindingBuilder.bind(lowStockQueue()).to(inventoryExchange()).with(ROUTING_KEY_LOW_STOCK);
     }
@@ -84,6 +102,11 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    public Binding bindingVendaEstornada() {
+        return BindingBuilder.bind(vendaEstornadaQueue()).to(pdvExchange()).with(ROUTING_KEY_VENDA_ESTORNADA);
+    }
+
+    @Bean
     public Binding dlqBindingLowStock() {
         return BindingBuilder.bind(dlqQueueLowStock()).to(dlqExchangeInventory()).with(DLQ_ROUTING_KEY_LOW_STOCK);
     }
@@ -91,6 +114,11 @@ public class RabbitMQConfig {
     @Bean
     public Binding dlqBindingPagamentoConfirmado() {
         return BindingBuilder.bind(dlqQueuePagamentoConfirmado()).to(dlqExchangePdv()).with(DLQ_ROUTING_KEY_PAGAMENTO_CONFIRMADO);
+    }
+
+    @Bean
+    public Binding dlqBindingVendaEstornada() {
+        return BindingBuilder.bind(dlqQueueVendaEstornada()).to(dlqExchangePdv()).with(ROUTING_KEY_VENDA_ESTORNADA_DLQ);
     }
 
     @Bean

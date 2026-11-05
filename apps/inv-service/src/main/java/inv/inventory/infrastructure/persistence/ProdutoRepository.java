@@ -67,4 +67,12 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
         RETURNING estoque_disponivel
         """, nativeQuery = true)
     BigDecimal estornarReservaEstoqueAtomo(@Param("id") Long id, @Param("qtd") BigDecimal qtd);
+
+    @Query(value = """
+        UPDATE produtos 
+        SET estoque_disponivel = estoque_disponivel + :qtd 
+        WHERE id = :id 
+        RETURNING estoque_disponivel
+        """, nativeQuery = true)
+    BigDecimal devolverEstoqueAtomo(@Param("id") Long id, @Param("qtd") BigDecimal qtd);
 }

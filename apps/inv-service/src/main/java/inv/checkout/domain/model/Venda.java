@@ -78,12 +78,27 @@ public class Venda {
             throw new BusinessException("A venda não aceita pagamentos no status: " + this.status);
         }
 
-        this.pagamentos.add(pagamento);
-        this.valorPago = this.valorPago.add(pagamento.getValorRecebido());
+        Pagamento pagamentoCanonico = this.pagamentos.stream()
+                .filter(pagamento::equals)
+                .findFirst()
+                .orElse(pagamento);
+
+        if (pagamentoCanonico.isContabilizado()) {
+            return;
+        }
+
+        if (!this.pagamentos.contains(pagamento)) {
+            this.pagamentos.add(pagamento);
+        }
+
+        BigDecimal valor = pagamentoCanonico.getValorRecebido() != null ? pagamentoCanonico.getValorRecebido() : BigDecimal.ZERO;
+        this.valorPago = this.valorPago.add(valor);
 
         if (this.valorPago.compareTo(this.valorTotal) >= 0) {
             this.valorTroco = this.valorPago.subtract(this.valorTotal);
         }
+
+        pagamentoCanonico.marcarComoContabilizado();
     }
 
     public void concluir() {
@@ -98,8 +113,22 @@ public class Venda {
     }
 
     public void cancelar() {
-        if (this.status == StatusVenda.CONCLUIDA) {
-            throw new BusinessException("Vendas concluídas não podem ser simplesmente canceladas. Requer fluxo de devolução.");
+        if (this.status == null || !this.status.podeSerCancelada()) {
+            throw new BusinessException("Venda no status " + this.status + " não pode ser cancelada.");
+        }
+        this.status = StatusVenda.CANCELADA;
+    }
+
+    public void cancelarVendaConcluida() {
+        if (this.status != StatusVenda.CONCLUIDA) {
+            throw new BusinessException("Apenas vendas no status CONCLUIDA podem ser canceladas via estorno. Status atual: " + this.status);
+        }
+        if (this.pagamentos != null) {
+            for (Pagamento pagamento : this.pagamentos) {
+                if (pagamento != null && pagamento.getStatus() == StatusPagamento.CONFIRMADO && pagamento.isContabilizado() && !pagamento.isExcedente()) {
+                    pagamento.estornar();
+                }
+            }
         }
         this.status = StatusVenda.CANCELADA;
     }
