@@ -11,7 +11,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
+/**
+ * Consumidor automático das pendências de projeção (projection_retry_queue), sejam elas registradas na
+ * transação do ledger ou após falha do caminho assíncrono. A quitação ocorre dentro de
+ * {@link FinancialProjectionListener#projetar(LancamentoRegistradoEvent)}, na mesma transação das projeções;
+ * em caso de falha a pendência é mantida com backoff.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -21,9 +28,9 @@ public class ProjectionRetryScheduler {
     private final FinancialProjectionListener projectionListener;
     private final ObjectMapper objectMapper;
 
-    @Scheduled(fixedDelay = 60000)
+    @Scheduled(fixedDelayString = "${finance.projection.retry.fixed-delay-ms:60000}")
     public void reprocessarFalhasDeProjecao() {
-        List<ProjectionRetry> pendentes = retryRepository.buscarPendentesComLock();
+        List<ProjectionRetry> pendentes = retryRepository.buscarPendentes();
 
         if (pendentes.isEmpty()) return;
 
@@ -33,17 +40,30 @@ public class ProjectionRetryScheduler {
             try {
                 LancamentoRegistradoEvent event = objectMapper.readValue(retry.getPayload(), LancamentoRegistradoEvent.class);
 
-                projectionListener.processarComIdempotencia(event);
+                projectionListener.projetar(event);
 
-                retryRepository.delete(retry);
                 log.info("✅ Retry CQRS bem sucedido para Lançamento ID: {}", event.lancamentoId());
 
             } catch (Exception e) {
-                retry.registrarFalha(e.getMessage());
-                retryRepository.save(retry);
-                log.warn("⚠️ Retry CQRS falhou novamente para Lançamento ID: {}. Tentativa {}",
-                        retry.getLancamentoId(), retry.getTentativas());
+                registrarFalha(retry, e);
             }
+        }
+    }
+
+    private void registrarFalha(ProjectionRetry retry, Exception causa) {
+        try {
+            int tentativasAnteriores = retry.getTentativas();
+            LocalDateTime execucaoAnterior = retry.getProximaExecucao();
+            retry.registrarFalha(causa.getMessage() != null ? causa.getMessage() : causa.getClass().getName());
+            int atualizados = retryRepository.registrarFalhaSeAtual(retry.getId(), tentativasAnteriores,
+                    execucaoAnterior, retry.getErro(), retry.getStatus(), retry.getProximaExecucao());
+            if (atualizados == 1) {
+                log.warn("⚠️ Retry CQRS falhou novamente para Lançamento ID: {}. Tentativa {}",
+                        retry.getLancamentoId(), retry.getTentativas(), causa);
+            }
+        } catch (Exception ex) {
+            log.warn("⚠️ Não foi possível registrar a falha da pendência do Lançamento ID: {} (possivelmente quitada concorrentemente).",
+                    retry.getLancamentoId(), ex);
         }
     }
 }

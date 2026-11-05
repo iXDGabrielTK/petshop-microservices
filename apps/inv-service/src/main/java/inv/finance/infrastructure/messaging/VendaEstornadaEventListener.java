@@ -22,6 +22,8 @@ import java.util.Optional;
  * Consumidor AMQP de estorno contábil no Bounded Context de Finance.
  * Garante idempotência estrita via chave determinística uuidReferenciaEstorno e
  * emite LancamentoRegistradoEvent para alimentar as projeções financeiras CQRS.
+ * A pendência de projeção é persistida na mesma transação do lançamento, permitindo a retomada automática
+ * pelo ProjectionRetryScheduler caso a execução assíncrona pós-commit se perca.
  */
 @Slf4j
 @Component
@@ -31,6 +33,7 @@ public class VendaEstornadaEventListener {
     private final LancamentoFinanceiroRepository lancamentoRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final RegistroPendenciaProjecao registroPendencia;
 
     @Transactional
     @RabbitListener(queues = RabbitMQConfig.QUEUE_VENDA_ESTORNADA)
@@ -97,12 +100,14 @@ public class VendaEstornadaEventListener {
         );
 
         if (idOpt.isPresent()) {
-            eventPublisher.publishEvent(new LancamentoRegistradoEvent(
+            LancamentoRegistradoEvent lancamentoRegistrado = new LancamentoRegistradoEvent(
                     idOpt.get(),
                     event.vendaId(),
                     valorEstornoNegativo,
                     TipoLancamento.ESTORNO
-            ));
+            );
+            registroPendencia.registrarNaTransacaoDoLedger(lancamentoRegistrado);
+            eventPublisher.publishEvent(lancamentoRegistrado);
             log.info("Lançamento de estorno {} gerado com sucesso para venda {} com valor {}",
                     idOpt.get(), event.vendaId(), valorEstornoNegativo);
         } else {

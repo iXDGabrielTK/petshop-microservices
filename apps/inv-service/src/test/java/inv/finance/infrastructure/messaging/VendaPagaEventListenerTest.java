@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -29,11 +30,14 @@ class VendaPagaEventListenerTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private RegistroPendenciaProjecao registroPendencia;
+
     private VendaPagaEventListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new VendaPagaEventListener(lancamentoRepository, eventPublisher);
+        listener = new VendaPagaEventListener(lancamentoRepository, eventPublisher, registroPendencia);
     }
 
     @Test
@@ -60,6 +64,11 @@ class VendaPagaEventListenerTest {
         assertThat(publicado.vendaId()).isEqualTo(vendaId);
         assertThat(publicado.valorAssinado()).isEqualByComparingTo("100.00");
         assertThat(publicado.tipo()).isEqualTo(TipoLancamento.CREDITO);
+
+        // Pendência de projeção persistida na transação do ledger, antes da publicação do evento
+        InOrder ordem = inOrder(registroPendencia, eventPublisher);
+        ordem.verify(registroPendencia).registrarNaTransacaoDoLedger(publicado);
+        ordem.verify(eventPublisher).publishEvent(publicado);
     }
 
     @Test
@@ -77,6 +86,7 @@ class VendaPagaEventListenerTest {
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository, never()).inserirIdempotente(any(), any(), any(), any());
         verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(registroPendencia);
     }
 
     @Test
@@ -96,6 +106,7 @@ class VendaPagaEventListenerTest {
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.CREDITO.name(), valor);
         verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(registroPendencia);
     }
 
     @Test
@@ -147,6 +158,6 @@ class VendaPagaEventListenerTest {
         listener.onVendaPaga(new VendaPagaEvent(null, UUID.randomUUID(), new BigDecimal("10.00")));
         listener.onVendaPaga(new VendaPagaEvent(10L, null, new BigDecimal("10.00")));
 
-        verifyNoInteractions(lancamentoRepository, eventPublisher);
+        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
     }
 }

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
@@ -34,6 +35,9 @@ class VendaEstornadaEventListenerTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private RegistroPendenciaProjecao registroPendencia;
+
     private ObjectMapper objectMapper;
 
     private VendaEstornadaEventListener listener;
@@ -41,7 +45,7 @@ class VendaEstornadaEventListenerTest {
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        listener = new VendaEstornadaEventListener(lancamentoRepository, eventPublisher, objectMapper);
+        listener = new VendaEstornadaEventListener(lancamentoRepository, eventPublisher, objectMapper, registroPendencia);
     }
 
     @Test
@@ -69,6 +73,11 @@ class VendaEstornadaEventListenerTest {
         assertThat(publicado.vendaId()).isEqualTo(vendaId);
         assertThat(publicado.valorAssinado()).isEqualByComparingTo(valorEstornoNegativo);
         assertThat(publicado.tipo()).isEqualTo(TipoLancamento.ESTORNO);
+
+        // Pendência de projeção persistida na transação do ledger, antes da publicação do evento
+        InOrder ordem = inOrder(registroPendencia, eventPublisher);
+        ordem.verify(registroPendencia).registrarNaTransacaoDoLedger(publicado);
+        ordem.verify(eventPublisher).publishEvent(publicado);
     }
 
     @Test
@@ -108,6 +117,7 @@ class VendaEstornadaEventListenerTest {
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository, never()).inserirIdempotente(any(), any(), any(), any());
         verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(registroPendencia);
     }
 
     @Test
@@ -128,6 +138,7 @@ class VendaEstornadaEventListenerTest {
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo);
         verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(registroPendencia);
     }
 
     @Test
@@ -158,7 +169,7 @@ class VendaEstornadaEventListenerTest {
         assertThatThrownBy(() -> listener.handleVendaEstornada(jsonInvalido))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class);
 
-        verifyNoInteractions(lancamentoRepository, eventPublisher);
+        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
     }
 
     @Test
@@ -189,7 +200,7 @@ class VendaEstornadaEventListenerTest {
         assertThatThrownBy(() -> listener.handleVendaEstornada(bytesInvalidos))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class);
 
-        verifyNoInteractions(lancamentoRepository, eventPublisher);
+        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
     }
 
     @Test
@@ -221,7 +232,7 @@ class VendaEstornadaEventListenerTest {
         assertThatThrownBy(() -> listener.handleVendaEstornada(amqpMessage))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class);
 
-        verifyNoInteractions(lancamentoRepository, eventPublisher);
+        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
     }
 
     @Test
@@ -232,6 +243,6 @@ class VendaEstornadaEventListenerTest {
         listener.handleVendaEstornada(new VendaEstornadaEvent(10L, null, new BigDecimal("10.00")));
         listener.handleVendaEstornada(new VendaEstornadaEvent(10L, UUID.randomUUID(), null));
 
-        verifyNoInteractions(lancamentoRepository, eventPublisher);
+        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
     }
 }
