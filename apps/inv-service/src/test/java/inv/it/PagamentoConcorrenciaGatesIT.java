@@ -33,6 +33,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -180,6 +183,16 @@ class PagamentoConcorrenciaGatesIT {
     @Test
     @DisplayName("Gate 1 (Invariante 5.1) — Rajada simultânea de webhooks para o mesmo pagamento gera 1 contabilização, 1 lançamento e descarta demais com ACK")
     void gate1_rajadaSimultaneaWebhooksMesmoPagamentoDeveContabilizarUmaUnicaVezEDescartarComAck() throws Exception {
+        validarRajadaWebhook(MetodoPagamento.PIX, false);
+    }
+
+    @ParameterizedTest
+    @EnumSource(MetodoPagamento.class)
+    void webhooksComParesDistintosDevemPreservarUmaUnicaConfirmacao(MetodoPagamento metodo) throws Exception {
+        validarRajadaWebhook(metodo, true);
+    }
+
+    private void validarRajadaWebhook(MetodoPagamento metodo, boolean paresDistintos) throws Exception {
         Produto prod = salvarProduto("7893000100010", "Produto Gate 1 Burst",
                 new BigDecimal("50.00"), new BigDecimal("20.000"), new BigDecimal("2.000"));
 
@@ -191,7 +204,7 @@ class PagamentoConcorrenciaGatesIT {
 
         UUID uuidPagamento = UUID.randomUUID();
         Long pagamentoId = pagamentoService.criarIntencaoPagamento(
-                vendaId, MetodoPagamento.PIX, valorTotal, uuidPagamento);
+                vendaId, metodo, valorTotal, uuidPagamento);
 
         int totalThreads = 10;
         long deadlocksInicio = obterDeadlocksServidor();
@@ -203,10 +216,12 @@ class PagamentoConcorrenciaGatesIT {
 
         try (ExecutorService pool = Executors.newFixedThreadPool(totalThreads)) {
             for (int i = 0; i < totalThreads; i++) {
+                BigDecimal valorChamada = paresDistintos ? valorTotal.add(BigDecimal.valueOf(i)) : valorTotal;
+                String nsuChamada = "NSU-GATE1-" + (paresDistintos ? i : "BURST");
                 pool.submit(() -> {
                     try {
                         barreiraWebhook.await(10, TimeUnit.SECONDS);
-                        pagamentoService.confirmarPagamentoWebhook(pagamentoId, valorTotal, "NSU-GATE1-BURST");
+                        pagamentoService.confirmarPagamentoWebhook(pagamentoId, valorChamada, nsuChamada);
                     } catch (Throwable t) {
                         errosWebhook.add(t);
                     }
@@ -220,14 +235,31 @@ class PagamentoConcorrenciaGatesIT {
         Long outboxAposRajadaWebhook = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'",
                 Long.class);
-        assertThat(outboxAposRajadaWebhook).isNotNull().isBetween(1L, (long) totalThreads);
+        assertThat(outboxAposRajadaWebhook).isEqualTo(1L);
+
+        Pagamento vencedor = pagamentoRepository.findById(pagamentoId).orElseThrow();
+        BigDecimal valorVencedor = vencedor.getValorRecebido();
+        String nsuVencedor = vencedor.getNsuTransacao();
+        assertThat(vencedor.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
+        if (paresDistintos) {
+            int indiceVencedor = Integer.parseInt(nsuVencedor.substring("NSU-GATE1-".length()));
+            assertThat(indiceVencedor).isBetween(0, totalThreads - 1);
+            assertThat(valorVencedor).isEqualByComparingTo(valorTotal.add(BigDecimal.valueOf(indiceVencedor)));
+        } else {
+            assertThat(valorVencedor).isEqualByComparingTo(valorTotal);
+            assertThat(nsuVencedor).isEqualTo("NSU-GATE1-BURST");
+        }
 
         // Chamada subsequente pós-commit na Camada 1 é no-op (confirmar() == false -> 0 novos eventos no Outbox)
-        pagamentoService.confirmarPagamentoWebhook(pagamentoId, valorTotal, "NSU-GATE1-BURST");
+        pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("999.00"), "NSU-REENTREGA");
         Long outboxAposDuplicataSequencial = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'",
                 Long.class);
         assertThat(outboxAposDuplicataSequencial).isEqualTo(outboxAposRajadaWebhook);
+        Pagamento aposReentrega = pagamentoRepository.findById(pagamentoId).orElseThrow();
+        assertThat(aposReentrega.getValorRecebido()).isEqualByComparingTo(valorVencedor);
+        assertThat(aposReentrega.getNsuTransacao()).isEqualTo(nsuVencedor);
+        assertThat(aposReentrega.getDataHoraPagamento()).isEqualTo(vencedor.getDataHoraPagamento());
 
         // 2. Rajada concorrente em handlePagamentoConfirmado para o mesmo pagamentoId (Camada 2 + Camadas 3 a 5)
         String payload = "{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pagamentoId + "}";
@@ -260,14 +292,16 @@ class PagamentoConcorrenciaGatesIT {
         // Exatamente 1 contabilização na Venda
         Venda vendaFim = vendaRepository.findById(vendaId).orElseThrow();
         assertThat(vendaFim.getStatus()).isEqualTo(StatusVenda.CONCLUIDA);
-        assertThat(vendaFim.getValorPago()).isEqualByComparingTo("100.00");
-        assertThat(vendaFim.getValorTroco()).isEqualByComparingTo("0.00");
+        assertThat(vendaFim.getValorPago()).isEqualByComparingTo(valorVencedor);
+        assertThat(vendaFim.getValorTroco()).isEqualByComparingTo(valorVencedor.subtract(valorTotal));
 
         // Pagamento contabilizado e NÃO marcado como excedente
         Pagamento pagFim = pagamentoRepository.findById(pagamentoId).orElseThrow();
         assertThat(pagFim.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
         assertThat(pagFim.isContabilizado()).isTrue();
         assertThat(pagFim.isExcedente()).isFalse();
+        assertThat(pagFim.getValorRecebido()).isEqualByComparingTo(valorVencedor);
+        assertThat(pagFim.getNsuTransacao()).isEqualTo(nsuVencedor);
 
         double metricExcedenteDepois = meterRegistry.counter(VendaEventHandler.METRICA_PAGAMENTO_EXCEDENTE).count();
         assertThat(metricExcedenteDepois - metricExcedenteAntes).isZero();
@@ -301,6 +335,127 @@ class PagamentoConcorrenciaGatesIT {
                     BigDecimal.class, vendaId);
             assertThat(saldo).isNotNull().isEqualByComparingTo("100.00");
         });
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void confirmacaoEFalhaConcorrentesDevemRespeitarPrimeiraTransicao(boolean confirmacaoPrimeiro) throws Exception {
+        Produto produto = salvarProduto("7893000500010", "Corrida confirmação e falha",
+                new BigDecimal("100.00"), new BigDecimal("10.000"), BigDecimal.ONE);
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(new ItemVendaRequest(produto.getId(), BigDecimal.ONE))));
+        Long pagamentoId = pagamentoService.criarIntencaoPagamento(venda.getId(), MetodoPagamento.CARTAO_CREDITO,
+                new BigDecimal("100.00"), UUID.randomUUID());
+        Runnable confirmar = () -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("110.00"), "NSU-VENCEDOR");
+        Runnable falhar = () -> pagamentoService.falharPagamentoWebhook(pagamentoId);
+
+        executarComPagamentoRetido(confirmacaoPrimeiro ? confirmar : falhar,
+                () -> assertThatThrownBy(() -> (confirmacaoPrimeiro ? falhar : confirmar).run())
+                        .isInstanceOf(BusinessException.class));
+
+        Pagamento pagamento = pagamentoRepository.findById(pagamentoId).orElseThrow();
+        assertThat(pagamento.getStatus()).isEqualTo(confirmacaoPrimeiro ? StatusPagamento.CONFIRMADO : StatusPagamento.FALHOU);
+        assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(confirmacaoPrimeiro ? "110.00" : "0.00");
+        assertThat(pagamento.getNsuTransacao()).isEqualTo(confirmacaoPrimeiro ? "NSU-VENCEDOR" : null);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'", Long.class))
+                .isEqualTo(confirmacaoPrimeiro ? 1L : 0L);
+    }
+
+    @Test
+    void falhaNaOutboxDeveReverterConfirmacaoELiberarNovaTentativa() {
+        Produto produto = salvarProduto("7893000600010", "Rollback da confirmação",
+                new BigDecimal("100.00"), new BigDecimal("10.000"), BigDecimal.ONE);
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(new ItemVendaRequest(produto.getId(), BigDecimal.ONE))));
+        Long pagamentoId = pagamentoService.criarIntencaoPagamento(venda.getId(), MetodoPagamento.PIX,
+                new BigDecimal("100.00"), UUID.randomUUID());
+        jdbcTemplate.execute("ALTER TABLE outbox ADD CONSTRAINT teste_rejeitar_confirmacao CHECK (event_type NOT LIKE '%PagamentoConfirmadoEvent')");
+        try {
+            assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("110.00"), "NSU-ROLLBACK"))
+                    .isInstanceOf(RuntimeException.class);
+            Pagamento pagamento = pagamentoRepository.findById(pagamentoId).orElseThrow();
+            assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.PENDENTE);
+            assertThat(pagamento.getValorRecebido()).isEqualByComparingTo("0.00");
+            assertThat(pagamento.getNsuTransacao()).isNull();
+            assertThat(pagamento.getDataHoraPagamento()).isNull();
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'", Long.class)).isZero();
+        } finally {
+            jdbcTemplate.execute("ALTER TABLE outbox DROP CONSTRAINT teste_rejeitar_confirmacao");
+        }
+        pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("120.00"), "NSU-RETRY");
+        Pagamento pagamento = pagamentoRepository.findById(pagamentoId).orElseThrow();
+        assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.CONFIRMADO);
+        assertThat(pagamento.getValorRecebido()).isEqualByComparingTo("120.00");
+        assertThat(pagamento.getNsuTransacao()).isEqualTo("NSU-RETRY");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'", Long.class)).isEqualTo(1L);
+    }
+
+    @Test
+    void reentregaWebhookConcorrenteComCancelamentoNaoDeveRestaurarPagamentoEstornado() throws Exception {
+        Produto produto = salvarProduto("7893000700010", "Webhook e cancelamento",
+                new BigDecimal("100.00"), new BigDecimal("10.000"), BigDecimal.ONE);
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(new ItemVendaRequest(produto.getId(), BigDecimal.ONE))));
+        Long pagamentoId = pagamentoService.criarIntencaoPagamento(venda.getId(), MetodoPagamento.PIX,
+                new BigDecimal("100.00"), UUID.randomUUID());
+        pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-ORIGINAL");
+        String payload = "{\"vendaId\":" + venda.getId() + ",\"pagamentoId\":" + pagamentoId + "}";
+        vendaEventHandler.handlePagamentoConfirmado(payload);
+
+        executarComPagamentoRetido(
+                () -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("999.00"), "NSU-IGNORADO"),
+                () -> vendaService.cancelarVendaConcluida(venda.getId()));
+
+        assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("999.00"), "NSU-IGNORADO"))
+                .isInstanceOf(BusinessException.class);
+        vendaEventHandler.handlePagamentoConfirmado(payload);
+        Pagamento pagamento = pagamentoRepository.findById(pagamentoId).orElseThrow();
+        assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
+        assertThat(pagamento.isContabilizado()).isTrue();
+        assertThat(pagamento.getValorRecebido()).isEqualByComparingTo("100.00");
+        assertThat(pagamento.getNsuTransacao()).isEqualTo("NSU-ORIGINAL");
+        Venda cancelada = vendaRepository.findById(venda.getId()).orElseThrow();
+        assertThat(cancelada.getStatus()).isEqualTo(StatusVenda.CANCELADA);
+        assertThat(cancelada.getValorPago()).isEqualByComparingTo("100.00");
+        assertThat(cancelada.getValorTroco()).isEqualByComparingTo("0.00");
+        Produto devolvido = produtoRepository.findById(produto.getId()).orElseThrow();
+        assertThat(devolvido.getEstoqueDisponivel()).isEqualByComparingTo("10.000");
+        assertThat(devolvido.getEstoqueReservado()).isEqualByComparingTo("0.000");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM movimentacoes_estoque WHERE venda_id = ? AND tipo = 'DEVOLUCAO'", Long.class, venda.getId())).isEqualTo(1L);
+        assertThat(lancamentoRepository.count()).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'", Long.class)).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%VendaEstornadaEvent'", Long.class)).isEqualTo(1L);
+    }
+
+    private void executarComPagamentoRetido(Runnable primeira, Runnable concorrente) throws Exception {
+        long deadlocksInicio = obterDeadlocksServidor();
+        CountDownLatch lockAdquirido = new CountDownLatch(1);
+        Queue<Throwable> erros = new ConcurrentLinkedQueue<>();
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            pool.submit(() -> {
+                try {
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                        primeira.run();
+                        lockAdquirido.countDown();
+                        await().atMost(5, TimeUnit.SECONDS).until(() -> jdbcTemplate.queryForObject(
+                                "SELECT COUNT(*) FROM pg_locks WHERE NOT granted", Integer.class) > 0);
+                    });
+                } catch (Throwable t) {
+                    erros.add(t);
+                } finally {
+                    lockAdquirido.countDown();
+                }
+            });
+            pool.submit(() -> {
+                try {
+                    assertThat(lockAdquirido.await(5, TimeUnit.SECONDS)).isTrue();
+                    concorrente.run();
+                } catch (Throwable t) {
+                    erros.add(t);
+                }
+            });
+            pool.shutdown();
+            assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
+        }
+        assertThat(erros).isEmpty();
+        assertThat(obterDeadlocksServidor() - deadlocksInicio).isZero();
     }
 
     @Test

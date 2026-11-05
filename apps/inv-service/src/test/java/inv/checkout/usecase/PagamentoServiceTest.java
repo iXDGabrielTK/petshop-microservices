@@ -60,7 +60,7 @@ class PagamentoServiceTest {
             String nsu = "NSU-123456";
 
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PROCESSANDO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             // ACT 1 — Primeira entrega de webhook: processamento normal
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
@@ -98,7 +98,7 @@ class PagamentoServiceTest {
             String nsu = "PIX-E2E-123";
 
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.PIX, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             // ACT 1 — Primeira entrega de webhook: confirmação normal
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
@@ -134,7 +134,7 @@ class PagamentoServiceTest {
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.CONFIRMADO);
             ReflectionTestUtils.setField(pagamento, "valorRecebido", valorInicial);
             ReflectionTestUtils.setField(pagamento, "nsuTransacao", nsuInicial);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             // ACT
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("999.00"), "NSU-NOVO-IGNORADO");
@@ -158,7 +158,7 @@ class PagamentoServiceTest {
             String nsu = "NSU-CREDITO-01";
 
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PROCESSANDO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
 
@@ -180,7 +180,7 @@ class PagamentoServiceTest {
             String nsu = "NSU-DEBITO-01";
 
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_DEBITO, StatusPagamento.PROCESSANDO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
 
@@ -197,7 +197,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoMetodoExigeProcessamentoEStatusPendente() {
             Long pagamentoId = 50L;
             Pagamento pagamento = criarPagamento(pagamentoId, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-01"))
                     .isInstanceOf(BusinessException.class)
@@ -212,7 +212,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoMetodoExigeProcessamentoEStatusFalhou() {
             Long pagamentoId = 50L;
             Pagamento pagamento = criarPagamento(pagamentoId, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.FALHOU);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-01"))
                     .isInstanceOf(BusinessException.class)
@@ -227,7 +227,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoMetodoExigeProcessamentoEStatusEstornado() {
             Long pagamentoId = 50L;
             Pagamento pagamento = criarPagamento(pagamentoId, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.ESTORNADO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-01"))
                     .isInstanceOf(BusinessException.class)
@@ -242,7 +242,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoCartaoDebitoEStatusPendente() {
             Long pagamentoId = 52L;
             Pagamento pagamento = criarPagamento(pagamentoId, 12L, MetodoPagamento.CARTAO_DEBITO, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("60.00"), "NSU-02"))
                     .isInstanceOf(BusinessException.class)
@@ -257,7 +257,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoCartaoDebitoEStatusFalhou() {
             Long pagamentoId = 52L;
             Pagamento pagamento = criarPagamento(pagamentoId, 12L, MetodoPagamento.CARTAO_DEBITO, StatusPagamento.FALHOU);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("60.00"), "NSU-02"))
                     .isInstanceOf(BusinessException.class)
@@ -272,7 +272,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoCartaoDebitoEStatusEstornado() {
             Long pagamentoId = 52L;
             Pagamento pagamento = criarPagamento(pagamentoId, 12L, MetodoPagamento.CARTAO_DEBITO, StatusPagamento.ESTORNADO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("60.00"), "NSU-02"))
                     .isInstanceOf(BusinessException.class)
@@ -291,7 +291,7 @@ class PagamentoServiceTest {
             String nsu = "PIX-E2E-123";
 
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.PIX, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
 
@@ -312,7 +312,7 @@ class PagamentoServiceTest {
             String nsu = "DINHEIRO-CAIXA";
 
             Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.DINHEIRO, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
 
@@ -329,7 +329,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoPixEmStatusFalhou() {
             Long pagamentoId = 62L;
             Pagamento pagamento = criarPagamento(pagamentoId, 22L, MetodoPagamento.PIX, StatusPagamento.FALHOU);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("75.00"), "PIX-FALHOU-01"))
                     .isInstanceOf(BusinessException.class)
@@ -344,7 +344,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoPixEmStatusEstornado() {
             Long pagamentoId = 63L;
             Pagamento pagamento = criarPagamento(pagamentoId, 23L, MetodoPagamento.PIX, StatusPagamento.ESTORNADO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("85.00"), "PIX-ESTORNADO-01"))
                     .isInstanceOf(BusinessException.class)
@@ -359,7 +359,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoDinheiroEmStatusFalhou() {
             Long pagamentoId = 64L;
             Pagamento pagamento = criarPagamento(pagamentoId, 24L, MetodoPagamento.DINHEIRO, StatusPagamento.FALHOU);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("90.00"), "DINHEIRO-FALHOU"))
                     .isInstanceOf(BusinessException.class)
@@ -374,7 +374,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionQuandoDinheiroEmStatusEstornado() {
             Long pagamentoId = 65L;
             Pagamento pagamento = criarPagamento(pagamentoId, 25L, MetodoPagamento.DINHEIRO, StatusPagamento.ESTORNADO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("95.00"), "DINHEIRO-ESTORNADO"))
                     .isInstanceOf(BusinessException.class)
@@ -387,7 +387,7 @@ class PagamentoServiceTest {
         @Test
         @DisplayName("Cenário 2 — Deve lançar BusinessException quando pagamentoId não for encontrado no repositório")
         void deveLancarBusinessExceptionQuandoPagamentoNaoEncontradoAoConfirmar() {
-            when(pagamentoRepository.findById(999L)).thenReturn(Optional.empty());
+            when(pagamentoRepository.findByIdWithLock(999L)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(999L, new BigDecimal("100.00"), "NSU-999"))
                     .isInstanceOf(BusinessException.class)
@@ -583,7 +583,7 @@ class PagamentoServiceTest {
         @DisplayName("Deve marcar como FALHOU quando status for PROCESSANDO")
         void deveFalharPagamentoComSucessoQuandoStatusForProcessando() {
             Pagamento pagamento = criarPagamento(50L, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PROCESSANDO);
-            when(pagamentoRepository.findById(50L)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(50L)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.falharPagamentoWebhook(50L);
 
@@ -595,7 +595,7 @@ class PagamentoServiceTest {
         @DisplayName("Deve lançar BusinessException ao tentar falhar pagamento que não está em PROCESSANDO")
         void deveLancarBusinessExceptionAoFalharQuandoStatusNaoForProcessando() {
             Pagamento pagamento = criarPagamento(50L, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(50L)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(50L)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.falharPagamentoWebhook(50L))
                     .isInstanceOf(BusinessException.class)
@@ -609,7 +609,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionAoTentarFalharNovamentePagamentoJaFalhado() {
             Long pagamentoId = 55L;
             Pagamento pagamento = criarPagamento(pagamentoId, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PROCESSANDO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             // Primeira chamada: transita com sucesso PROCESSANDO -> FALHOU
             pagamentoService.falharPagamentoWebhook(pagamentoId);
@@ -629,7 +629,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionAoTentarFalharPagamentoJaConfirmado() {
             Long pagamentoId = 56L;
             Pagamento pagamento = criarPagamento(pagamentoId, 10L, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.CONFIRMADO);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.falharPagamentoWebhook(pagamentoId))
                     .isInstanceOf(BusinessException.class)
@@ -643,7 +643,7 @@ class PagamentoServiceTest {
         void deveLancarBusinessExceptionAoTentarFalharPagamentoPixQueNaoExigeProcessamento() {
             Long pagamentoId = 57L;
             Pagamento pagamento = criarPagamento(pagamentoId, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE);
-            when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             assertThatThrownBy(() -> pagamentoService.falharPagamentoWebhook(pagamentoId))
                     .isInstanceOf(BusinessException.class)
@@ -655,7 +655,7 @@ class PagamentoServiceTest {
         @Test
         @DisplayName("Deve lançar BusinessException ao tentar falhar pagamento inexistente")
         void deveLancarBusinessExceptionQuandoPagamentoNaoEncontradoAoFalhar() {
-            when(pagamentoRepository.findById(999L)).thenReturn(Optional.empty());
+            when(pagamentoRepository.findByIdWithLock(999L)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> pagamentoService.falharPagamentoWebhook(999L))
                     .isInstanceOf(BusinessException.class)

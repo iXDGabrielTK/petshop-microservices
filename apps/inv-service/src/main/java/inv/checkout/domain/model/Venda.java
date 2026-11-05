@@ -78,7 +78,12 @@ public class Venda {
             throw new BusinessException("A venda não aceita pagamentos no status: " + this.status);
         }
 
-        if (pagamento.isContabilizado()) {
+        Pagamento pagamentoCanonico = this.pagamentos.stream()
+                .filter(pagamento::equals)
+                .findFirst()
+                .orElse(pagamento);
+
+        if (pagamentoCanonico.isContabilizado()) {
             return;
         }
 
@@ -86,14 +91,14 @@ public class Venda {
             this.pagamentos.add(pagamento);
         }
 
-        BigDecimal valor = pagamento.getValorRecebido() != null ? pagamento.getValorRecebido() : BigDecimal.ZERO;
+        BigDecimal valor = pagamentoCanonico.getValorRecebido() != null ? pagamentoCanonico.getValorRecebido() : BigDecimal.ZERO;
         this.valorPago = this.valorPago.add(valor);
 
         if (this.valorPago.compareTo(this.valorTotal) >= 0) {
             this.valorTroco = this.valorPago.subtract(this.valorTotal);
         }
 
-        pagamento.marcarComoContabilizado();
+        pagamentoCanonico.marcarComoContabilizado();
     }
 
     public void concluir() {

@@ -16,6 +16,49 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class VendaPagamentoDeduplicacaoTest {
 
     @Test
+    void deveIgnorarOutraInstanciaDoMesmoUuidJaContabilizado() {
+        Venda venda = criarVendaAguardandoPagamento(1L, new BigDecimal("100.00"));
+        UUID uuid = UUID.randomUUID();
+        Pagamento canonico = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("120.00"), uuid);
+        canonico.confirmar(new BigDecimal("120.00"), "NSU-ORIGINAL");
+        venda.registrarPagamentoConfirmado(canonico);
+
+        Pagamento duplicata = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("999.00"), uuid);
+        duplicata.confirmar(new BigDecimal("999.00"), "NSU-DUPLICADO");
+        venda.registrarPagamentoConfirmado(duplicata);
+
+        assertThat(venda.getPagamentos()).hasSize(1);
+        assertThat(venda.getPagamentos().getFirst()).isSameAs(canonico);
+        assertThat(venda.getValorPago()).isEqualByComparingTo("120.00");
+        assertThat(venda.getValorTroco()).isEqualByComparingTo("20.00");
+        assertThat(canonico.isContabilizado()).isTrue();
+        assertThat(canonico.getNsuTransacao()).isEqualTo("NSU-ORIGINAL");
+        assertThat(duplicata.isContabilizado()).isFalse();
+    }
+
+    @Test
+    void deveContabilizarInstanciaCanonicaAindaPendenteMesmoSeOutraInstanciaEstiverContabilizada() {
+        Venda venda = criarVendaAguardandoPagamento(1L, new BigDecimal("100.00"));
+        UUID uuid = UUID.randomUUID();
+        Pagamento canonico = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("120.00"), uuid);
+        canonico.confirmar(new BigDecimal("120.00"), "NSU-ORIGINAL");
+        venda.getPagamentos().add(canonico);
+
+        Pagamento duplicata = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("999.00"), uuid);
+        duplicata.confirmar(new BigDecimal("999.00"), "NSU-DUPLICADO");
+        duplicata.marcarComoContabilizado();
+        venda.registrarPagamentoConfirmado(duplicata);
+        venda.registrarPagamentoConfirmado(duplicata);
+
+        assertThat(venda.getPagamentos()).hasSize(1);
+        assertThat(venda.getPagamentos().getFirst()).isSameAs(canonico);
+        assertThat(venda.getValorPago()).isEqualByComparingTo("120.00");
+        assertThat(venda.getValorTroco()).isEqualByComparingTo("20.00");
+        assertThat(canonico.isContabilizado()).isTrue();
+        assertThat(canonico.getNsuTransacao()).isEqualTo("NSU-ORIGINAL");
+    }
+
+    @Test
     @DisplayName("Cenário 1 (E1/F4) — Deduplicação sob @OneToMany: 1ª chamada soma e marca contabilizado, 2ª chamada é no-op, 2º pagamento soma")
     void deveDeduplicarPagamentoRepetidoEProcessarMultiplosPagamentosDistintos() {
         // CONDIÇÃO: Venda com total 100.00 em AGUARDANDO_PAGAMENTO

@@ -61,7 +61,9 @@ public class PagamentoService {
 
     @Transactional
     public void confirmarPagamentoWebhook(Long pagamentoId, BigDecimal valor, String nsu) {
-        Pagamento pagamento = pagamentoRepository.findById(pagamentoId)
+        // Serializa a decisão e mantém o lock até o commit do pagamento e da outbox.
+        // Não adquire lock na venda: consumidor e cancelamento partem da venda.
+        Pagamento pagamento = pagamentoRepository.findByIdWithLock(pagamentoId)
                 .orElseThrow(() -> new BusinessException("Pagamento não encontrado para o ID: " + pagamentoId));
 
         boolean confirmado = pagamento.confirmar(valor, nsu);
@@ -76,7 +78,7 @@ public class PagamentoService {
 
     @Transactional
     public void falharPagamentoWebhook(Long pagamentoId) {
-        Pagamento pagamento = pagamentoRepository.findById(pagamentoId)
+        Pagamento pagamento = pagamentoRepository.findByIdWithLock(pagamentoId)
                 .orElseThrow(() -> new BusinessException("Pagamento não encontrado para o ID: " + pagamentoId));
 
         pagamento.falhar();
