@@ -15,6 +15,32 @@
     <artifactId>petshop-microservices</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
+    <name>petshop-microservices</name>
+    <description>Microsserviços para sistema de Petshop</description>
+    <url>https://github.com/iXDGabrielTK/petshop-microservices</url>
+
+    <licenses>
+        <license>
+            <name>AGPL-3.0-only</name>
+            <url>https://www.gnu.org/licenses/agpl-3.0.html</url>
+            <distribution>repo</distribution>
+            <comments>AGPL-3.0-only</comments>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>iXDGabrielTK</id>
+            <name>Gabriel Tanaka</name>
+            <url>https://github.com/iXDGabrielTK</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/iXDGabrielTK/petshop-microservices.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/iXDGabrielTK/petshop-microservices.git</developerConnection>
+        <url>https://github.com/iXDGabrielTK/petshop-microservices</url>
+    </scm>
 
     <modules>
         <module>apps/common-lib</module>
@@ -78,5 +104,50 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>com.diffplug.spotless</groupId>
+                    <artifactId>spotless-maven-plugin</artifactId>
+                    <version>2.44.3</version>
+                    <configuration>
+                        <lineEndings>UNIX</lineEndings>
+                        <java>
+                            <includes>
+                                <include>src/main/java/**/*.java</include>
+                                <include>src/test/java/**/*.java</include>
+                            </includes>
+                            <licenseHeader>
+                                <content>/*
+ * Copyright (c) 2026 Gabriel Tanaka (https://github.com/iXDGabrielTK)
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Consulte o arquivo LICENSE na raiz do projeto.
+ */</content>
+                            </licenseHeader>
+                            <trimTrailingWhitespace/>
+                            <endWithNewline/>
+                        </java>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>check</goal>
+                            </goals>
+                            <phase>validate</phase>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
 
 </project>

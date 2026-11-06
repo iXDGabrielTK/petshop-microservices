@@ -53,6 +53,9 @@ jobs:
       - name: Validar estrutura dos POMs
         run: mvn validate
 
+      - name: Verificar conformidade de licencas e estilo (Spotless)
+        run: mvn spotless:check
+
   # --------------------------------------------------------
   # ETAPA 2: Testes Unitários e de Integração
   # --------------------------------------------------------
@@ -134,17 +137,44 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=git-
             type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build e Push da Imagem Docker
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./apps/${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64
           push: ${{ github.event_name == 'push' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Validar licencas e metadados OCI
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          EXPECTED_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          FULL_IMAGE=$(printf '%s\n' "$IMAGE_TAGS" | head -n 1)
+          if ! docker image inspect "$FULL_IMAGE" > /dev/null 2>&1; then
+            docker pull "$FULL_IMAGE"
+          fi
+          for file in LICENSE THIRD-PARTY-NOTICES.md; do
+            docker run --rm --entrypoint test "$FULL_IMAGE" -s "/app/licenses/$file"
+            docker run --rm --entrypoint cat "$FULL_IMAGE" "/app/licenses/$file" > "$RUNNER_TEMP/$file"
+            cmp "$file" "$RUNNER_TEMP/$file"
+            python3 -c 'import pathlib,sys; sys.exit(1 if b"\x00" in pathlib.Path(sys.argv[1]).read_bytes() else 0)' "$RUNNER_TEMP/$file"
+          done
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' "$FULL_IMAGE")" = 'AGPL-3.0-only'
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$FULL_IMAGE")" = "$EXPECTED_SOURCE"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$FULL_IMAGE")" = "$EXPECTED_REVISION"
 
   # --------------------------------------------------------
   # ETAPA 5: CD - Implantação Automatizada no Servidor

@@ -8,5 +8,7 @@ target/
 docs/
 infra/
 *.md
+!LICENSE
+!THIRD-PARTY-NOTICES.md
 .env
 .trivyignore

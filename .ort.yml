@@ -1,0 +1,5 @@
+excludes:
+  scopes:
+    - pattern: "test"
+      reason: "TEST_DEPENDENCY_OF"
+      comment: "Dependências de teste não são distribuídas no runtime das imagens Docker."
