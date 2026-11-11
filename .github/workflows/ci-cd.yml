@@ -155,8 +155,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Validar licencas e metadados OCI
+      - name: Validar inventario, licencas e metadados OCI
         env:
+          SERVICE_NAME: ${{ matrix.service }}
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
           EXPECTED_SOURCE: ${{ github.server_url }}/${{ github.repository }}
           EXPECTED_REVISION: ${{ github.sha }}
@@ -172,6 +173,25 @@ jobs:
             cmp "$file" "$RUNNER_TEMP/$file"
             python3 -c 'import pathlib,sys; sys.exit(1 if b"\x00" in pathlib.Path(sys.argv[1]).read_bytes() else 0)' "$RUNNER_TEMP/$file"
           done
+          docker run --rm --entrypoint cat "$FULL_IMAGE" /app/app.jar > "$RUNNER_TEMP/app.jar"
+          python3 - "$SERVICE_NAME" "$RUNNER_TEMP/app.jar" THIRD-PARTY-NOTICES.md <<'PY'
+          import pathlib, re, sys, zipfile
+          svc, jar_path, notices_path = sys.argv[1], sys.argv[2], sys.argv[3]
+          code = {"api-gateway": "G", "auth-service": "A", "inv-service": "I", "mail-service": "M"}[svc]
+          text = pathlib.Path(notices_path).read_text(encoding="utf-8")
+          rows = re.findall(r"^\| `[^:`]+:([^`]+\.jar)` \| `([^`]+)` \| ([^|]+) \| \[fontes\]\(https://[^)]+\) \|$", text, flags=re.M)
+          if not rows:
+              sys.exit("Tabela de inventario nao encontrada em THIRD-PARTY-NOTICES.md")
+          expected = {jar for jar, _lic, imgs in rows if code in [x.strip() for x in imgs.split(",")]}
+          with zipfile.ZipFile(jar_path) as zf:
+              libs = [pathlib.PurePosixPath(p).name for p in zf.namelist() if p.startswith("BOOT-INF/lib/") and p.endswith(".jar")]
+          if "common-lib-1.0-SNAPSHOT.jar" not in libs:
+              sys.exit(f"common-lib ausente em BOOT-INF/lib de {svc}")
+          actual = {j for j in libs if not j.startswith("common-lib-")}
+          missing, extra = sorted(expected - actual), sorted(actual - expected)
+          if missing or extra:
+              sys.exit(f"Divergencia de inventario em {svc} ({code}): ausentes={missing}, nao_declarados={extra}")
+          PY
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' "$FULL_IMAGE")" = 'AGPL-3.0-only'
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$FULL_IMAGE")" = "$EXPECTED_SOURCE"
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$FULL_IMAGE")" = "$EXPECTED_REVISION"
