@@ -2,4 +2,67 @@ excludes:
   scopes:
     - pattern: "test"
       reason: "TEST_DEPENDENCY_OF"
-      comment: "Dependências de teste não são distribuídas no runtime das imagens Docker."
+      comment: "Dependências de teste não são empacotadas nas imagens de runtime."
+
+license_choices:
+  package_license_choices:
+    - package_id: "Maven:com.rabbitmq:amqp-client:5.22.0"
+      license_choices:
+        - given: "Apache-2.0 OR GPL-2.0-only OR MPL-2.0"
+          choice: "Apache-2.0"
+        - given: "Apache-2.0 OR GPL-2.0-only OR MPL-1.1"
+          choice: "Apache-2.0"
+    - package_id: "Maven:org.yaml:snakeyaml:2.3"
+      license_choices:
+        - given: "EPL-1.0 OR LGPL-2.1-or-later OR GPL-2.0-or-later OR Apache-2.0 OR BSD-3-Clause"
+          choice: "Apache-2.0"
+    - package_id: "Maven:jakarta.persistence:jakarta.persistence-api:3.1.0"
+      license_choices:
+        - given: "BSD-3-Clause OR EPL-2.0"
+          choice: "BSD-3-Clause"
+    - package_id: "Maven:jakarta.annotation:jakarta.annotation-api:2.1.1"
+      license_choices:
+        - given: "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
+          choice: "EPL-2.0"
+    - package_id: "Maven:jakarta.transaction:jakarta.transaction-api:2.0.1"
+      license_choices:
+        - given: "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
+          choice: "EPL-2.0"
+    - package_id: "Maven:net.logstash.logback:logstash-logback-encoder:7.4"
+      license_choices:
+        - given: "Apache-2.0 OR MIT"
+          choice: "Apache-2.0"
+    - package_id: "Maven:org.eclipse.angus:jakarta.mail:2.0.5"
+      license_choices:
+        - given: "BSD-3-Clause OR EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
+          choice: "EPL-2.0"
+    - package_id: "Maven:ch.qos.logback:logback-classic:1.5.22"
+      license_choices:
+        - given: "EPL-1.0 OR LGPL-2.1-or-later"
+          choice: "LGPL-2.1-or-later"
+        - given: "EPL-1.0 OR LGPL-2.1-only"
+          choice: "LGPL-2.1-only"
+    - package_id: "Maven:ch.qos.logback:logback-core:1.5.22"
+      license_choices:
+        - given: "EPL-1.0 OR LGPL-2.1-or-later"
+          choice: "LGPL-2.1-or-later"
+        - given: "EPL-1.0 OR LGPL-2.1-only"
+          choice: "LGPL-2.1-only"
+
+package_configurations:
+  - id: "Maven:org.antlr:antlr4-runtime:4.13.0"
+    license_finding_curations:
+      - path: "tool/resources/org/antlr/v4/tool/templates/codegen/TypeScript/TypeScript.stg"
+        start_lines: "2"
+        line_count: 1
+        detected_license: "RPL-1.5"
+        concluded_license: "NONE"
+        reason: "INCORRECT"
+        comment: "Detecção imprecisa (score 65.0) em template do gerador TypeScript upstream (módulo tool), ausente em antlr4-runtime-4.13.0.jar."
+      - path: "tool/src/org/antlr/v4/codegen/target/TypeScriptTarget.java"
+        start_lines: "3"
+        line_count: 1
+        detected_license: "RPL-1.5"
+        concluded_license: "NONE"
+        reason: "INCORRECT"
+        comment: "Detecção imprecisa (score 65.0) no alvo do gerador TypeScript upstream (módulo tool), ausente em antlr4-runtime-4.13.0.jar."
