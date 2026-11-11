@@ -25,8 +25,11 @@ introduz exceção de linking nem uma conclusão jurídica sobre sua combinaçã
 
 ### Imagens usadas como evidência
 
-Os digests abaixo identificam as imagens anteriores à migração, ainda sob MIT,
-e não os digests da imagem-base nem de imagens futuras.
+Os digests abaixo identificam as imagens do GHCR anteriores à migração para
+`AGPL-3.0-only`, nas quais o inventário de `BOOT-INF/lib/` foi originalmente
+reconciliado. Após a migração (`1cca150bbc5a873c53f8b4ec9846b0dbcf0cd77e`), as
+dependências permanecem as mesmas e o pipeline de CI valida a correspondência
+entre `BOOT-INF/lib/` de cada imagem construída e a tabela deste documento.
 
 | Serviço | Digest GHCR |
 | --- | --- |
@@ -48,6 +51,36 @@ este repositório tenha modificado o artefato recebido.
 
 O anexo de avisos reproduz `LICENSE-AspectJ.adoc` e os textos integrais EPL-2.0,
 Apache-1.1 e BSD-3-Clause contidos no JAR, inclusive os avisos de autoria e disclaimers.
+
+## SnakeYAML 2.3 — Base64Coder
+
+O JAR `org.yaml:snakeyaml:2.3` incorpora
+`org/yaml/snakeyaml/external/biz/base64Coder/Base64Coder.class`.
+A declaração Apache-2.0 do pacote não elimina as alternativas próprias desse módulo;
+em `.ort.yml`, a subexpressão de `Base64Coder` adota a opção `Apache-2.0`,
+preservando os avisos de autoria originais abaixo.
+O texto integral da Apache-2.0 consta do anexo de textos consolidados pelo ORT.
+
+Cabeçalho original de `org/yaml/snakeyaml/external/biz/base64Coder/Base64Coder.java`
+no [sources JAR 2.3](https://repo.maven.apache.org/maven2/org/yaml/snakeyaml/2.3/snakeyaml-2.3-sources.jar),
+preservando autoria, alternativas, referências e aviso de ausência de garantias:
+
+```text
+// Copyright 2003-2010 Christian d'Heureuse, Inventec Informatik AG, Zurich, Switzerland
+// www.source-code.biz, www.inventec.ch/chdh
+//
+// This module is multi-licensed and may be used under the terms
+// of any of the following licenses:
+//
+// EPL, Eclipse Public License, V1.0 or later, http://www.eclipse.org/legal
+// LGPL, GNU Lesser General Public License, V2.1 or later, http://www.gnu.org/licenses/lgpl.html
+// GPL, GNU General Public License, V2 or later, http://www.gnu.org/licenses/gpl.html
+// AL, Apache License, V2.0 or later, http://www.apache.org/licenses
+// BSD, BSD License, http://www.opensource.org/licenses/bsd-license.php
+//
+// Please contact the author if you need another license.
+// This module is provided "as is", without warranties of any kind.
+```
 
 ## Bibliotecas LGPL e substituição (relinking)
 
@@ -81,24 +114,32 @@ sources JARs por versão. Os termos LGPL integrais constam do anexo.
 
 ## Runtime e sistema operacional
 
-As imagens usam a família `eclipse-temurin:21-jre-alpine`. O digest efetivamente
-selecionado está em cada Dockerfile e pode ser atualizado pelo Dependabot.
-O OpenJDK é distribuído sob GPL-2.0 com Classpath Exception; consulte também os
-avisos específicos de módulos em `/opt/java/openjdk/legal/` dentro da imagem.
-Pacotes Alpine mantêm licenças próprias; a tabela Java abaixo não é um inventário
-dos pacotes do sistema operacional. `apk info -a` permite inspecionar os pacotes
-da imagem concreta.
+As imagens usam a família `eclipse-temurin:21-jre-alpine` (`linux/amd64`, digest
+fixado em cada Dockerfile: `sha256:ac05c3c42b7c2f1a52c9bd52f01041fa1958231b15ebeae7420429cbc5baf474`).
+O OpenJDK é distribuído sob `GPL-2.0-only WITH Classpath-exception-2.0`; os
+avisos específicos de módulos estão em `/opt/java/openjdk/legal/` dentro da imagem.
+Os 73 pacotes instalados do Alpine Linux (como `musl`, `busybox`, `libcrypto3`,
+`libssl3` e `zlib`) mantêm suas próprias licenças e podem ser inspecionados na
+imagem com `apk info -v` e `apk info -a <pacote>`. A aplicação Java executa como
+processo em espaço de usuário (`appuser`) sobre o runtime da imagem-base:
 
 - [Fontes e releases Temurin 21](https://github.com/adoptium/temurin21-binaries/releases).
 - [Dockerfiles e proveniência das imagens Temurin](https://github.com/adoptium/containers).
 - [Licenças OpenJDK e Classpath Exception](https://openjdk.org/legal/).
-- [Pacotes e fontes Alpine](https://pkgs.alpinelinux.org/packages).
+- [Índice de pacotes Alpine Linux](https://pkgs.alpinelinux.org/packages).
+- [Repositório de fontes Alpine Linux (aports)](https://git.alpinelinux.org/aports/).
 
 ## Inventário de runtime
 
 G = api-gateway; A = auth-service; I = inv-service; M = mail-service.
 Classificadores de plataforma são preservados no nome do JAR. Expressões com `OR`
 representam alternativas declaradas pelo componente, não licenças cumulativas.
+Para componentes multi-licenciados, `.ort.yml` registra as opções adotadas na
+distribuição: `Apache-2.0` (`com.rabbitmq:amqp-client`, `net.logstash.logback:logstash-logback-encoder`
+e `Base64Coder` em `org.yaml:snakeyaml`), `BSD-3-Clause` (`jakarta.persistence:jakarta.persistence-api`),
+`EPL-2.0` (`jakarta.annotation:jakarta.annotation-api`, `jakarta.transaction:jakarta.transaction-api`
+e `org.eclipse.angus:jakarta.mail`) e `LGPL-2.1-or-later` (`ch.qos.logback:logback-classic`
+e `ch.qos.logback:logback-core`).
 
 | Artefato Maven / JAR | Licença declarada ou verificada | Imagens | Fonte |
 | --- | --- | --- | --- |
