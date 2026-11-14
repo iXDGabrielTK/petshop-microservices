@@ -19,9 +19,12 @@ COPY apps/api-gateway/src ./apps/api-gateway/src
 RUN mvn clean package -pl apps/api-gateway -am -DskipTests
 
 # -------- STAGE 2: Runtime --------
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21-jre-alpine@sha256:ac05c3c42b7c2f1a52c9bd52f01041fa1958231b15ebeae7420429cbc5baf474
 
 WORKDIR /app
+
+COPY LICENSE /app/licenses/LICENSE
+COPY THIRD-PARTY-NOTICES.md /app/licenses/THIRD-PARTY-NOTICES.md
 
 # Segurança: não rodar como root
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup

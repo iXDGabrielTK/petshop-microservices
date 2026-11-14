@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Gabriel Tanaka (https://github.com/iXDGabrielTK)
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Consulte o arquivo LICENSE na raiz do projeto.
+ */
 package inv.shared.outbox.repository;
 
 import inv.shared.outbox.model.Outbox;
@@ -12,9 +17,9 @@ public interface OutboxRepository extends JpaRepository<Outbox, Long> {
 
      // Busca 1 item, ordena pelo mais antigo e BLOQUEIA ignorando os que já estão travados
     @Query(value = """
-        SELECT * FROM outbox 
-        ORDER BY created_at ASC 
-        LIMIT 1 
+        SELECT * FROM outbox
+        ORDER BY created_at ASC
+        LIMIT 1
         FOR UPDATE SKIP LOCKED
         """, nativeQuery = true)
     Optional<Outbox> findNextMessageToProcess();

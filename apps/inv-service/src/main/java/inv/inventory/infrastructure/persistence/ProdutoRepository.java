@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Gabriel Tanaka (https://github.com/iXDGabrielTK)
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Consulte o arquivo LICENSE na raiz do projeto.
+ */
 package inv.inventory.infrastructure.persistence;
 
 import inv.inventory.api.ProdutoCheckoutView;
@@ -43,35 +48,35 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
     List<ProdutoMetadadosEstoque> buscarMetadadosEstoque(@Param("ids") Collection<Long> ids);
 
     @Query(value = """
-        UPDATE produtos 
+        UPDATE produtos
         SET estoque_disponivel = estoque_disponivel - :qtd,
             estoque_reservado = estoque_reservado + :qtd
-        WHERE id = :id AND estoque_disponivel >= :qtd 
+        WHERE id = :id AND estoque_disponivel >= :qtd
         RETURNING estoque_disponivel
         """, nativeQuery = true)
     BigDecimal reservarEstoqueAtomo(@Param("id") Long id, @Param("qtd") BigDecimal qtd);
 
     @Query(value = """
-        UPDATE produtos 
-        SET estoque_reservado = estoque_reservado - :qtd 
-        WHERE id = :id AND estoque_reservado >= :qtd 
+        UPDATE produtos
+        SET estoque_reservado = estoque_reservado - :qtd
+        WHERE id = :id AND estoque_reservado >= :qtd
         RETURNING estoque_reservado
         """, nativeQuery = true)
     BigDecimal confirmarBaixaEstoqueAtomo(@Param("id") Long id, @Param("qtd") BigDecimal qtd);
 
     @Query(value = """
-        UPDATE produtos 
+        UPDATE produtos
         SET estoque_reservado = estoque_reservado - :qtd,
             estoque_disponivel = estoque_disponivel + :qtd
-        WHERE id = :id AND estoque_reservado >= :qtd 
+        WHERE id = :id AND estoque_reservado >= :qtd
         RETURNING estoque_disponivel
         """, nativeQuery = true)
     BigDecimal estornarReservaEstoqueAtomo(@Param("id") Long id, @Param("qtd") BigDecimal qtd);
 
     @Query(value = """
-        UPDATE produtos 
-        SET estoque_disponivel = estoque_disponivel + :qtd 
-        WHERE id = :id 
+        UPDATE produtos
+        SET estoque_disponivel = estoque_disponivel + :qtd
+        WHERE id = :id
         RETURNING estoque_disponivel
         """, nativeQuery = true)
     BigDecimal devolverEstoqueAtomo(@Param("id") Long id, @Param("qtd") BigDecimal qtd);

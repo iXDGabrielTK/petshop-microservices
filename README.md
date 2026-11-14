@@ -3,6 +3,7 @@
 ---
 
 ![Java](https://img.shields.io/badge/Java-21-blue?style=flat&logo=openjdk&logoColor=white)
+[![Licença: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue)](LICENSE)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.1-brightgreen?style=flat&logo=springboot&logoColor=white)
 ![OAuth2](https://img.shields.io/badge/Spring_Auth_Server-OAuth2_%7C_OIDC-green?style=flat&logo=springsecurity&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Messaging-orange?style=flat&logo=rabbitmq&logoColor=white)
@@ -182,6 +183,43 @@ Os testes de estresse validam os pontos críticos de concorrência com container
 ```
 
 ---
-
 ## 📄 Licença
-Este projeto está sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
+Copyright (c) 2026 Gabriel Tanaka ([@iXDGabrielTK](https://github.com/iXDGabrielTK)).
+
+Este projeto está sob a licença [GNU Affero General Public License v3](LICENSE) (`AGPL-3.0-only`). Veja o arquivo [LICENSE](LICENSE) para os termos completos.
+
+### ⚖️ Licença e Código-Fonte Correspondente (AGPLv3 Seções 6 e 13)
+
+O código-fonte está disponível em <https://github.com/iXDGabrielTK/petshop-microservices>.
+As imagens publicadas pelo CI identificam a revisão usada no build pelos metadados OCI:
+
+```bash
+docker inspect --format '{{ json .Config.Labels }}' <imagem>
+COMMIT_SHA=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <imagem>)
+echo "https://github.com/iXDGabrielTK/petshop-microservices/tree/${COMMIT_SHA}"
+docker run --rm --entrypoint cat <imagem> /app/licenses/LICENSE
+docker run --rm --entrypoint cat <imagem> /app/licenses/THIRD-PARTY-NOTICES.md
+```
+
+Para reconstruir a revisão correspondente, use Java 21, Maven e Docker:
+
+```bash
+git clone https://github.com/iXDGabrielTK/petshop-microservices.git
+cd petshop-microservices
+git checkout <COMMIT_SHA>
+mvn clean package -DskipTests
+docker build -f apps/inv-service/Dockerfile -t petshop/inv-service:local .
+```
+
+Substitua `inv-service` por `api-gateway`, `auth-service` ou `mail-service` conforme necessário.
+O comando local recompila a revisão; não implica identidade binária entre builds.
+Imagens locais com alterações não commitadas não devem anunciar o SHA anterior como fonte exata.
+
+Ao distribuir imagens, disponibilize também o código-fonte correspondente à revisão efetivamente
+empacotada, incluindo alterações e arquivos de build. Ao operar uma versão modificada pela rede,
+ofereça aos usuários remotos, de forma visível na interface que utilizam, acesso gratuito ao seu
+código-fonte correspondente, conforme a Seção 13. Um link apenas neste README não substitui essa
+oferta na interface de uma implantação modificada.
+
+Os componentes de terceiros mantêm seus próprios termos, descritos em
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

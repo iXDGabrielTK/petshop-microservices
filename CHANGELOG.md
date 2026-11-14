@@ -8,6 +8,10 @@ Os detalhes técnicos de cada mudança ficam em [`docs/`](docs/). Este arquivo r
 
 ## [Unreleased]
 
+### Changed
+- Licença do projeto alterada de MIT para `AGPL-3.0-only`, sem exceções adicionais, a partir desta revisão. O histórico até o commit `d31dee741d54fc21adfcfc3b3c9918ae5b248f83` (PR #54) permanece sob MIT; a mudança não revoga as permissões das versões anteriores.
+- Imagens passam a incluir os termos do projeto e avisos de terceiros, metadados OCI de licença, origem e revisão, e imagem de runtime fixada por digest.
+
 ### 2026-10-30 · PR #46
 
 #### Added

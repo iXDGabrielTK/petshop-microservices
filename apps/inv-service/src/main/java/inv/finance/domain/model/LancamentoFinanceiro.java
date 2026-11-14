@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Gabriel Tanaka (https://github.com/iXDGabrielTK)
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Consulte o arquivo LICENSE na raiz do projeto.
+ */
 package inv.finance.domain.model;
 
 import jakarta.persistence.*;
@@ -36,7 +41,7 @@ public class LancamentoFinanceiro {
 
     @Column(name = "data_hora", insertable = false, updatable = false)
     private LocalDateTime dataHora;
-    
+
     public LancamentoFinanceiro(Long vendaId, UUID referencia, TipoLancamento tipo, BigDecimal valorAbsoluto) {
         this.vendaId = vendaId;
         this.referencia = referencia;
