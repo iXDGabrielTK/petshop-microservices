@@ -143,6 +143,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build e Push da Imagem Docker
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -158,14 +159,20 @@ jobs:
       - name: Validar inventario, licencas e metadados OCI
         env:
           SERVICE_NAME: ${{ matrix.service }}
-          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_NAME: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
           EXPECTED_SOURCE: ${{ github.server_url }}/${{ github.repository }}
           EXPECTED_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
-          FULL_IMAGE=$(printf '%s\n' "$IMAGE_TAGS" | head -n 1)
-          if ! docker image inspect "$FULL_IMAGE" > /dev/null 2>&1; then
-            docker pull "$FULL_IMAGE"
+          # Valida o artefato deste build, sem resolver tags mutaveis como latest.
+          if [ "$GITHUB_EVENT_NAME" = 'push' ]; then
+            FULL_IMAGE="${IMAGE_NAME,,}@${IMAGE_DIGEST:?Digest do build ausente}"
+            docker pull --platform linux/amd64 "$FULL_IMAGE"
+          else
+            FULL_IMAGE="${IMAGE_ID:?ID da imagem local ausente}"
+            docker image inspect "$FULL_IMAGE" > /dev/null
           fi
           for file in LICENSE THIRD-PARTY-NOTICES.md; do
             docker run --rm --entrypoint test "$FULL_IMAGE" -s "/app/licenses/$file"
