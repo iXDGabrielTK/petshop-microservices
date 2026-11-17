@@ -103,13 +103,16 @@ O payload do Access Token carrega os dados de identidade para que os Resource Se
   "name": "Administrador Principal",
   "email": "admin@petshop.com",
   "roles": [
-    "ADMIN",
-    "OPERADOR"
+    "ROLE_ADMIN"
   ],
   "exp": 1724851200,
   "iat": 1724847600
 }
 ```
+
+A claim `roles` do JWT contém autoridades prefixadas (`ROLE_ADMIN` ou `ROLE_USER`). O `inv-service` preserva esse prefixo na conversão e exige `hasRole('ADMIN')` em `/vendas/**` e no cadastro `POST /produtos`: administradores são autorizados; `ROLE_USER` recebe HTTP 403. Tokens ausentes ou inválidos recebem HTTP 401.
+
+O payload de `GET /usuarios/me` expõe os nomes de perfil sem prefixo (`ADMIN` ou `USER`); esses nomes não devem ser confundidos com as autoridades do JWT.
 
 ---
 
@@ -140,7 +143,7 @@ Recupera os dados do usuário autenticado após recarregamento de página (F5) o
     "nome": "Operador Caixa",
     "email": "caixa@petshop.com",
     "roles": [
-      "OPERADOR"
+      "USER"
     ],
     "theme": "DARK"
   }

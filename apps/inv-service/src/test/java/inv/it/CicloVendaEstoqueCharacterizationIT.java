@@ -430,7 +430,7 @@ class CicloVendaEstoqueCharacterizationIT {
 
         // 2. Borda HTTP POST /vendas com quantidade 0 e -1 deve retornar 400 Bad Request sem tocar no banco
         SecurityContextHolder.getContext().setAuthentication(
-                new UsernamePasswordAuthenticationToken("admin", null, List.of(new SimpleGrantedAuthority("ADMIN"))));
+                new UsernamePasswordAuthenticationToken("admin", null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
         try {
             mockMvc.perform(post("/vendas")
                             .contentType(MediaType.APPLICATION_JSON)

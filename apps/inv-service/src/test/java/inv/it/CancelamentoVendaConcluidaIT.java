@@ -152,7 +152,7 @@ class CancelamentoVendaConcluidaIT {
     @BeforeEach
     void setUp() {
         SecurityContextHolder.getContext().setAuthentication(
-                new UsernamePasswordAuthenticationToken("admin", "pass", List.of(new SimpleGrantedAuthority("ADMIN")))
+                new UsernamePasswordAuthenticationToken("admin", "pass", List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
         );
 
         Mockito.reset(outboxRepository);
