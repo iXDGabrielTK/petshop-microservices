@@ -6,6 +6,7 @@
 package inv.checkout.infrastructure.web.dto;
 
 import inv.shared.domain.MetodoPagamento;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
@@ -21,5 +22,13 @@ public record CriarIntencaoPagamentoRequest(
 
         @NotNull(message = "Valor é obrigatório")
         @Positive(message = "Valor deve ser maior que zero")
+        @Digits(integer = 8, fraction = 2, message = "Valor deve ter no máximo 8 dígitos inteiros e 2 casas decimais")
         BigDecimal valor
-) {}
+) {
+    public CriarIntencaoPagamentoRequest {
+        if (valor != null) {
+            BigDecimal normalizado = valor.stripTrailingZeros();
+            valor = normalizado.scale() < 0 ? normalizado.setScale(0) : normalizado;
+        }
+    }
+}
