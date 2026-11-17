@@ -108,3 +108,22 @@ erDiagram
 * 📑 **[ADR-0004: Transactional Outbox Pattern com SKIP LOCKED](../adr/0004-transactional-outbox-with-skip-locked.md)**
 * 📑 **[ADR-0008: Consumidor Idempotente e Evolução de Schemas](../adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)**
 * 📑 **[ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](../adr/0011-synchronous-open-host-service-checkout-inventory.md)**
+
+## Contratos HTTP de catálogo e movimentações
+
+Os GETs de produtos retornam `ProdutoResumoResponse`: `id`, `codigoBarras`, `nome`, `unidadeMedida`, `estoqueDisponivel` e `precoVenda`. A listagem envolve esses itens em `Page`; as consultas por ID e EAN retornam um item. `estoqueMinimo`, `estoqueReservado` e `version` não são expostos. O POST mantém `ProdutoResponse`, incluindo o nome `quantidadeEstoque`.
+
+`GET /movimentacoes` retorna `Page<MovimentacaoResponse>` com itens planos: `id`, `produtoId`, `produtoNome`, `codigoBarras`, `vendaId`, `tipo`, `quantidade`, `dataHora` e `observacao`. `dataHora` usa string ISO-8601 sem fuso (ex.: `2026-11-16T10:00:00`). Não há objeto `produto` aninhado. A projeção JPQL e sua `countQuery` explícita dispensam inicialização de entidades durante a serialização, mantendo `spring.jpa.open-in-view=false`.
+
+| Regra | `/produtos` | `/movimentacoes` |
+| :--- | :--- | :--- |
+| Página padrão / negativa | `0` / normalizada para `0` | `0` / normalizada para `0` |
+| Tamanho padrão / menor que 1 | `10` | `20` |
+| Tamanho acima de 50 | Normalizado para `50` | Normalizado para `50` |
+| Ordenação | Fixa `id ASC`, inclusive na busca por `nome` ou `busca`; ignora `sort` | Padrão `dataHora DESC`; aceita `id`, `dataHora`, `tipo`, `quantidade` |
+| Desempate | `id ASC` | Acrescenta `id ASC` quando `id` não foi solicitado |
+| Ordenação inválida | Não há ordenação dinâmica | Propriedade fora da lista ou `ignorecase` retorna HTTP 400 `ProblemDetail`, título `Regra de Negócio Violada` |
+
+Exemplo: `/movimentacoes?page=0&size=2&sort=dataHora,desc` preserva ordem crescente de ID entre horários iguais e informa `totalElements` e `totalPages`.
+
+Antes do deploy, alinhar com SPA/PDV a retirada dos campos internos de produtos e a adoção das movimentações planas. Após a migração dos clientes, rollback requer coordenação com esses consumidores ou compatibilidade temporária no servidor.
