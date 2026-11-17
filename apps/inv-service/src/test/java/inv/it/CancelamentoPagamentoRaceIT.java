@@ -141,17 +141,17 @@ class CancelamentoPagamentoRaceIT {
         Produto prod = salvarProduto("7892000100010", "Produto Ordem A",
                 new BigDecimal("100.00"), new BigDecimal("10.000"), new BigDecimal("1.000"));
 
-        // 1. Iniciar e concluir venda com pag1
+        // 1. Criar intenções de pagamento (pag1 e pag2 antes da conclusão) e concluir venda com pag1
         Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(item(prod.getId(), "1.000"))));
         Long vendaId = venda.getId();
         Long pag1Id = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID());
+        Long pag2Id = pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pag1Id, new BigDecimal("100.00"), "NSU-ORDEM-A-1");
         vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}");
 
-        // 2. Criar segundo pagamento pag2 confirmado no webhook mas não contabilizado
-        Long pag2Id = pagamentoService.criarIntencaoPagamento(
-                vendaId, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), UUID.randomUUID());
+        // 2. Confirmar segundo pagamento pag2 no webhook sem contabilizar (em trânsito)
         pagamentoService.confirmarPagamentoWebhook(pag2Id, new BigDecimal("100.00"), "NSU-ORDEM-A-2");
 
         outboxRepository.deleteAll();
@@ -300,17 +300,17 @@ class CancelamentoPagamentoRaceIT {
         Produto prod = salvarProduto("7892000100030", "Produto Ordem B2",
                 new BigDecimal("50.00"), new BigDecimal("10.000"), new BigDecimal("1.000"));
 
-        // 1. Iniciar e concluir venda com pag1
+        // 1. Criar intenções de pagamento (pag1 e pag2 antes da conclusão) e concluir venda com pag1
         Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(item(prod.getId(), "1.000"))));
         Long vendaId = venda.getId();
         Long pag1Id = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        Long pag2Id = pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.DINHEIRO, new BigDecimal("50.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pag1Id, new BigDecimal("50.00"), "NSU-ORDEM-B2-1");
         vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}");
 
-        // 2. Criar pag2 confirmado no webhook
-        Long pag2Id = pagamentoService.criarIntencaoPagamento(
-                vendaId, MetodoPagamento.DINHEIRO, new BigDecimal("50.00"), UUID.randomUUID());
+        // 2. Confirmar pag2 no webhook
         pagamentoService.confirmarPagamentoWebhook(pag2Id, new BigDecimal("50.00"), "NSU-ORDEM-B2-2");
 
         outboxRepository.deleteAll();
@@ -394,11 +394,11 @@ class CancelamentoPagamentoRaceIT {
 
             Long pag1Id = pagamentoService.criarIntencaoPagamento(
                     vendaId, MetodoPagamento.PIX, new BigDecimal("10.00"), UUID.randomUUID());
+            Long pag2Id = pagamentoService.criarIntencaoPagamento(
+                    vendaId, MetodoPagamento.DINHEIRO, new BigDecimal("10.00"), UUID.randomUUID());
             pagamentoService.confirmarPagamentoWebhook(pag1Id, new BigDecimal("10.00"), "NSU-LIVRE-1-" + r);
             vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}");
 
-            Long pag2Id = pagamentoService.criarIntencaoPagamento(
-                    vendaId, MetodoPagamento.DINHEIRO, new BigDecimal("10.00"), UUID.randomUUID());
             pagamentoService.confirmarPagamentoWebhook(pag2Id, new BigDecimal("10.00"), "NSU-LIVRE-2-" + r);
 
             CyclicBarrier barreira = new CyclicBarrier(2);
