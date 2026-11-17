@@ -117,6 +117,38 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("handleConflict deve mapear ConflictException para HTTP 409 com ProblemDetail")
+    void deveTratarConflictException() {
+        ConflictException ex = new ConflictException("Venda já concluída");
+        ResponseEntity<ProblemDetail> response = handler.handleConflict(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getStatus()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(response.getBody().getTitle()).isEqualTo("Conflito de Estado");
+        assertThat(response.getBody().getDetail()).isEqualTo("Venda já concluída");
+        assertThat(response.getBody().getType()).hasToString("https://petshop.com/errors/conflict");
+        assertThat(response.getBody().getProperties()).containsKey("timestamp");
+    }
+
+    @Test
+    @DisplayName("ConflictException com causa deve preservar identidade de getCause() e mensagem")
+    void devePreservarCausaEMensagemEmConflictException() {
+        IllegalStateException cause = new IllegalStateException("Estado subjacente inválido");
+        ConflictException ex = new ConflictException("Conflito ao registrar pagamento", cause);
+
+        assertThat(ex.getMessage()).isEqualTo("Conflito ao registrar pagamento");
+        assertThat(ex.getCause()).isSameAs(cause);
+
+        ResponseEntity<ProblemDetail> response = handler.handleConflict(ex);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getDetail()).isEqualTo("Conflito ao registrar pagamento");
+        assertThat(response.getBody().getTitle()).isEqualTo("Conflito de Estado");
+        assertThat(response.getBody().getType()).hasToString("https://petshop.com/errors/conflict");
+    }
+
+    @Test
     @DisplayName("handleMethodArgumentNotValid deve mapear erros de validação de campos para HTTP 400 com mapa de campos")
     void deveTratarMethodArgumentNotValid() throws Exception {
         Object target = new Object();
