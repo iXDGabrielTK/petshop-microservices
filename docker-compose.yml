@@ -169,6 +169,7 @@ services:
       postgres-inv:
         condition: service_healthy
     environment:
+      - FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED=${FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED:-false}
       - DB_HOST=${DB_HOST_INV}
       - DB_PORT=${DB_PORT_INV}
       - DB_NAME=${DB_NAME_INV}

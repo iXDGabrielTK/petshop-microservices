@@ -8,7 +8,7 @@
 
 | PR | Etapa | Runbook | Entregáveis Chave | Status |
 | :---: | :---: | :--- | :--- | :---: |
-| **1** | **E1** | [E1.md](./E1.md) | `hasRole('ADMIN')` em `VendaController`, `VendaSecurityFilterTest` (red → green), `ProdutoSecurityFilterTest`, env var da flag (`false`) e docs (`F1`, `Q1`) | `[ ]` Pendente |
+| **1** | **E1** | [E1.md](./E1.md) | `hasRole('ADMIN')` em `VendaController`, `VendaSecurityFilterTest` (red → green), `ProdutoSecurityFilterTest`, env var da flag (`false`) e docs (`F1`, `Q1`) | `[x]` Concluído |
 | **2** | **E2** | [E2.md](./E2.md) | `MovimentacaoResponse` via JPQL + `countQuery`, `ProdutoResumoResponse` (`estoqueDisponivel`), normalização de `page`/`size`, whitelist de `sort` + HTTP 400 (`F2`, `Q2`) | `[ ]` Pendente |
 | **3** | **E3** | [E3.md](./E3.md) | Protocolo em 6 etapas em `criarIntencaoPagamento`, `ON CONFLICT DO NOTHING RETURNING id`, rejeição de escala `> 2`, `ConflictException` (`409`) em `common-lib` (`F3`, `Q3`) | `[ ]` Pendente |
 | **4** | **E4** | [E4.md](./E4.md) | Devolução estritamente integral (`SAIDA`s vs comando e `DEVOLUCAO`), remoção do `return` antecipado, rollback de lote e avaliação condicional de `V9` (`F4`, `Q4`) | `[ ]` Pendente |
@@ -117,7 +117,7 @@ flowchart LR
 
 ## 5. Definition of Done (DoD) Global
 
-- [ ] **PR 1 (`E1`):** `VendaController` exige `hasRole('ADMIN')`, `VendaSecurityFilterTest` e `ProdutoSecurityFilterTest` provam `200`/`403`/`401` na cadeia real de filtros JWT e `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` parametrizada com default `false`.
+- [x] **PR 1 (`E1`):** `VendaController` exige `hasRole('ADMIN')`, `VendaSecurityFilterTest` e `ProdutoSecurityFilterTest` provam `200`/`403`/`401` na cadeia real de filtros JWT e `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` parametrizada com default `false`.
 - [ ] **PR 2 (`E2`):** `GET /movimentacoes` e `GET /produtos*` retornam `MovimentacaoResponse` e `ProdutoResumoResponse` (`estoqueDisponivel`), sem `LazyInitializationException`, com paginação normalizada e ordenação/whitelist testadas após alinhamento com consumidores.
 - [ ] **PR 3 (`E3`):** `ConflictException` (`409 ProblemDetail`) em `common-lib`; `criarIntencaoPagamento` executa o protocolo de 6 etapas (`ON CONFLICT DO NOTHING RETURNING id`) e rejeita `> 2` casas decimais sem arredondar, provado por testes unitários e `*IT` concorrentes em PostgreSQL.
 - [ ] **PR 4 (`E4`):** `EstoqueService.devolverEstoque` impõe devolução estritamente integral contra `SAIDA`s e valida quantidade em repetição de `DEVOLUCAO`, com avaliação `EXPLAIN (ANALYZE, BUFFERS)` documentada para `V9`.
