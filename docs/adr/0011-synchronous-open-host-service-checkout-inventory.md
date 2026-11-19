@@ -114,13 +114,34 @@ apps/inv-service/src/main/java/inv/
 
 ---
 
-## 7. Referências e Links Relevantes
+## 7. Adendo (Novembro/2026 — DEBT-ARCH-003 e DEBT-ARCH-004): Evolução de `devolverEstoque` Integral (`V8`/`V9`) e Blindamento dos Contratos HTTP de Leitura do Inventory
+
+Após a entrega inicial do Open Host Service no `DEBT-ARCH-002`, a fronteira e os contratos do módulo `inv.inventory` evoluíram em dois ciclos complementares:
+
+### A. Evolução de `EstoqueCommandService` com `devolverEstoque` Estritamente Integral (`DEBT-ARCH-003` E2 + `DEBT-ARCH-004` E4)
+* **4º Comando em Lote (`devolverEstoque`):** [`EstoqueCommandService`](../../apps/inv-service/src/main/java/inv/inventory/api/EstoqueCommandService.java) incorporou `void devolverEstoque(ComandoEstoqueVenda comando)` (`Propagation.MANDATORY`), agregando itens repetidos em `TreeMap<Long, BigDecimal>` na ordem `produtoId ASC` e persistindo `TipoMovimentacao.DEVOLUCAO` antes do `UPDATE` em `produtos` sobre o índice único parcial `uk_movimentacoes_venda_produto_devolucao` (`V8`, sequência Fail-Fast descrita na [ADR-0012](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)).
+* **Auditoria Integral contra `SAIDA`s (`F4`/`Q4`):** Na etapa `E4` do **[DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)**, [`EstoqueService.devolverEstoque`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L100-L140) removeu o retorno antecipado para lista vazia e passou a auditar o comando consolidado contra as movimentações `SAIDA` da `vendaId` via [`MovimentacaoRepository.buscarSaidasPorVenda`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/MovimentacaoRepository.java#L33-L40) (`SaidaPorProduto`): exige igualdade exata dos conjuntos de `produtoId` e `quantidadeTotal.compareTo(totalSaida) == 0`.
+* **Validação de Repetição em `DEVOLUCAO`:** `MovimentacaoRepository.buscarQuantidadeDevolucao` compara qualquer `DEVOLUCAO` preexistente para `(vendaId, produtoId)`: quantidades equivalentes (`compareTo == 0`) resultam em no-op idempotente sem alterar saldo; divergências lançam `BusinessException`, revertendo todo o lote.
+* **Índice Parcial `V9` (`idx_movimentacoes_venda_saida`):** criado via [`V9__indice_movimentacoes_estoque_saida.sql`](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql) (`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_movimentacoes_venda_saida ON movimentacoes_estoque (venda_id) WHERE tipo = 'SAIDA'`, fora de transação). Em avaliação via `EXPLAIN (ANALYZE, BUFFERS)` com 60.000 movimentações, o acesso caiu de `Seq Scan` (561 blocos, 4,264 ms medianos) para `Index Scan using idx_movimentacoes_venda_saida` (3 blocos, 0,096 ms).
+
+### B. Blindamento dos Contratos HTTP de Leitura do Inventory (`DEBT-ARCH-004` E2)
+* **Catálogo (`GET /produtos`, `GET /produtos/{id}`, `GET /produtos/ean/{ean}`):** passaram a retornar [`ProdutoResumoResponse`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/web/dto/ProdutoResumoResponse.java), preservando `estoqueDisponivel` e ocultando campos internos (`estoqueMinimo`, `estoqueReservado`, `version`), com paginação normalizada (`page < 0 -> 0`, `size < 1 -> 10`, teto `50`) e ordenação fixa `id ASC` (`POST /produtos` mantém `ProdutoResponse` e exige `@PreAuthorize("hasRole('ADMIN')")`).
+* **Auditoria (`GET /movimentacoes`):** eliminada a `LazyInitializationException` sob `spring.jpa.open-in-view=false` por meio da projeção JPQL `MovimentacaoRepository.listarResumo` com `countQuery` explícito, retornando `Page<MovimentacaoResponse>` plano (`dataHora` ISO-8601), paginação normalizada (`size` padrão `20`, teto `50`), whitelist de `sort` `{id, dataHora, tipo, quantidade}` (rejeitando campos fora da lista ou `ignorecase` com HTTP 400 `ProblemDetail`) e desempate determinístico `id ASC`.
+* **Validação:** Coberto por [`ProdutoControllerTest`](../../apps/inv-service/src/test/java/inv/inventory/infrastructure/web/controller/ProdutoControllerTest.java), [`MovimentacaoControllerTest`](../../apps/inv-service/src/test/java/inv/inventory/infrastructure/web/controller/MovimentacaoControllerTest.java) e [`InventarioHttpIT`](../../apps/inv-service/src/test/java/inv/inventory/InventarioHttpIT.java), preservando 100% de conformidade com `ArquiteturaTest` (`R1`–`R15`) e `ModulithTest`.
+
+---
+
+## 8. Referências e Links Relevantes
 
 * [Plano Executivo e Runbooks DEBT-ARCH-002](../debt/DEBT-ARCH-002/README.md)
+* [Plano Executivo DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)
 * [Contrato EstoqueCommandService](../../apps/inv-service/src/main/java/inv/inventory/api/EstoqueCommandService.java)
 * [Contrato CatalogoQueryService](../../apps/inv-service/src/main/java/inv/inventory/api/CatalogoQueryService.java)
 * [Implementação EstoqueService](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java)
+* [Migration V9 — Índice Parcial SAIDA](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql)
 * [Suíte ArchUnit ArquiteturaTest](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java)
 * [ADR-0001: Monólito Modular com Bounded Contexts](0001-modular-monolith-bounded-contexts.md)
 * [ADR-0002: Controle Híbrido de Concorrência e Estoque Atômico](0002-atomic-sql-inventory-and-hybrid-locking.md)
 * [ADR-0010: Dashboard como Módulo de Composição de Leitura](0010-dashboard-read-only-composition-module.md)
+* [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)
+* [Documentação do Domínio Inventory](../domains/inventory.md)

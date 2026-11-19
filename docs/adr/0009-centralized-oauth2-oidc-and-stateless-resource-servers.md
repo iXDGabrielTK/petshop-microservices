@@ -43,11 +43,11 @@ Em um ecossistema de microsserviços com múltiplos tipos de clientes (Front-end
 
 Decidimos adotar a **Opção 3: Spring Authorization Server com Assinatura RSA Assimétrica**.
 
-### A. Emissão de Tokens no Auth Service ([`SecurityConfig.java`](../../apps/auth-service/src/main/java/auth/config/SecurityConfig.java#L258-L289))
+### A. Emissão de Tokens no Auth Service ([`SecurityConfig.java`](../../apps/auth-service/src/main/java/auth/config/SecurityConfig.java#L238-L296))
 * Chaves RSA são injetadas via variáveis de ambiente (`JWT_PUBLIC_KEY`, `JWT_PRIVATE_KEY`) ou geradas com fallback seguro em ambiente local de desenvolvimento.
 * Customização de claims inclui `roles`, `user_id`, `name` e `email` diretamente no payload do Access Token.
 
-### B. Validação nos Resource Servers ([`SecurityConfig.java` do inv-service](../../apps/inv-service/src/main/java/inv/shared/config/SecurityConfig.java#L48-L72))
+### B. Validação nos Resource Servers ([`SecurityConfig.java` do inv-service](../../apps/inv-service/src/main/java/inv/shared/config/SecurityConfig.java#L54-L78))
 ```java
 @Bean
 public JwtDecoder jwtDecoder() {
@@ -80,7 +80,7 @@ public JwtDecoder jwtDecoder() {
 ## 6. Estratégia de Validação & Testes
 
 * **Teste de Validação de Token Stateless:**
-  1. Gerar um JWT assinado pelo `auth-service` com a role `ADMIN`.
+  1. Gerar um JWT assinado pelo `auth-service` com a claim `roles: ["ROLE_ADMIN"]`.
   2. Submeter requisição para `POST /vendas` no `inv-service` com o header `Authorization: Bearer <token>`.
   3. Validar se a autenticação é aceita (HTTP 200) e as authorities são extraídas corretamente sem nenhuma comunicação de rede com o `auth-service`.
 * **Teste de Rejeição de Assinatura Forjada:**
@@ -88,9 +88,23 @@ public JwtDecoder jwtDecoder() {
 
 ---
 
-## 7. Referências e Links Relevantes
+## 7. Adendo (Novembro/2026 — DEBT-ARCH-004 / E1): Alinhamento `hasRole('ADMIN')` com a Claim `roles` (`ROLE_*`) e Validação na Cadeia Real de Filtros Security
 
+Durante a execução da etapa **E1** do **[DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)**, foi corrigida uma divergência crítica entre o formato da claim `"roles"` emitida pelo `auth-service` e a expressão de autorização em `VendaController`:
+
+* **Emissão e Conversão Preservando o Prefixo `ROLE_`:** [`UserDetailsServiceImpl`](../../apps/auth-service/src/main/java/auth/security/user/UserDetailsServiceImpl.java) atribui `SimpleGrantedAuthority("ROLE_" + role.getNome())`, gravando `"ROLE_ADMIN"` ou `"ROLE_USER"` na claim `"roles"` do JWT. No `inv-service`, [`SecurityConfig`](../../apps/inv-service/src/main/java/inv/shared/config/SecurityConfig.java#L60-L78) (`@EnableMethodSecurity`) configura `JwtAuthenticationConverter` com `roleConverter.setAuthoritiesClaimName("roles")` e `roleConverter.setAuthorityPrefix("")`, mantendo literalmente `ROLE_ADMIN` / `ROLE_USER` nas `GrantedAuthority` (sem duplicar o prefixo).
+* **Alinhamento para `hasRole('ADMIN')`:** Como o `SecurityExpressionRoot` do Spring Security prefixa `"ROLE_"` em `hasRole(...)` / `hasAnyRole(...)`, o uso anterior de `@PreAuthorize("hasAuthority('ADMIN')")` em [`VendaController`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/controller/VendaController.java) bloqueava administradores legítimos com HTTP 403 em produção (mascarado em `*IT` que rodavam com `addFilters = false` e mock `ADMIN`). `VendaController` foi alinhado para `@PreAuthorize("hasRole('ADMIN')")` (idêntico a [`ProdutoController.criar`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/web/controller/ProdutoController.java)), abrangendo inclusive `POST /vendas/{id}/cancelar`.
+* **Distinção frente a `GET /usuarios/me`:** O endpoint `GET /usuarios/me` no `auth-service` expõe nomes de perfil sem prefixo (`["ADMIN"]`, `["USER"]`) para a interface de usuário; apenas o JWT carrega autoridades prefixadas `ROLE_*`.
+* **Prova na Cadeia Real de Filtros (`springSecurityFilterChain`):** As suítes [`VendaSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/checkout/infrastructure/web/controller/VendaSecurityFilterTest.java), [`ProdutoSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/inventory/infrastructure/web/controller/ProdutoSecurityFilterTest.java) e [`PagamentoSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/checkout/infrastructure/web/controller/PagamentoSecurityFilterTest.java) exercitam a cadeia real de filtros JWT + `GlobalExceptionHandler` + RSA (`RsaKeyUtils`), validando HTTP `200`/`204` para `ROLE_ADMIN`, HTTP `403 ProblemDetail` (`title: "Acesso Negado"`) para `ROLE_USER` e HTTP `401` para tokens ausentes, sem `Bearer`, malformados, expirados ou assinados por chave não confiável.
+
+---
+
+## 8. Referências e Links Relevantes
+
+* [Plano Executivo DEBT-ARCH-004 (E1)](../debt/DEBT-ARCH-004/E1.md)
 * [SecurityConfig do Auth Service](../../apps/auth-service/src/main/java/auth/config/SecurityConfig.java)
 * [SecurityConfig do Inv Service](../../apps/inv-service/src/main/java/inv/shared/config/SecurityConfig.java)
+* [VendaSecurityFilterTest](../../apps/inv-service/src/test/java/inv/checkout/infrastructure/web/controller/VendaSecurityFilterTest.java)
+* [ProdutoSecurityFilterTest](../../apps/inv-service/src/test/java/inv/inventory/infrastructure/web/controller/ProdutoSecurityFilterTest.java)
 * [Documentação do Domínio Security](../domains/security.md)
 * [Spring Authorization Server Reference Guide](https://docs.spring.io/spring-authorization-server/reference/)

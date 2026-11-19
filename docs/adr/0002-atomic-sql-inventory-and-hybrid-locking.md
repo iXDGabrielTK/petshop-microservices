@@ -49,7 +49,7 @@ Além disso, a finalização de uma venda envolve confirmações de pagamento vi
 
 Decidimos adotar a **Opção 3: Modelo Híbrido de Concorrência**.
 
-### A. Operações Atômicas de Estoque ([`ProdutoRepository.java`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/ProdutoRepository.java#L45-L69))
+### A. Operações Atômicas de Estoque ([`ProdutoRepository.java`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/ProdutoRepository.java#L50-L82))
 Ao executar o update atômico condicional diretamente no engine MVCC do PostgreSQL, o lock de linha dura apenas o tempo da instrução SQL (microssegundos):
 
 ```sql
@@ -62,11 +62,11 @@ RETURNING estoque_disponivel;
 * Se o resultado for nulo (0 linhas afetadas), a aplicação sabe imediatamente que o estoque se esgotou sem precisar de lock prévio.
 * A baixa definitiva (`confirmarBaixaEstoqueAtomo`) e a devolução por cancelamento (`estornarReservaEstoqueAtomo`) seguem a mesma semântica atômica.
 
-### B. Orquestração de Venda com Retries ([`VendaService.java`](../../apps/inv-service/src/main/java/inv/checkout/usecase/VendaService.java#L50-L69))
+### B. Orquestração de Venda com Retries ([`VendaService.java`](../../apps/inv-service/src/main/java/inv/checkout/usecase/VendaService.java#L76-L95))
 Para a criação da venda e agregação de múltiplos itens:
 * A transação utiliza `@Retryable` com backoff exponencial aleatório (`150ms` a `500ms`) para absorver colisões transitórias.
 
-### C. Liquidação Segura do Pagamento e Expiração ([`VendaEventHandler.java`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEventHandler.java#L42-L82) e [`VendaService.java`](../../apps/inv-service/src/main/java/inv/checkout/usecase/VendaService.java#L110-L128))
+### C. Liquidação Segura do Pagamento e Expiração ([`VendaEventHandler.java`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEventHandler.java#L50-L125) e [`VendaService.java`](../../apps/inv-service/src/main/java/inv/checkout/usecase/VendaService.java#L136-L154))
 Quando um webhook de confirmação chega:
 * Na expiração (`cancelarVendaExpirada`), a aplicação obtém um lock pessimista (`vendaRepository.findByIdWithLock(vendaId)`) e aplica o guard pós-lock, enquanto na liquidação (`VendaEventHandler`) combina o versionamento otimista (`@Version`) de `Venda` com `@Retryable`, garantindo que a transição para `CONCLUIDA` e o cancelamento por timeout sejam mutuamente exclusivos.
 
@@ -177,12 +177,29 @@ A blindagem concorrente é comprovada pelos novos testes:
 
 ---
 
-## 9. Referências e Links Relevantes
+## 9. Adendo (Novembro/2026 — DEBT-ARCH-004): Devolução Estritamente Integral contra `SAIDA`s, Índice Parcial `V9` e Lock Pessimista na Criação de Intenção de Pagamento
 
+Durante a execução do plano **[DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)**, o protocolo de concorrência e as invariantes de estoque foram refinados em duas frentes complementares:
+
+### A. Auditoria Integral de `devolverEstoque` e Índice Parcial `V9` (`F4` / `Q4`)
+* **Auditoria contra Movimentações `SAIDA`:** [`EstoqueService.devolverEstoque`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L100-L140) removeu o retorno antecipado para comando vazio e passou a auditar os itens consolidados em `TreeMap` contra todas as movimentações `SAIDA` registradas para `vendaId` ([`MovimentacaoRepository.buscarSaidasPorVenda`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/MovimentacaoRepository.java#L33-L40)), exigindo igualdade de conjuntos de `produtoId` e quantidade exata (`compareTo == 0`).
+* **Validação de Repetição em `DEVOLUCAO`:** `buscarQuantidadeDevolucao(vendaId, produtoId)` garante que apenas repetições com quantidade idêntica atuem como no-op idempotente; divergências de quantidade lançam `BusinessException`, provocando rollback integral do lote (`Propagation.MANDATORY`).
+* **Índice Parcial `V9` (`idx_movimentacoes_venda_saida`):** criado via [`V9__indice_movimentacoes_estoque_saida.sql`](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql) (`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_movimentacoes_venda_saida ON movimentacoes_estoque (venda_id) WHERE tipo = 'SAIDA'`, fora de transação). Em avaliação via `EXPLAIN (ANALYZE, BUFFERS)` com 60.000 movimentações (10.000 vendas), o plano passou de `Seq Scan` (561 blocos em cache, 4,264 ms medianos) para `Index Scan using idx_movimentacoes_venda_saida` (3 blocos, 0,096 ms).
+
+### B. Lock Pessimista na Criação de Intenção de Pagamento (`F3` / `Q3`)
+* [`PagamentoService.criarIntencaoPagamento`](../../apps/inv-service/src/main/java/inv/checkout/usecase/PagamentoService.java#L42-L102) passou a adquirir `VendaRepository.findByIdWithLock(vendaId)` (`SELECT ... FOR UPDATE`) após a consulta rápida por `uuidReferencia` (etapa 2 de 6), serializando a criação de intenções com conclusão, expiração e cancelamento sem mutar `Venda` diretamente, em conformidade com a hierarquia global `vendas -> produtos`.
+* Uma vez sob lock, a reconsulta pós-lock (etapa 3) e a inserção atômica `INSERT ... ON CONFLICT (uuid_referencia) DO NOTHING RETURNING id` (etapa 5) preservam idempotência sem contenção desnecessária ou falhas de `OptimisticLockingFailureException`.
+
+---
+
+## 10. Referências e Links Relevantes
+
+* [Plano Executivo DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)
 * [Contrato EstoqueCommandService](../../apps/inv-service/src/main/java/inv/inventory/api/EstoqueCommandService.java)
 * [Implementação EstoqueService (Lote Ordenado)](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java)
 * [Implementação do Repositório Atômico](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/ProdutoRepository.java)
 * [Implementação do VendaService com Retries](../../apps/inv-service/src/main/java/inv/checkout/usecase/VendaService.java)
+* [Migration V9 — Índice Parcial SAIDA](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql)
 * [ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](0011-synchronous-open-host-service-checkout-inventory.md)
 * [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)
 * [Documentação do Domínio de Inventário](../domains/inventory.md)
