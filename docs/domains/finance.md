@@ -1,8 +1,8 @@
 # 💰 Bounded Context: Finance (Motor Contábil & Financeiro)
 
-O módulo **Finance** é o núcleo contábil do sistema. Ele é projetado sob os princípios de **Imutabilidade (Ledger Append-Only)**, **Deduplicação Idempotente**, **CQRS Assíncrono com Auto-Cura** e **Consolidação Incremental via High Watermark**.
+O módulo **Finance** é o núcleo contábil do sistema (`@ApplicationModule(allowedDependencies = {"shared"})`). Ele é projetado sob os princípios de **Imutabilidade (Ledger Append-Only)**, **Deduplicação Idempotente Nativa em SQL (`ON CONFLICT DO NOTHING`)**, **CQRS Assíncrono com Pendência Durável e Auto-Cura** e **Consolidação Incremental via High Watermark**.
 
-A fronteira pública de leitura do módulo (*Published Language* em `inv.finance.api`, anotada com `@NamedInterface("api")` do Spring Modulith) expõe o contrato **`ReceitaQueryService`** (`resumir`, `serieDiaria`, `ultimoFechamento`, `frescor`), implementado por `ProjecaoReceitaQueryService` (`package-private`) e consumido pelo módulo **Dashboard** ([ADR-0010](../adr/0010-dashboard-read-only-composition-module.md)).
+A fronteira pública de leitura do módulo (*Published Language* em `inv.finance.api`, anotada com `@NamedInterface("api")` do Spring Modulith) expõe o contrato **[`ReceitaQueryService`](../../apps/inv-service/src/main/java/inv/finance/api/ReceitaQueryService.java)** (`resumir`, `serieDiaria`, `ultimoFechamento`, `frescor`), implementado por `ProjecaoReceitaQueryService` (`package-private`) e consumido pelo módulo **Dashboard** ([ADR-0010](../adr/0010-dashboard-read-only-composition-module.md)).
 
 ---
 
@@ -10,9 +10,11 @@ A fronteira pública de leitura do módulo (*Published Language* em `inv.finance
 
 | Termo | Definição no Domínio |
 | :--- | :--- |
-| **Lançamento Financeiro** | Registro atômico e imutável de uma movimentação monetária vinculada a uma venda (`vendaId` escalar) em regime de caixa líquido (`valorRecebido - troco`). Não sofre edição ou exclusão. |
+| **Lançamento Financeiro** | Registro atômico e imutável de uma movimentação monetária vinculada a uma venda (`vendaId` escalar) em regime de caixa líquido (`valorRecebido - troco`, ou negativo em estornos). Não sofre edição ou exclusão (`@Immutable`). |
 | **Ledger (Livro-Razão)** | Conjunto sequencial e histórico de todos os lançamentos financeiros do sistema (`lancamentos_financeiros`). |
-| **Referência UUID** | Identificador único universal gerado na intenção de pagamento, utilizado como chave de idempotência física (`uk_lancamento_referencia`). |
+| **Referência UUID** | Chave única de idempotência física (`uk_lancamento_referencia`): na liquidação (`CREDITO`), corresponde ao `uuidReferencia` do pagamento; no cancelamento pós-faturamento (`ESTORNO`), é derivada deterministicamente por `UUID.nameUUIDFromBytes("ESTORNO:" + vendaId)`. |
+| **Estorno Contábil (`TipoLancamento.ESTORNO`)** | Lançamento compensatório negativo (`-(valorPago - valorTroco)`) emitido de forma idempotente ao consumir `VendaEstornadaEvent` via Outbox/AMQP. |
+| **Pendência Durável de Projeção** | Registro inserido em `projection_retry_queue` na mesma transação do Ledger via [`RegistroPendenciaProjecao`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/RegistroPendenciaProjecao.java) (`Propagation.MANDATORY`) e quitado somente após a conclusão das projeções aplicáveis. |
 | **Projeção CQRS por Venda** | Visão pré-calculada e desnormalizada do saldo de uma venda (`financial_projection_venda`), otimizada para leitura instantânea $O(1)$. |
 | **Projeção CQRS Diária** | Visão agregada por dia de calendário (`financial_projection_diaria`), alimentando KPIs e séries temporais do Dashboard em $O(\text{dias})$ sob regime de caixa. |
 | **Checkpoints CQRS** | Tabelas de controle (`financial_projection_checkpoint_v2` e `financial_projection_diaria_checkpoint`) indexadas por `lancamento_id` real que garantem projeção *exactly-once*. |
@@ -24,65 +26,97 @@ A fronteira pública de leitura do módulo (*Published Language* em `inv.finance
 
 ## 2. Diagramas de Sequência e Fluxos do Domínio
 
-### A. Fluxo de Registro de Lançamento e Projeções CQRS Assíncronas
+### A. Fluxo de Registro de Lançamento (`CREDITO` via `VendaPagaEvent`) e Projeções CQRS
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Checkout as Checkout (VendaEventHandler)
-    participant VendaPagaListener as VendaPagaEventListener (Finance)
-    participant LedgerDB as PostgreSQL (Ledger)
-    participant Listener as FinancialProjectionListener
-    participant ProjDB as PostgreSQL (Projeções/Checkpoints)
-    participant RetryQueue as Fila de Retry (DB)
+    participant Checkout as "Checkout (VendaEventHandler)"
+    participant ListenerIn as "VendaPagaEventListener (Finance)"
+    participant Pendencia as "RegistroPendenciaProjecao (MANDATORY)"
+    participant LedgerDB as "PostgreSQL (Ledger + Retry Queue)"
+    participant ProjListener as FinancialProjectionListener
+    participant ProjDB as "PostgreSQL (Projeções / Checkpoints)"
 
-    Checkout->>VendaPagaListener: Publica VendaPagaEvent (valor líquido = recebido - troco)
-    VendaPagaListener->>LedgerDB: INSERT INTO lancamentos_financeiros (referencia UUID, valor, tipo)
-    Note over Checkout,LedgerDB: Commit da Transação Principal (Venda + Estoque + Ledger)
-    
-    VendaPagaListener-->>Listener: Evento LancamentoRegistradoEvent (@TransactionalEventListener AFTER_COMMIT)
-    
+    Checkout->>ListenerIn: "Publica VendaPagaEvent (valor líquido = recebido - troco)"
+    ListenerIn->>LedgerDB: "INSERT INTO lancamentos_financeiros ON CONFLICT (referencia) DO NOTHING RETURNING id"
+    alt "idGerado.isPresent() (inserção inédita)"
+        ListenerIn->>Pendencia: "registrarNaTransacaoDoLedger (INSERT projection_retry_queue)"
+        ListenerIn-->>ProjListener: "Emite LancamentoRegistradoEvent"
+    else "Optional.empty() (referência duplicada)"
+        ListenerIn-->>Checkout: "Retorna sem rollback e sem emitir evento CQRS"
+    end
+    Note over Checkout,LedgerDB: "Commit da Transação Principal (Venda + Estoque + Ledger + Pendência)"
+
     rect rgb(235, 248, 255)
-        Note over Listener,ProjDB: Execução Assíncrona (Pool: projectionExecutor)
-        Listener->>ProjDB: INSERT INTO financial_projection_checkpoint_v2 (lancamento_id)
-        alt Inserção no Checkpoint V2 com Sucesso (Primeira vez)
-            Listener->>ProjDB: UPSERT INTO financial_projection_venda (saldo, creditos, estornos)
-            Listener->>ProjDB: CTE: INSERT checkpoint diário + UPSERT financial_projection_diaria
-        else DuplicateKeyException (Evento já processado)
-            Listener->>Listener: Ignora silenciosamente (Idempotência garantida)
-        else Falha Transitória / Erro de Banco
-            Listener->>RetryQueue: INSERT INTO projection_retry_queue (payload JSON, status 'PENDENTE')
-        end
+        Note over ProjListener,ProjDB: "Execução Assíncrona AFTER_COMMIT (Pool: projectionExecutor)"
+        ProjListener->>ProjDB: "bloquearLancamento (SELECT ... FOR UPDATE) + INSERT checkpoint_v2 ON CONFLICT DO NOTHING"
+        ProjListener->>ProjDB: "UPSERT financial_projection_venda (saldo, total_creditos, total_estornos)"
+        ProjListener->>ProjDB: "ProjecaoReceitaDiariaRepository.aplicar (CTE checkpoint diário + UPSERT financial_projection_diaria)"
+        ProjListener->>ProjDB: "quitarPendencia (DELETE projection_retry_queue)"
     end
 ```
 
-### B. Ciclo de Fechamento Diário D+0 e Reconciliação Incremental
+### B. Fluxo de Estorno Contábil Assíncrono (`VendaEstornadaEvent` via Outbox / AMQP)
+
+No cancelamento em fase única de venda concluída, o Checkout grava `VendaEstornadaEvent` na tabela `outbox` (`BEFORE_COMMIT`). O `OutboxProcessor` despacha para `pdv.exchange` (`routing key: venda.estornada`), entregue à fila `pdv.venda.estornada.queue` (com DLQ `pdv.venda.estornada.queue.dlq`). O [`VendaEstornadaEventListener`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaEstornadaEventListener.java) (`@RabbitListener`, `@Transactional`) executa:
+
+1. **Desserialização Segura:** mensagens JSON ou tipos inválidos disparam `AmqpRejectAndDontRequeueException`, evitando loops infinitos de retry.
+2. **Idempotência Determinística no Ledger:** calcula `valorEstornoNegativo = event.valorEstorno().abs().negate()`, ou seja, `-(valorPago - valorTroco)`, e persiste com `inserirIdempotente` (`INSERT ... ON CONFLICT (referencia) DO NOTHING RETURNING id`, `TipoLancamento.ESTORNO`) usando a chave `UUID.nameUUIDFromBytes("ESTORNO:" + vendaId)`.
+3. **Gate de Pendência e Projeções CQRS:** somente quando `idOpt.isPresent()`, registra a pendência em `projection_retry_queue` (`RegistroPendenciaProjecao`) e publica `LancamentoRegistradoEvent`.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Scheduler as FechamentoCaixaScheduler (00:01 AM)
+    participant Outbox as "OutboxProcessor (pdv.exchange)"
+    participant RabbitMQ as "RabbitMQ (pdv.venda.estornada.queue)"
+    participant EstornoL as "VendaEstornadaEventListener (Finance)"
+    participant LedgerDB as "PostgreSQL (Ledger + Retry Queue)"
+    participant ProjListener as FinancialProjectionListener
+
+    Outbox->>RabbitMQ: "Publica VendaEstornadaEvent (vendaId, uuidReferenciaEstorno, valorEstorno)"
+    RabbitMQ->>EstornoL: "Consome mensagem (@Transactional)"
+    EstornoL->>LedgerDB: "INSERT lancamentos_financeiros (ESTORNO, -valorEstorno) ON CONFLICT DO NOTHING RETURNING id"
+    alt "idOpt.isPresent()"
+        EstornoL->>LedgerDB: "RegistroPendenciaProjecao.registrarNaTransacaoDoLedger"
+        EstornoL-->>ProjListener: "LancamentoRegistradoEvent (AFTER_COMMIT)"
+    else "Referência já existente (reentrega)"
+        EstornoL-->>RabbitMQ: "ACK idempotente sem duplicar lançamento"
+    end
+```
+
+**Impacto do `ESTORNO` nas Projeções CQRS e no Fechamento D+0:**
+* **`financial_projection_venda`:** `FinancialProjectionListener` soma `valorAssinado` negativo em `saldo` (zerando o saldo líquido da venda estornada) e acumula `ABS(valor)` em `total_estornos`.
+* **`financial_projection_diaria`:** a CTE `ProjecaoReceitaDiariaRepository.aplicar` contabiliza `GREATEST(-lf.valor, 0)` em `total_debitos` na data do lançamento (`lf.data_hora::date`), refletindo o estorno em regime de caixa no dia em que ocorreu.
+* **`fechamento_caixa_diario` (D+0):** capturado automaticamente pelo *High Watermark* (`id > :ultimoId AND id <= max_id`), somando `ABS(valor)` em `total_debitos` quando `valor < 0` e validado pela reconciliação incremental $O(\Delta)$.
+
+### C. Ciclo de Fechamento Diário D+0 e Reconciliação Incremental
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Scheduler as "FechamentoCaixaScheduler (00:01 AM)"
     participant FechamentoService as FechamentoCaixaService
     participant LedgerRepo as LancamentoFinanceiroRepository
     participant ReconService as ReconciliacaoService
     participant DB as PostgreSQL
 
     Scheduler->>FechamentoService: executarFechamentoTransacional()
-    FechamentoService->>DB: Obter último FechamentoCaixaDiario (ultimoLancamentoId)
-    FechamentoService->>LedgerRepo: calcularSnapshotAtomico(ultimoLancamentoId)
-    Note over LedgerRepo,DB: CTE com High Watermark (MAX id)
-    LedgerRepo-->>FechamentoService: SnapshotResult (creditos, debitos, novoMaxId)
-    
+    FechamentoService->>DB: "Obter último FechamentoCaixaDiario (ultimoLancamentoId)"
+    FechamentoService->>LedgerRepo: "calcularSnapshotAtomico(ultimoLancamentoId)"
+    Note over LedgerRepo,DB: "CTE com High Watermark (MAX id)"
+    LedgerRepo-->>FechamentoService: "SnapshotResult (creditos, debitos, novoMaxId)"
+
     FechamentoService->>DB: INSERT INTO fechamento_caixa_diario
-    
+
     rect rgb(255, 250, 235)
-        Note over FechamentoService,ReconService: Reconciliação em Nova Transação (REQUIRES_NEW)
-        FechamentoService->>ReconService: executarReconciliacaoIncremental(ultimoLancamentoId, novoMaxId)
-        ReconService->>DB: auditarDivergencias(ultimoLancamentoId, novoMaxId)
-        alt Divergência Detectada
-            ReconService->>ReconService: Classifica severidade (WARN, ALERT, CRITICAL)
+        Note over FechamentoService,ReconService: "Reconciliação em Nova Transação (REQUIRES_NEW)"
+        FechamentoService->>ReconService: "executarReconciliacaoIncremental(ultimoLancamentoId, novoMaxId)"
+        ReconService->>DB: "auditarDivergencias(ultimoLancamentoId, novoMaxId)"
+        alt "Divergência Detectada"
+            ReconService->>ReconService: "Classifica severidade (WARN, ALERT, CRITICAL)"
         end
-        ReconService->>DB: INSERT INTO financial_reconciliation_checkpoint (novoMaxId)
+        ReconService->>DB: "INSERT INTO financial_reconciliation_checkpoint (novoMaxId)"
     end
 ```
 
@@ -163,16 +197,20 @@ erDiagram
 
 | Cenário de Falha | Mecanismo de Defesa | Efeito no Sistema |
 | :--- | :--- | :--- |
-| **Reenvio de Webhook Duplicado** | `UK (referencia)` no Ledger | Rejeição atômica no banco sem duplicar lançamento. |
-| **Crash do servidor antes da projeção CQRS** | Evento não executado | O Ledger permanece intacto; o `ProjecaoDiariaCatchUpJob`, a reconciliação noturna ou a fila de retry reprocessam. |
-| **Lock temporário durante Upsert CQRS** | `catch (Exception)` no Listener | Payload serializado na `projection_retry_queue` e reprocessado pelo `ProjectionRetryScheduler`. |
+| **Reenvio de Webhook / Estorno Duplicado** | `INSERT ... ON CONFLICT (referencia) DO NOTHING RETURNING id` em `uk_lancamento_referencia` | Absorção atômica no PostgreSQL retornando `Optional.empty()` sem `UnexpectedRollbackException` e sem emitir `LancamentoRegistradoEvent`. |
+| **Payload Inválido na Fila `pdv.venda.estornada.queue`** | `AmqpRejectAndDontRequeueException` em `VendaEstornadaEventListener` | Descarta da fila principal imediatamente e roteia para a DLQ `pdv.venda.estornada.queue.dlq`. |
+| **Crash do servidor após commit do Ledger antes da projeção CQRS** | `RegistroPendenciaProjecao` (`MANDATORY`) na transação do Ledger | A pendência já nasce persistida em `projection_retry_queue` e é quitada somente após `financial_projection_venda` e `financial_projection_diaria` confirmarem; caso contrário, `ProjectionRetryScheduler` e `ProjecaoDiariaCatchUpJob` convergem o estado (`ProjecaoDuravelIT`). |
+| **Conflito / Lock temporário durante Upsert CQRS** | Retry interno (`40001`/`40P01`, até 3 tentativas) + `registrarFalhaAssincrona` | Marca erro e torna a pendência elegível imediatamente ao `ProjectionRetryScheduler` sem perder o evento. |
 | **Divergência de Saldo Real vs Projetado** | `ReconciliacaoService` $O(\Delta)$ | Alerta classificado automaticamente: \(\le 0,01\) (Warn), \(\le 1,00\) (Alert), \(> 1,00\) (Critical). |
 
 ---
 
 ## 5. ADRs Vinculados a Este Domínio
 
+* 📑 **[ADR-0001: Monólito Modular com Bounded Contexts](../adr/0001-modular-monolith-bounded-contexts.md)**
+* 📑 **[ADR-0004: Transactional Outbox Pattern com SKIP LOCKED](../adr/0004-transactional-outbox-with-skip-locked.md)**
 * 📑 **[ADR-0005: Ledger Financeiro Imutável (Append-Only) com UUID](../adr/0005-append-only-financial-ledger-and-idempotency.md)**
 * 📑 **[ADR-0006: Projeções CQRS Assíncronas e Auto-Cura via SKIP LOCKED](../adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)**
 * 📑 **[ADR-0007: Fechamento de Caixa D+0 com High Watermark](../adr/0007-d0-daily-cash-closing-and-high-watermark.md)**
 * 📑 **[ADR-0010: Dashboard como Módulo de Composição de Leitura (BFF Interno Read-Only)](../adr/0010-dashboard-read-only-composition-module.md)**
+* 📑 **[ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](../adr/0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)**
