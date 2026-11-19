@@ -24,7 +24,7 @@ src/main/java/inv/
 
 ### Checkout & Webhooks
 * `GET /vendas/aberta` - Consulta da venda ativa (`ROLE_ADMIN`); retorna 204 quando não houver venda aberta.
-* `POST /vendas/{id}/cancelar` - Cancelamento de venda concluída (`ROLE_ADMIN`), com estorno interno e devolução de estoque; retorna 503 quando a flag estiver desabilitada.
+* `POST /vendas/{id}/cancelar` - Cancelamento de venda concluída (`ROLE_ADMIN`), com estorno interno e devolução de estoque. Retorna `ProblemDetail` (RFC 7807) com HTTP 409 quando a venda está em estado incompatível ou HTTP 503 quando a flag está desabilitada.
 * `POST /vendas` - Abertura de venda e reserva atômica de itens em lote ordenado (`produtoId ASC`).
 * `GET /vendas/{id}/status` - Long Polling não-bloqueante (`DeferredResult`) do status da venda para PDVs em checkout.
 * `POST /pagamentos/intencao/{vendaId}` - Registro de intenção de pagamento com UUID de idempotência.
@@ -83,6 +83,8 @@ spring.rabbitmq.host=${RABBITMQ_HOST:localhost}
 Conforme a [ADR-0012](../../docs/adr/0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md), o cancelamento recompõe o estoque, marca pagamentos regulares como `ESTORNADO` e publica o estorno contábil. O reembolso real no adquirente pertence ao backlog `DEBT-PAY-001`; a resposta de sucesso da API não comprova devolução de dinheiro ao cliente.
 
 `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED=false` é o padrão da aplicação, do Compose e do exemplo de ambiente. Para ativar em ambiente com pagamentos reais, os PRs E1–E4 do [DEBT-ARCH-004](../../docs/debt/DEBT-ARCH-004/README.md) devem estar entregues e validados com testes de integração, e o procedimento abaixo deve ter sido validado pela operação. Alterar a variável exige reiniciar/recriar o serviço para aplicar a configuração. Voltar a `false` bloqueia novos cancelamentos com HTTP 503, sem desfazer os já concluídos.
+
+Antes do deploy da [E5](../../docs/debt/DEBT-ARCH-004/E5.md), confirmar que SPA e PDV migraram o tratamento de HTTP 409 e 503 de `$.mensagem` para `$.detail`, `$.title`, `$.status` e `$.type`. O [contrato de cancelamento](../../docs/domains/checkout.md#7-contrato-http-de-cancelamento-de-venda-concluída) descreve os campos de cada resposta.
 
 ### Procedimento manual no adquirente
 

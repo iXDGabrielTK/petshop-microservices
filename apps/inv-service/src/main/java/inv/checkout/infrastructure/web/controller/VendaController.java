@@ -11,18 +11,14 @@ import inv.checkout.infrastructure.web.dto.ItemReciboResponse;
 import inv.checkout.infrastructure.web.dto.ReciboResponse;
 import inv.checkout.infrastructure.web.dto.VendaRequest;
 import inv.checkout.infrastructure.web.dto.VendaStatusResponse;
-import inv.checkout.usecase.CancelamentoVendaConflitoException;
-import inv.checkout.usecase.CancelamentoVendaDesabilitadoException;
 import inv.checkout.usecase.VendaService;
 import jakarta.validation.Valid;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.async.DeferredResult;
 
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 
@@ -105,17 +101,5 @@ public class VendaController {
     public ResponseEntity<VendaStatusResponse> cancelarVendaConcluida(@PathVariable Long id) {
         VendaStatusResponse response = vendaService.cancelarVendaConcluida(id);
         return ResponseEntity.ok(response);
-    }
-
-    @ExceptionHandler(CancelamentoVendaConflitoException.class)
-    public ResponseEntity<Map<String, String>> handleCancelamentoVendaConflito(CancelamentoVendaConflitoException ex) {
-        String mensagem = (ex != null && ex.getMessage() != null) ? ex.getMessage() : "Conflito ao cancelar venda: status atual incompatível";
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("mensagem", mensagem));
-    }
-
-    @ExceptionHandler(CancelamentoVendaDesabilitadoException.class)
-    public ResponseEntity<Map<String, String>> handleCancelamentoVendaDesabilitado(CancelamentoVendaDesabilitadoException ex) {
-        String mensagem = (ex != null && ex.getMessage() != null) ? ex.getMessage() : "Cancelamento de venda concluída temporariamente desabilitado";
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("mensagem", mensagem));
     }
 }

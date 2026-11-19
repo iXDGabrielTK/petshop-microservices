@@ -12,7 +12,7 @@
 | **2** | **E2** | [E2.md](./E2.md) | `MovimentacaoResponse` via JPQL + `countQuery`, `ProdutoResumoResponse` (`estoqueDisponivel`), normalização de `page`/`size`, whitelist de `sort` + HTTP 400 (`F2`, `Q2`) | `[x]` Implementação concluída; alinhamento externo antes do deploy |
 | **3** | **E3** | [E3.md](./E3.md) | Protocolo em 6 etapas em `criarIntencaoPagamento`, `ON CONFLICT DO NOTHING RETURNING id`, rejeição de escala `> 2`, `ConflictException` (`409`) em `common-lib` (`F3`, `Q3`) | `[x]` Implementação concluída; alinhamento externo antes do deploy |
 | **4** | **E4** | [E4.md](./E4.md) | Devolução estritamente integral (`SAIDA`s vs comando e `DEVOLUCAO`), remoção do `return` antecipado, rollback de lote e avaliação condicional de `V9` (`F4`, `Q4`) | `[x]` Concluído |
-| **5** | **E5** | [E5.md](./E5.md) | `ServiceUnavailableException` (`503 ProblemDetail`) em `common-lib`, remoção dos handlers locais de `VendaController` e alinhamento de consumidores (`F5`, `Q5`) | `[ ]` Pendente |
+| **5** | **E5** | [E5.md](./E5.md) | `ServiceUnavailableException` (`503 ProblemDetail`) em `common-lib`, remoção dos handlers locais de `VendaController` e migração do contrato HTTP (`F5`, `Q5`) | `[x]` Implementação concluída. Confirmação externa pendente antes do deploy. |
 
 ```mermaid
 flowchart LR
@@ -122,5 +122,6 @@ flowchart LR
 - [ ] **Deploy PR 2:** confirmar com SPA/PDV a adoção dos novos contratos e a ausência de uso dos campos removidos de produtos antes de publicar a alteração.
 - [x] **PR 3 (`E3`):** `ConflictException` (`409 ProblemDetail`) em `common-lib`; `criarIntencaoPagamento` executa o protocolo de 6 etapas (`ON CONFLICT DO NOTHING RETURNING id`) e rejeita `> 2` casas decimais sem arredondar, provado por testes unitários e `*IT` concorrentes em PostgreSQL.
 - [x] **PR 4 (`E4`):** `EstoqueService.devolverEstoque` impõe devolução estritamente integral contra `SAIDA`s e valida quantidade em repetição de `DEVOLUCAO`, com avaliação `EXPLAIN (ANALYZE, BUFFERS)` documentada para `V9`.
-- [ ] **PR 5 (`E5`):** `ServiceUnavailableException` (`503 ProblemDetail`) em `common-lib`; handlers locais removidos de `VendaController`; consumidores e suítes (`GlobalExceptionHandlerTest`, `VendaControllerTest`, `CancelamentoVendaConcluidaIT`) migrados para `ProblemDetail`.
-- [ ] **Evidência Surefire e Gates:** todos os unitários, `*IT` pertinentes (inspecionados em `apps/inv-service/target/surefire-reports/` com `skipped = 0`, `failures = 0`, `errors = 0`), `ArquiteturaTest` (`R1`–`R15`) e `ModulithTest` verdes em Java 21 LTS com Docker ativo.
+- [x] **PR 5 (`E5`):** `ServiceUnavailableException` (`503 ProblemDetail`) em `common-lib`, handlers locais removidos de `VendaController`, contrato documentado e suítes de cancelamento aprovadas. [Evidência da etapa](./E5.md#evidência-de-validação).
+- [ ] **Deploy PR 5:** confirmar que SPA e PDV migraram a leitura de `$.mensagem` para `$.detail`, `$.title`, `$.status` e `$.type` nas respostas HTTP 409 e 503 de `POST /vendas/{id}/cancelar` antes de publicar a alteração.
+- [x] **Evidência Surefire e Gates:** testes unitários, testes de integração pertinentes, `ArquiteturaTest` (`R1`–`R15`) e `ModulithTest` aprovados em Java 21 LTS com Docker ativo. Na execução ampla do reactor, o Surefire registrou um caso ignorado em `OutboxConcurrencyManualRunner`, diagnóstico manual fora da CI que exige instância local. O teste de integração `OutboxConcorrenciaIntegrationTest` passou.

@@ -166,7 +166,22 @@ O registro de intenções de pagamento ocorre via `POST /pagamentos/intencao/{ve
 
 ---
 
-## 7. ADRs Vinculados a Este Domínio
+## 7. Contrato HTTP de Cancelamento de Venda Concluída
+
+`POST /vendas/{id}/cancelar` exige `ROLE_ADMIN`. Retorna HTTP 200 com o status `CANCELADA` quando o cancelamento é concluído ou HTTP 404 quando a flag está habilitada e a venda não existe.
+
+O `GlobalExceptionHandler` retorna HTTP 409 e 503 como `ProblemDetail` (RFC 7807), com `Content-Type: application/problem+json`.
+
+| HTTP / `status` | Condição | `title` | `type` |
+|---|---|---|---|
+| 409 | Venda em estado incompatível com o cancelamento, inclusive `CANCELADA` | Conflito de Estado | `https://petshop.com/errors/conflict` |
+| 503 | Flag `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` desabilitada | Serviço Indisponível | `https://petshop.com/errors/service-unavailable` |
+
+O campo `detail` contém a mensagem específica da falha, e `timestamp` registra o instante da resposta. O campo legado `mensagem` foi removido. Antes do deploy da [E5](../debt/DEBT-ARCH-004/E5.md), confirmar que as versões de SPA e PDV que consomem o endpoint tratam os dois status e leem `detail`, `title`, `status` e `type`.
+
+---
+
+## 8. ADRs Vinculados a Este Domínio
 
 * 📑 **[ADR-0002: Controle Híbrido de Concorrência e Estoque Atômico](../adr/0002-atomic-sql-inventory-and-hybrid-locking.md)**
 * 📑 **[ADR-0003: Long Polling Não-Bloqueante com DeferredResult](../adr/0003-async-long-polling-pos-deferred-result.md)**
