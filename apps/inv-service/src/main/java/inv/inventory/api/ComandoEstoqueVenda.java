@@ -10,8 +10,8 @@ import java.util.Objects;
 
 /**
  * Comando imutável de estoque vinculado a uma venda.
- * Lista vazia é permitida e resulta em no-op (paridade com o laço atual sobre uma coleção vazia).
- * Itens duplicados NÃO são consolidados (paridade — Q9).
+ * Preserva a lista recebida, inclusive itens repetidos. Na devolução, o Inventory
+ * consolida os itens por produto e aceita a lista vazia somente para vendas sem saídas.
  */
 public record ComandoEstoqueVenda(long vendaId, List<ItemComando> itens) {
     public ComandoEstoqueVenda {

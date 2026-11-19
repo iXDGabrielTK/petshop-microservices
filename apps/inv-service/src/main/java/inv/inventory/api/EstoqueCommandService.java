@@ -30,10 +30,14 @@ public interface EstoqueCommandService {
     void estornarReserva(ComandoEstoqueVenda comando);
 
     /**
-     * Devolução física de venda concluída: exige transação ativa (Propagation.MANDATORY),
-     * consolida quantidades repetidas por produtoId em ordem crescente (produtoId ASC)
-     * e registra movimentação DEVOLUCAO idempotente por (vendaId, produtoId) antes de
-     * recompor o saldo disponível.
+     * Devolve integralmente o estoque de uma venda na transação ativa do chamador.
+     * O Checkout envia todos os itens. O Inventory soma as quantidades por produto,
+     * confere os totais contra todas as SAIDAs da venda e processa os produtos em
+     * ordem crescente de ID. Registra uma única DEVOLUCAO por produto antes de
+     * recompor o saldo. Repetir uma devolução idêntica preserva o saldo.
+     *
+     * @throws common.exception.BusinessException se os produtos ou quantidades divergirem
+     *         das saídas ou se a quantidade de uma devolução já registrada for diferente
      */
     void devolverEstoque(ComandoEstoqueVenda comando);
 }
