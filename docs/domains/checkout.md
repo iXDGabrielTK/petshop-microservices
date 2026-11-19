@@ -141,7 +141,32 @@ Os webhooks de liquidação externa comunicam-se diretamente com o [`PagamentoCo
 
 ---
 
-## 6. ADRs Vinculados a Este Domínio
+## 6. Contrato de Criação de Intenção de Pagamento e Idempotência
+
+O registro de intenções de pagamento ocorre via `POST /pagamentos/intencao/{vendaId}` no [`PagamentoController`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/controller/PagamentoController.java), orquestrado pelo [`PagamentoService`](../../apps/inv-service/src/main/java/inv/checkout/usecase/PagamentoService.java) e [`PagamentoRepository`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/persistence/PagamentoRepository.java).
+
+* **Validação Decimal Sem Arredondamento (`CriarIntencaoPagamentoRequest` e Service):**
+  - Campos obrigatórios (`@NotNull`): `uuidReferencia` (`UUID`), `metodo` (`MetodoPagamento`), `valor` (`BigDecimal`).
+  - Regras numéricas no DTO: `@Positive` e `@Digits(integer = 8, fraction = 2)` alinhadas à coluna `valor_esperado NUMERIC(10, 2)`.
+  - Normalização sem arredondamento: o construtor compacto de [`CriarIntencaoPagamentoRequest`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/dto/CriarIntencaoPagamentoRequest.java) remove zeros à direita com `stripTrailingZeros()` (ajustando escalas negativas via `setScale(0)`), aceitando representações equivalentes como `10.000`, `10.00` e `100` e rejeitando com **HTTP 400** valores com mais de 2 casas decimais significativas (ex.: `10.005`) para evitar arredondamentos silenciosos no banco e falsos conflitos em retries.
+  - Defesa em profundidade no `PagamentoService`: rejeita com `BusinessException` (`400`) quando `valor == null`, `valor.signum() <= 0`, `valor > 99999999.99` ou `valor.stripTrailingZeros().scale() > 2`.
+
+* **Protocolo de Idempotência em 6 Etapas (`criarIntencaoPagamento`):**
+  1. **Consulta rápida:** busca `findByUuidReferencia(uuidReferencia)`. Se existir, valida igualdade de `vendaId`, `metodo` e `valorEsperado.compareTo(valor) == 0`; se coincidir, retorna o `pagamentoId` (`200`), mesmo que a venda já esteja `CONCLUIDA` ou `CANCELADA`; se divergir, lança `ConflictException` (`409`).
+  2. **Lock pessimista na venda:** executa `VendaRepository.findByIdWithLock(vendaId)` (`SELECT ... FOR UPDATE`), lançando `ResourceNotFoundException` (`404`) caso a venda não exista e serializando com conclusão, expiração e cancelamento.
+  3. **Reconsulta pós-lock:** executa novamente `findByUuidReferencia(uuidReferencia)` antes de validar o status da venda, preservando retries legítimos de transações concorrentes mesmo que a venda tenha mudado para `CONCLUIDA` ou `CANCELADA` durante a espera pelo lock (ou lançando `409` se o payload divergir).
+  4. **Validação de status da venda:** verifica `venda.getStatus().aceitaPagamento()`; caso contrário, lança `ConflictException` (`409`).
+  5. **Inserção atômica com fonte única do domínio:** instancia `Pagamento` (aplicando `processar()` quando `metodo.isExigeProcessamento()` for `true`) e persiste via query nativa `inserirIntencaoIdempotente` (`INSERT INTO pagamentos (...) VALUES (...) ON CONFLICT (uuid_referencia) DO NOTHING RETURNING id`). Se retornar o ID gerado, devolve-o (`200`).
+  6. **Fallback em conflito concorrente:** se o `Optional<Long>` retornar vazio em razão da constraint única `uk_pagamento_uuid` (ex.: concorrência entre vendas distintas com o mesmo UUID), consulta `findByUuidReferencia(uuidReferencia)` novamente e aplica a comparação compartilhada (`200` se igual; `ConflictException` `409` revertendo a transação se divergente, sem sobrescrever o registro existente).
+
+* **Semântica de Erros (`ProblemDetail` RFC 7807 via `GlobalExceptionHandler`):**
+  - **HTTP 400 Bad Request:** falha de validação DTO (`invalid-data`) ou regra de valor no service (`BusinessException` / `business-rule-violation`).
+  - **HTTP 404 Not Found:** `vendaId` inexistente (`ResourceNotFoundException` / `resource-not-found`).
+  - **HTTP 409 Conflict:** venda em status que não aceita pagamento ou `uuidReferencia` reutilizado com `vendaId`, `metodo` ou `valor` divergentes (`ConflictException`, `title: "Conflito de Estado"`, `type: "https://petshop.com/errors/conflict"`).
+
+---
+
+## 7. ADRs Vinculados a Este Domínio
 
 * 📑 **[ADR-0002: Controle Híbrido de Concorrência e Estoque Atômico](../adr/0002-atomic-sql-inventory-and-hybrid-locking.md)**
 * 📑 **[ADR-0003: Long Polling Não-Bloqueante com DeferredResult](../adr/0003-async-long-polling-pos-deferred-result.md)**

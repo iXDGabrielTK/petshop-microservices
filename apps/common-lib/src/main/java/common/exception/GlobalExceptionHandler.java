@@ -132,4 +132,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "forbidden"
         );
     }
+
+    // 8. Conflito de Estado (409)
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ProblemDetail> handleConflict(ConflictException ex) {
+        ProblemDetail problem = buildProblemDetail(
+                HttpStatus.CONFLICT,
+                ex.getMessage(),
+                "Conflito de Estado",
+                "conflict"
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
 }

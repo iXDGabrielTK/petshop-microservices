@@ -6,6 +6,8 @@
 package inv.it;
 
 import common.exception.BusinessException;
+import common.exception.ConflictException;
+import common.exception.ResourceNotFoundException;
 import io.micrometer.core.instrument.MeterRegistry;
 import inv.InvServiceApplication;
 import inv.checkout.domain.model.Pagamento;
@@ -41,6 +43,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mockito;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -54,6 +57,7 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.context.event.ApplicationEvents;
 import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -65,15 +69,23 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
 /**
  * Suíte de validação dos Gates de Concorrência e Isolamento do PR 4 (DEBT-ARCH-003 / E4 — Invariante 5):
@@ -127,7 +139,7 @@ class PagamentoConcorrenciaGatesIT {
     @Autowired
     private VendaRepository vendaRepository;
 
-    @Autowired
+    @MockitoSpyBean
     private PagamentoRepository pagamentoRepository;
 
     @Autowired
@@ -159,6 +171,7 @@ class PagamentoConcorrenciaGatesIT {
 
     @BeforeEach
     void setUp() {
+        Mockito.reset(pagamentoRepository);
         jdbcTemplate.execute("ALTER SYSTEM SET lock_timeout = '10s'");
         jdbcTemplate.execute("SELECT pg_reload_conf()");
         jdbcTemplate.update("DELETE FROM financial_reconciliation_checkpoint");
@@ -181,6 +194,7 @@ class PagamentoConcorrenciaGatesIT {
 
     @AfterEach
     void tearDown() {
+        Mockito.reset(pagamentoRepository);
         jdbcTemplate.execute("ALTER SYSTEM SET lock_timeout = '10s'");
         jdbcTemplate.execute("SELECT pg_reload_conf()");
     }
@@ -710,6 +724,364 @@ class PagamentoConcorrenciaGatesIT {
         assertThat(pagFim.isExcedente()).isFalse();
         double metricExcedenteDepois = meterRegistry.counter(VendaEventHandler.METRICA_PAGAMENTO_EXCEDENTE).count();
         assertThat(metricExcedenteDepois - metricExcedenteAntes).isZero();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = MetodoPagamento.class, names = {"CARTAO_CREDITO", "PIX"})
+    @DisplayName("E3 Cenário 4 — Equivalência JPA vs nativo e INSERT ON CONFLICT DO NOTHING RETURNING id no PostgreSQL")
+    void e3_equivalenciaJpaVsNativoEInsertOnConflictReturningId(MetodoPagamento metodo) {
+        Produto prod = salvarProduto("7893000800010", "Produto E3 Equivalencia " + metodo,
+                new BigDecimal("50.00"), new BigDecimal("10.000"), new BigDecimal("1.000"));
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("1.000"))
+        )));
+        Long vendaId = venda.getId();
+        BigDecimal valor = new BigDecimal("50.00");
+
+        UUID uuidJpa = UUID.randomUUID();
+        Pagamento referenciaJpa = new Pagamento(venda, metodo, valor, uuidJpa);
+        if (metodo.isExigeProcessamento()) {
+            referenciaJpa.processar();
+        }
+        Long idJpa = pagamentoRepository.saveAndFlush(referenciaJpa).getId();
+
+        UUID uuidNativo = UUID.randomUUID();
+        Long idNativo = pagamentoService.criarIntencaoPagamento(vendaId, metodo, valor, uuidNativo);
+        assertThat(idNativo).isNotNull().isNotEqualTo(idJpa);
+
+        Map<String, Object> linhaJpa = jdbcTemplate.queryForMap(
+                "SELECT venda_id, metodo, status, valor_esperado, valor_recebido, excedente, contabilizado, nsu_transacao, data_hora_pagamento FROM pagamentos WHERE id = ?",
+                idJpa);
+        Map<String, Object> linhaNativa = jdbcTemplate.queryForMap(
+                "SELECT venda_id, metodo, status, valor_esperado, valor_recebido, excedente, contabilizado, nsu_transacao, data_hora_pagamento FROM pagamentos WHERE id = ?",
+                idNativo);
+
+        assertThat(linhaNativa).isEqualTo(linhaJpa);
+        assertThat(linhaNativa.get("status")).isEqualTo(metodo.isExigeProcessamento() ? "PROCESSANDO" : "PENDENTE");
+        assertThat((BigDecimal) linhaNativa.get("valor_recebido")).isEqualByComparingTo("0.00");
+        assertThat(linhaNativa.get("excedente")).isEqualTo(false);
+        assertThat(linhaNativa.get("contabilizado")).isEqualTo(false);
+        assertThat(linhaNativa.get("nsu_transacao")).isNull();
+        assertThat(linhaNativa.get("data_hora_pagamento")).isNull();
+
+        Optional<Long> colisaoInsert = new TransactionTemplate(transactionManager).execute(status ->
+                pagamentoRepository.inserirIntencaoIdempotente(
+                        uuidNativo,
+                        vendaId,
+                        MetodoPagamento.DINHEIRO.name(),
+                        StatusPagamento.CONFIRMADO.name(),
+                        new BigDecimal("999.00"),
+                        new BigDecimal("999.00"),
+                        true,
+                        true
+                ));
+        assertThat(colisaoInsert).isEmpty();
+
+        Map<String, Object> linhaAposConflito = jdbcTemplate.queryForMap(
+                "SELECT venda_id, metodo, status, valor_esperado, valor_recebido, excedente, contabilizado, nsu_transacao, data_hora_pagamento FROM pagamentos WHERE id = ?",
+                idNativo);
+        assertThat(linhaAposConflito).isEqualTo(linhaJpa);
+    }
+
+    @Test
+    @DisplayName("E3 Cenário 3 — Retry após conclusão/cancelamento e reconsulta pós-lock (Etapas 1 e 3) no PostgreSQL")
+    void e3_retryAposConclusaoCancelamentoEReconsultaPosLock() throws Exception {
+        Produto prod = salvarProduto("7893000900010", "Produto E3 Retry e PosLock",
+                new BigDecimal("100.00"), new BigDecimal("20.000"), new BigDecimal("1.000"));
+
+        // 1. Etapa 1 após venda CONCLUIDA
+        Venda vendaConcluida = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("1.000"))
+        )));
+        UUID uuidConcluida = UUID.randomUUID();
+        Long pagConcluidaId = pagamentoService.criarIntencaoPagamento(
+                vendaConcluida.getId(), MetodoPagamento.PIX, new BigDecimal("100.00"), uuidConcluida);
+        pagamentoService.confirmarPagamentoWebhook(pagConcluidaId, new BigDecimal("100.00"), "NSU-E3-CONC");
+        vendaEventHandler.handlePagamentoConfirmado(
+                "{\"vendaId\":" + vendaConcluida.getId() + ",\"pagamentoId\":" + pagConcluidaId + "}");
+
+        assertThat(pagamentoService.criarIntencaoPagamento(
+                vendaConcluida.getId(), MetodoPagamento.PIX, new BigDecimal("100.000"), uuidConcluida))
+                .isEqualTo(pagConcluidaId);
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaConcluida.getId(), MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), uuidConcluida))
+                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaConcluida.getId(), MetodoPagamento.PIX, new BigDecimal("99.00"), uuidConcluida))
+                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaConcluida.getId(), MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID()))
+                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                999999L, MetodoPagamento.PIX, new BigDecimal("100.00"), UUID.randomUUID()))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        // 2. Etapa 1 após venda CANCELADA
+        Venda vendaCancelada = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("1.000"))
+        )));
+        UUID uuidCancelada = UUID.randomUUID();
+        Long pagCanceladaId = pagamentoService.criarIntencaoPagamento(
+                vendaCancelada.getId(), MetodoPagamento.PIX, new BigDecimal("100.00"), uuidCancelada);
+        vendaService.cancelarVendaExpirada(vendaCancelada.getId());
+
+        assertThat(pagamentoService.criarIntencaoPagamento(
+                vendaCancelada.getId(), MetodoPagamento.PIX, new BigDecimal("100"), uuidCancelada))
+                .isEqualTo(pagCanceladaId);
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaCancelada.getId(), MetodoPagamento.PIX, new BigDecimal("80.00"), uuidCancelada))
+                .isInstanceOf(ConflictException.class);
+
+        // 3. Etapa 3 (reconsulta pós-lock): T2 e T3 passam pela Etapa 1 antes do INSERT, aguardam em findByIdWithLock,
+        // e encontram o pagamento criado por T1 mesmo após T1 concluir a venda.
+        Venda vendaPosLock = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("1.000"))
+        )));
+        Long vendaPosLockId = vendaPosLock.getId();
+        UUID uuidPosLock = UUID.randomUUID();
+        TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        CountDownLatch latchT1DetemLock = new CountDownLatch(1);
+        AtomicReference<Long> idInseridoPorT1 = new AtomicReference<>();
+        AtomicReference<Long> idRetornadoPorT2 = new AtomicReference<>();
+        AtomicReference<Throwable> erroT3 = new AtomicReference<>();
+        Queue<Throwable> errosInesperados = new ConcurrentLinkedQueue<>();
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(3)) {
+            pool.submit(() -> {
+                try {
+                    txTemplate.executeWithoutResult(status -> {
+                        Venda v1 = vendaRepository.findByIdWithLock(vendaPosLockId).orElseThrow();
+                        latchT1DetemLock.countDown();
+
+                        await().atMost(5, TimeUnit.SECONDS)
+                                .pollInterval(10, TimeUnit.MILLISECONDS)
+                                .until(() -> {
+                                    Integer bloqueadas = jdbcTemplate.queryForObject(
+                                            "SELECT COUNT(*) FROM pg_locks WHERE NOT granted", Integer.class);
+                                    return bloqueadas != null && bloqueadas >= 2;
+                                });
+
+                        Long pagId = pagamentoRepository.inserirIntencaoIdempotente(
+                                uuidPosLock,
+                                vendaPosLockId,
+                                MetodoPagamento.PIX.name(),
+                                StatusPagamento.PENDENTE.name(),
+                                new BigDecimal("100.00"),
+                                BigDecimal.ZERO,
+                                false,
+                                false
+                        ).orElseThrow();
+                        idInseridoPorT1.set(pagId);
+
+                        Pagamento p1 = pagamentoRepository.findById(pagId).orElseThrow();
+                        p1.confirmar(new BigDecimal("100.00"), "NSU-POS-LOCK");
+                        v1.registrarPagamentoConfirmado(p1);
+                        v1.concluir();
+                        vendaRepository.save(v1);
+                    });
+                } catch (Throwable t) {
+                    errosInesperados.add(t);
+                }
+            });
+
+            pool.submit(() -> {
+                try {
+                    assertThat(latchT1DetemLock.await(5, TimeUnit.SECONDS)).isTrue();
+                    idRetornadoPorT2.set(pagamentoService.criarIntencaoPagamento(
+                            vendaPosLockId, MetodoPagamento.PIX, new BigDecimal("100.00"), uuidPosLock));
+                } catch (Throwable t) {
+                    errosInesperados.add(t);
+                }
+            });
+
+            pool.submit(() -> {
+                try {
+                    assertThat(latchT1DetemLock.await(5, TimeUnit.SECONDS)).isTrue();
+                    pagamentoService.criarIntencaoPagamento(
+                            vendaPosLockId, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), uuidPosLock);
+                } catch (ConflictException ce) {
+                    erroT3.set(ce);
+                } catch (Throwable t) {
+                    errosInesperados.add(t);
+                }
+            });
+
+            pool.shutdown();
+            assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(errosInesperados).isEmpty();
+        assertThat(idInseridoPorT1.get()).isNotNull();
+        assertThat(idRetornadoPorT2.get()).isEqualTo(idInseridoPorT1.get());
+        assertThat(erroT3.get()).isInstanceOf(ConflictException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM pagamentos WHERE uuid_referencia = ?", Long.class, uuidPosLock))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("E3 Cenário 4 — Concorrência na mesma venda: payload igual retorna mesmo ID; divergente lança 409")
+    void e3_concorrenciaMesmaVendaIdempotenteEDivergente() throws Exception {
+        Produto prod = salvarProduto("7893001000010", "Produto E3 Concorrencia Mesma Venda",
+                new BigDecimal("100.00"), new BigDecimal("20.000"), new BigDecimal("1.000"));
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("1.000"))
+        )));
+        Long vendaId = venda.getId();
+        long deadlocksInicio = obterDeadlocksServidor();
+
+        // 1. 10 threads simultâneas com payload igual
+        int threadsIguais = 10;
+        UUID uuidIgual = UUID.randomUUID();
+        CyclicBarrier barreiraIgual = new CyclicBarrier(threadsIguais);
+        Set<Long> idsRetornados = ConcurrentHashMap.newKeySet();
+        Queue<Throwable> errosIguais = new ConcurrentLinkedQueue<>();
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(threadsIguais)) {
+            for (int i = 0; i < threadsIguais; i++) {
+                pool.submit(() -> {
+                    try {
+                        barreiraIgual.await(10, TimeUnit.SECONDS);
+                        idsRetornados.add(pagamentoService.criarIntencaoPagamento(
+                                vendaId, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), uuidIgual));
+                    } catch (Throwable t) {
+                        errosIguais.add(t);
+                    }
+                });
+            }
+            pool.shutdown();
+            assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(errosIguais).isEmpty();
+        assertThat(idsRetornados).hasSize(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM pagamentos WHERE uuid_referencia = ?", Long.class, uuidIgual))
+                .isEqualTo(1L);
+
+        // 2. Corrida na mesma venda com mesmo UUID e payloads divergentes
+        UUID uuidDivergente = UUID.randomUUID();
+        record Tentativa(MetodoPagamento metodo, BigDecimal valor) {}
+        List<Tentativa> tentativas = List.of(
+                new Tentativa(MetodoPagamento.PIX, new BigDecimal("100.00")),
+                new Tentativa(MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00")),
+                new Tentativa(MetodoPagamento.PIX, new BigDecimal("90.00")),
+                new Tentativa(MetodoPagamento.DINHEIRO, new BigDecimal("80.00"))
+        );
+
+        CyclicBarrier barreiraDivergente = new CyclicBarrier(tentativas.size());
+        Queue<Long> idsVencedores = new ConcurrentLinkedQueue<>();
+        Queue<ConflictException> conflitos = new ConcurrentLinkedQueue<>();
+        Queue<Throwable> errosInesperados = new ConcurrentLinkedQueue<>();
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(tentativas.size())) {
+            for (Tentativa t : tentativas) {
+                pool.submit(() -> {
+                    try {
+                        barreiraDivergente.await(10, TimeUnit.SECONDS);
+                        idsVencedores.add(pagamentoService.criarIntencaoPagamento(
+                                vendaId, t.metodo(), t.valor(), uuidDivergente));
+                    } catch (ConflictException ce) {
+                        conflitos.add(ce);
+                    } catch (Throwable err) {
+                        errosInesperados.add(err);
+                    }
+                });
+            }
+            pool.shutdown();
+            assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(errosInesperados).isEmpty();
+        assertThat(idsVencedores).hasSize(1);
+        assertThat(conflitos).hasSize(tentativas.size() - 1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM pagamentos WHERE uuid_referencia = ?", Long.class, uuidDivergente))
+                .isEqualTo(1L);
+        assertThat(obterDeadlocksServidor() - deadlocksInicio).isZero();
+    }
+
+    @Test
+    @DisplayName("E3 Cenário 4 — Concorrência entre vendas distintas sincronizada antes do INSERT aciona fallback da Etapa 6 com 409 sem sobrescrever")
+    void e3_concorrenciaEntreVendasDistintasSincronizadaAntesDoInsertAcionaFallback409() throws Exception {
+        Produto prod = salvarProduto("7893001100010", "Produto E3 Vendas Distintas",
+                new BigDecimal("50.00"), new BigDecimal("20.000"), new BigDecimal("1.000"));
+        Venda venda1 = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("1.000"))
+        )));
+        Venda venda2 = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(prod.getId(), new BigDecimal("2.000"))
+        )));
+
+        UUID uuidColisao = UUID.randomUUID();
+        CountDownLatch latchAntesDoInsert = new CountDownLatch(2);
+        long deadlocksInicio = obterDeadlocksServidor();
+        var repositorioReal = Mockito.mockingDetails(pagamentoRepository)
+                .getMockCreationSettings()
+                .getDefaultAnswer();
+
+        doAnswer(invocation -> {
+            latchAntesDoInsert.countDown();
+            if (!latchAntesDoInsert.await(5, TimeUnit.SECONDS)) {
+                throw new TimeoutException("Timeout aguardando sincronização antes do INSERT nativo");
+            }
+            return repositorioReal.answer(invocation);
+        }).when(pagamentoRepository).inserirIntencaoIdempotente(
+                eq(uuidColisao), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+
+        record ResultadoVencedor(Long pagamentoId, Long vendaId, MetodoPagamento metodo, BigDecimal valor) {}
+        Queue<ResultadoVencedor> vencedores = new ConcurrentLinkedQueue<>();
+        Queue<ConflictException> perdedores = new ConcurrentLinkedQueue<>();
+        Queue<Throwable> errosInesperados = new ConcurrentLinkedQueue<>();
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            pool.submit(() -> {
+                try {
+                    Long id = pagamentoService.criarIntencaoPagamento(
+                            venda1.getId(), MetodoPagamento.PIX, new BigDecimal("50.00"), uuidColisao);
+                    vencedores.add(new ResultadoVencedor(id, venda1.getId(), MetodoPagamento.PIX, new BigDecimal("50.00")));
+                } catch (ConflictException ce) {
+                    perdedores.add(ce);
+                } catch (Throwable t) {
+                    errosInesperados.add(t);
+                }
+            });
+
+            pool.submit(() -> {
+                try {
+                    Long id = pagamentoService.criarIntencaoPagamento(
+                            venda2.getId(), MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), uuidColisao);
+                    vencedores.add(new ResultadoVencedor(id, venda2.getId(), MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00")));
+                } catch (ConflictException ce) {
+                    perdedores.add(ce);
+                } catch (Throwable t) {
+                    errosInesperados.add(t);
+                }
+            });
+
+            pool.shutdown();
+            assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(errosInesperados).isEmpty();
+        assertThat(vencedores).hasSize(1);
+        assertThat(perdedores).hasSize(1);
+        assertThat(obterDeadlocksServidor() - deadlocksInicio).isZero();
+
+        ResultadoVencedor vencedor = vencedores.peek();
+        assertThat(vencedor).isNotNull();
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM pagamentos WHERE uuid_referencia = ?", Long.class, uuidColisao))
+                .isEqualTo(1L);
+
+        Map<String, Object> linhaPersistida = jdbcTemplate.queryForMap(
+                "SELECT id, venda_id, metodo, status, valor_esperado FROM pagamentos WHERE uuid_referencia = ?",
+                uuidColisao);
+        assertThat(((Number) linhaPersistida.get("id")).longValue()).isEqualTo(vencedor.pagamentoId());
+        assertThat(((Number) linhaPersistida.get("venda_id")).longValue()).isEqualTo(vencedor.vendaId());
+        assertThat(linhaPersistida.get("metodo")).isEqualTo(vencedor.metodo().name());
+        assertThat((BigDecimal) linhaPersistida.get("valor_esperado")).isEqualByComparingTo(vencedor.valor());
     }
 
     private Produto salvarProduto(String codigoBarras, String nome, BigDecimal preco,

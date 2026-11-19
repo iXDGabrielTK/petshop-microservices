@@ -6,8 +6,11 @@
 package inv.checkout.usecase;
 
 import common.exception.BusinessException;
+import common.exception.ConflictException;
+import common.exception.ResourceNotFoundException;
 import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.StatusPagamento;
+import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.domain.model.Venda;
 import inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent;
 import inv.checkout.infrastructure.persistence.PagamentoRepository;
@@ -17,7 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -408,148 +413,331 @@ class PagamentoServiceTest {
     class CriarIntencaoPagamentoTests {
 
         @Test
-        @DisplayName("Deve retornar ID existente de forma idempotente quando uuidReferencia já existir")
+        @DisplayName("Etapa 1 — Deve retornar ID existente de forma idempotente quando uuidReferencia já existir com payload igual")
         void deveRetornarIdExistenteQuandoUuidReferenciaJaExistir() {
             UUID uuidRef = UUID.randomUUID();
-            Pagamento pagamentoExistente = criarPagamento(100L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE);
+            Pagamento pagamentoExistente = criarPagamento(100L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
+                    new BigDecimal("50.00"), uuidRef);
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.of(pagamentoExistente));
 
             Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef);
 
             assertThat(id).isEqualTo(100L);
             verifyNoInteractions(vendaRepository);
-            verify(pagamentoRepository, never()).save(any());
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @ParameterizedTest(name = "Retry com valor equivalente {0} vs 10.00")
+        @ValueSource(strings = {"10.0", "10.000", "10"})
+        @DisplayName("Cenário 1 — Retry idêntico com escala equivalente (10.0, 10.000, 10 vs 10.00) retorna ID existente")
+        void deveRetornarIdExistenteQuandoEscalaEquivalente(String valorRetry) {
+            UUID uuidRef = UUID.randomUUID();
+            Pagamento pagamentoExistente = criarPagamento(101L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
+                    new BigDecimal("10.00"), uuidRef);
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.of(pagamentoExistente));
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal(valorRetry), uuidRef);
+
+            assertThat(id).isEqualTo(101L);
+            verifyNoInteractions(vendaRepository);
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
         }
 
         @Test
-        @DisplayName("Deve lançar BusinessException quando vendaId não for encontrada")
-        void deveLancarBusinessExceptionQuandoVendaNaoEncontrada() {
+        @DisplayName("Cenário 1 — Etapa 1 deve lançar ConflictException (409) quando uuidReferencia divergir em vendaId, metodo ou valor")
+        void deveLancarConflictExceptionNaEtapa1QuandoPayloadDivergir() {
+            UUID uuidRef = UUID.randomUUID();
+            Pagamento existente = criarPagamento(100L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
+                    new BigDecimal("50.00"), uuidRef);
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.of(existente));
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(99L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("50.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.01"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            verifyNoInteractions(vendaRepository);
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Cenário 1 — Etapa 2 deve lançar ResourceNotFoundException (404) quando vendaId não existir")
+        void deveLancarResourceNotFoundExceptionQuandoVendaNaoEncontrada() {
             UUID uuidRef = UUID.randomUUID();
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
-            when(vendaRepository.findById(999L)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(999L)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(999L, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("50.00"), uuidRef))
-                    .isInstanceOf(BusinessException.class)
+                    .isInstanceOf(ResourceNotFoundException.class)
                     .hasMessage("Venda não encontrada");
 
-            verify(pagamentoRepository, never()).save(any());
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @ParameterizedTest(name = "Venda em status incompatível: {0}")
+        @EnumSource(value = StatusVenda.class, names = {"ABERTA", "CONCLUIDA", "CANCELADA", "CANCELAMENTO_SOLICITADO"})
+        @DisplayName("Cenário 1 — Etapa 4 deve lançar ConflictException (409) quando venda não aceitar pagamento")
+        void deveLancarConflictExceptionQuandoVendaEmStatusIncompativel(StatusVenda statusIncompativel) {
+            UUID uuidRef = UUID.randomUUID();
+            Venda venda = criarVenda(10L, statusIncompativel);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class)
+                    .hasMessage("A venda não aceita pagamentos no status: " + statusIncompativel);
+
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Cenário 2 — Defesa em profundidade deve rejeitar valor null com BusinessException antes de acessar repositórios")
+        void deveRejeitarValorNuloComBusinessException() {
+            UUID uuidRef = UUID.randomUUID();
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, null, uuidRef))
+                    .isInstanceOf(BusinessException.class);
+
+            verifyNoInteractions(pagamentoRepository, vendaRepository);
+        }
+
+        @ParameterizedTest(name = "Valor inválido rejeitado no service: {0}")
+        @ValueSource(strings = {"0", "0.00", "-1.00", "10.005", "100000000.00"})
+        @DisplayName("Cenário 2 — Defesa em profundidade deve rejeitar <= 0, escala > 2 ou > 99999999.99 com BusinessException")
+        void deveRejeitarValoresInvalidosComBusinessException(String valorInvalido) {
+            UUID uuidRef = UUID.randomUUID();
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    10L, MetodoPagamento.PIX, new BigDecimal(valorInvalido), uuidRef))
+                    .isInstanceOf(BusinessException.class);
+
+            verifyNoInteractions(pagamentoRepository, vendaRepository);
+        }
+
+        @ParameterizedTest(name = "Valor aceito sem arredondamento: {0}")
+        @ValueSource(strings = {"10.000", "10.00", "100"})
+        @DisplayName("Cenário 2 — Service deve aceitar 10.000, 10.00 e 100 preservando escala efetiva <= 2")
+        void deveAceitarValoresValidosComEscalaEfetivaAteDuasCasas(String valorTexto) {
+            UUID uuidRef = UUID.randomUUID();
+            BigDecimal valor = new BigDecimal(valorTexto);
+            Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 10L, "PIX", "PENDENTE", valor, BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(210L));
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, valor, uuidRef);
+
+            assertThat(id).isEqualTo(210L);
+            verify(pagamentoRepository).inserirIntencaoIdempotente(
+                    uuidRef, 10L, "PIX", "PENDENTE", valor, BigDecimal.ZERO, false, false);
         }
 
         @Test
         @DisplayName("Deve criar intenção com status PROCESSANDO quando método exige processamento (CARTAO_CREDITO)")
         void deveCriarIntencaoComStatusProcessandoQuandoMetodoExigeProcessamento() {
             UUID uuidRef = UUID.randomUUID();
-            Venda venda = new Venda();
-            ReflectionTestUtils.setField(venda, "id", 10L);
+            BigDecimal valor = new BigDecimal("150.00");
+            Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
 
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
-            when(vendaRepository.findById(10L)).thenReturn(Optional.of(venda));
-            when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> {
-                Pagamento p = invocation.getArgument(0);
-                ReflectionTestUtils.setField(p, "id", 200L);
-                return p;
-            });
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 10L, "CARTAO_CREDITO", "PROCESSANDO", valor, BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(200L));
 
-            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("150.00"), uuidRef);
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.CARTAO_CREDITO, valor, uuidRef);
 
             assertThat(id).isEqualTo(200L);
-
-            ArgumentCaptor<Pagamento> captor = ArgumentCaptor.forClass(Pagamento.class);
-            verify(pagamentoRepository).save(captor.capture());
-            Pagamento salvo = captor.getValue();
-
-            assertThat(salvo.getStatus()).isEqualTo(StatusPagamento.PROCESSANDO);
-            assertThat(salvo.getMetodo()).isEqualTo(MetodoPagamento.CARTAO_CREDITO);
-            assertThat(salvo.getValorEsperado()).isEqualByComparingTo("150.00");
-            assertThat(salvo.getUuidReferencia()).isEqualTo(uuidRef);
-            assertThat(salvo.getVenda()).isEqualTo(venda);
+            verify(pagamentoRepository).inserirIntencaoIdempotente(
+                    uuidRef, 10L, "CARTAO_CREDITO", "PROCESSANDO", valor, BigDecimal.ZERO, false, false);
         }
 
         @Test
         @DisplayName("Deve criar intenção com status PENDENTE quando método NÃO exige processamento (PIX)")
         void deveCriarIntencaoComStatusPendenteQuandoMetodoNaoExigeProcessamento() {
             UUID uuidRef = UUID.randomUUID();
-            Venda venda = new Venda();
-            ReflectionTestUtils.setField(venda, "id", 10L);
+            BigDecimal valor = new BigDecimal("75.00");
+            Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
 
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
-            when(vendaRepository.findById(10L)).thenReturn(Optional.of(venda));
-            when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> {
-                Pagamento p = invocation.getArgument(0);
-                ReflectionTestUtils.setField(p, "id", 201L);
-                return p;
-            });
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 10L, "PIX", "PENDENTE", valor, BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(201L));
 
-            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("75.00"), uuidRef);
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, valor, uuidRef);
 
             assertThat(id).isEqualTo(201L);
-
-            ArgumentCaptor<Pagamento> captor = ArgumentCaptor.forClass(Pagamento.class);
-            verify(pagamentoRepository).save(captor.capture());
-            Pagamento salvo = captor.getValue();
-
-            assertThat(salvo.getStatus()).isEqualTo(StatusPagamento.PENDENTE);
-            assertThat(salvo.getMetodo()).isEqualTo(MetodoPagamento.PIX);
-            assertThat(salvo.getValorEsperado()).isEqualByComparingTo("75.00");
-            assertThat(salvo.getUuidReferencia()).isEqualTo(uuidRef);
+            verify(pagamentoRepository).inserirIntencaoIdempotente(
+                    uuidRef, 10L, "PIX", "PENDENTE", valor, BigDecimal.ZERO, false, false);
         }
 
         @Test
         @DisplayName("Deve criar intenção com status PROCESSANDO quando método for CARTAO_DEBITO")
         void deveCriarIntencaoComStatusProcessandoQuandoCartaoDebito() {
             UUID uuidRef = UUID.randomUUID();
-            Venda venda = new Venda();
-            ReflectionTestUtils.setField(venda, "id", 15L);
+            BigDecimal valor = new BigDecimal("89.90");
+            Venda venda = criarVenda(15L, StatusVenda.AGUARDANDO_PAGAMENTO);
 
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
-            when(vendaRepository.findById(15L)).thenReturn(Optional.of(venda));
-            when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> {
-                Pagamento p = invocation.getArgument(0);
-                ReflectionTestUtils.setField(p, "id", 202L);
-                return p;
-            });
+            when(vendaRepository.findByIdWithLock(15L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 15L, "CARTAO_DEBITO", "PROCESSANDO", valor, BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(202L));
 
-            Long id = pagamentoService.criarIntencaoPagamento(15L, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("89.90"), uuidRef);
+            Long id = pagamentoService.criarIntencaoPagamento(15L, MetodoPagamento.CARTAO_DEBITO, valor, uuidRef);
 
             assertThat(id).isEqualTo(202L);
-
-            ArgumentCaptor<Pagamento> captor = ArgumentCaptor.forClass(Pagamento.class);
-            verify(pagamentoRepository).save(captor.capture());
-            Pagamento salvo = captor.getValue();
-
-            assertThat(salvo.getStatus()).isEqualTo(StatusPagamento.PROCESSANDO);
-            assertThat(salvo.getMetodo()).isEqualTo(MetodoPagamento.CARTAO_DEBITO);
-            assertThat(salvo.getValorEsperado()).isEqualByComparingTo("89.90");
-            assertThat(salvo.getUuidReferencia()).isEqualTo(uuidRef);
+            verify(pagamentoRepository).inserirIntencaoIdempotente(
+                    uuidRef, 15L, "CARTAO_DEBITO", "PROCESSANDO", valor, BigDecimal.ZERO, false, false);
         }
 
         @Test
         @DisplayName("Deve criar intenção com status PENDENTE quando método for DINHEIRO")
         void deveCriarIntencaoComStatusPendenteQuandoDinheiro() {
             UUID uuidRef = UUID.randomUUID();
-            Venda venda = new Venda();
-            ReflectionTestUtils.setField(venda, "id", 16L);
+            BigDecimal valor = new BigDecimal("120.00");
+            Venda venda = criarVenda(16L, StatusVenda.AGUARDANDO_PAGAMENTO);
 
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
-            when(vendaRepository.findById(16L)).thenReturn(Optional.of(venda));
-            when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> {
-                Pagamento p = invocation.getArgument(0);
-                ReflectionTestUtils.setField(p, "id", 203L);
-                return p;
-            });
+            when(vendaRepository.findByIdWithLock(16L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 16L, "DINHEIRO", "PENDENTE", valor, BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(203L));
 
-            Long id = pagamentoService.criarIntencaoPagamento(16L, MetodoPagamento.DINHEIRO, new BigDecimal("120.00"), uuidRef);
+            Long id = pagamentoService.criarIntencaoPagamento(16L, MetodoPagamento.DINHEIRO, valor, uuidRef);
 
             assertThat(id).isEqualTo(203L);
+            verify(pagamentoRepository).inserirIntencaoIdempotente(
+                    uuidRef, 16L, "DINHEIRO", "PENDENTE", valor, BigDecimal.ZERO, false, false);
+        }
 
-            ArgumentCaptor<Pagamento> captor = ArgumentCaptor.forClass(Pagamento.class);
-            verify(pagamentoRepository).save(captor.capture());
-            Pagamento salvo = captor.getValue();
+        @ParameterizedTest(name = "Etapa 1 com venda em status {0}")
+        @EnumSource(value = StatusVenda.class, names = {"CONCLUIDA", "CANCELADA"})
+        @DisplayName("Cenário 3 — Etapa 1 retorna ID existente ou ConflictException quando pagamento já existe mesmo com venda finalizada")
+        void etapa1DeveRetornarIdOuConflitoMesmoComVendaFinalizada(StatusVenda statusFinal) {
+            UUID uuidRef = UUID.randomUUID();
+            Venda vendaFinalizada = criarVenda(10L, statusFinal);
+            Pagamento existente = new Pagamento(vendaFinalizada, MetodoPagamento.PIX, new BigDecimal("100.00"), uuidRef);
+            ReflectionTestUtils.setField(existente, "id", 299L);
+            ReflectionTestUtils.setField(existente, "status", StatusPagamento.CONFIRMADO);
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.of(existente));
 
-            assertThat(salvo.getStatus()).isEqualTo(StatusPagamento.PENDENTE);
-            assertThat(salvo.getMetodo()).isEqualTo(MetodoPagamento.DINHEIRO);
-            assertThat(salvo.getValorEsperado()).isEqualByComparingTo("120.00");
-            assertThat(salvo.getUuidReferencia()).isEqualTo(uuidRef);
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("100.00"), uuidRef);
+            assertThat(id).isEqualTo(299L);
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("99.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            verifyNoInteractions(vendaRepository);
+        }
+
+        @ParameterizedTest(name = "Retry pós-lock com venda já em status {0}")
+        @EnumSource(value = StatusVenda.class, names = {"CONCLUIDA", "CANCELADA"})
+        @DisplayName("Cenário 3 — Reconsulta pós-lock (Etapa 3) deve retornar ID mesmo com venda já CONCLUIDA/CANCELADA se payload coincidir")
+        void deveRetornarIdNaReconsultaPosLockMesmoComVendaFinalizada(StatusVenda statusPosLock) {
+            UUID uuidRef = UUID.randomUUID();
+            Venda venda = criarVenda(10L, statusPosLock);
+            Pagamento concorrente = criarPagamento(300L, 10L, MetodoPagamento.PIX, StatusPagamento.CONFIRMADO,
+                    new BigDecimal("100.00"), uuidRef);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(concorrente));
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("100.0"), uuidRef);
+
+            assertThat(id).isEqualTo(300L);
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Cenário 3 — Reconsulta pós-lock (Etapa 3) deve lançar ConflictException quando payload divergir")
+        void deveLancarConflictExceptionNaReconsultaPosLockQuandoPayloadDivergir() {
+            UUID uuidRef = UUID.randomUUID();
+            Venda venda = criarVenda(10L, StatusVenda.CONCLUIDA);
+            Pagamento concorrente = criarPagamento(300L, 10L, MetodoPagamento.PIX, StatusPagamento.CONFIRMADO,
+                    new BigDecimal("100.00"), uuidRef);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(concorrente));
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Cenário 4 — Fallback da Etapa 6 deve retornar ID existente quando conflito no INSERT tiver payload igual")
+        void deveRetornarIdNoFallbackEtapa6QuandoPayloadIgual() {
+            UUID uuidRef = UUID.randomUUID();
+            Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
+            Pagamento vencedor = criarPagamento(400L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
+                    new BigDecimal("50.00"), uuidRef);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(vencedor));
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 10L, "PIX", "PENDENTE", new BigDecimal("50.0"), BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.empty());
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.0"), uuidRef);
+
+            assertThat(id).isEqualTo(400L);
+            verify(pagamentoRepository, times(3)).findByUuidReferencia(uuidRef);
+        }
+
+        @Test
+        @DisplayName("Cenário 4 — Fallback da Etapa 6 deve lançar ConflictException quando conflito no INSERT divergir em vendaId, metodo ou valor")
+        void deveLancarConflictExceptionNoFallbackEtapa6QuandoPayloadDivergir() {
+            UUID uuidRef = UUID.randomUUID();
+            Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
+            Pagamento vencedorOutraVenda = criarPagamento(401L, 99L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
+                    new BigDecimal("50.00"), uuidRef);
+            Pagamento vencedorOutroMetodo = criarPagamento(402L, 10L, MetodoPagamento.DINHEIRO, StatusPagamento.PENDENTE,
+                    new BigDecimal("50.00"), uuidRef);
+            Pagamento vencedorOutroValor = criarPagamento(403L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
+                    new BigDecimal("60.00"), uuidRef);
+
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean()))
+                    .thenReturn(Optional.empty());
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(vencedorOutraVenda));
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(vencedorOutroMetodo));
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(vencedorOutroValor));
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
+                    .isInstanceOf(ConflictException.class);
         }
     }
 
@@ -671,11 +859,26 @@ class PagamentoServiceTest {
     }
 
     private static Pagamento criarPagamento(Long pagamentoId, Long vendaId, MetodoPagamento metodo, StatusPagamento status) {
-        Venda venda = new Venda();
-        ReflectionTestUtils.setField(venda, "id", vendaId);
-        Pagamento pagamento = new Pagamento(venda, metodo, new BigDecimal("100.00"), UUID.randomUUID());
+        return criarPagamento(pagamentoId, vendaId, metodo, status, new BigDecimal("100.00"), UUID.randomUUID());
+    }
+
+    private static Pagamento criarPagamento(Long pagamentoId,
+                                            Long vendaId,
+                                            MetodoPagamento metodo,
+                                            StatusPagamento status,
+                                            BigDecimal valorEsperado,
+                                            UUID uuidReferencia) {
+        Venda venda = criarVenda(vendaId, StatusVenda.AGUARDANDO_PAGAMENTO);
+        Pagamento pagamento = new Pagamento(venda, metodo, valorEsperado, uuidReferencia);
         ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
         ReflectionTestUtils.setField(pagamento, "status", status);
         return pagamento;
+    }
+
+    private static Venda criarVenda(Long vendaId, StatusVenda status) {
+        Venda venda = new Venda();
+        ReflectionTestUtils.setField(venda, "id", vendaId);
+        ReflectionTestUtils.setField(venda, "status", status);
+        return venda;
     }
 }
