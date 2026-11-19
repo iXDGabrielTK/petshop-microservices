@@ -330,7 +330,10 @@ class CancelamentoVendaConcluidaIT {
         mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.mensagem").value("Venda #" + vendaId + " não pode ser cancelada pois está no status: CANCELADA"));
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.title").value("Conflito de Estado"))
+                .andExpect(jsonPath("$.detail").value("Venda #" + vendaId + " não pode ser cancelada pois está no status: CANCELADA"))
+                .andExpect(jsonPath("$.mensagem").doesNotHaveJsonPath());
     }
 
     @Test
@@ -357,7 +360,10 @@ class CancelamentoVendaConcluidaIT {
         mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.mensagem").value("Cancelamento de venda concluída temporariamente desabilitado"));
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.title").value("Serviço Indisponível"))
+                .andExpect(jsonPath("$.detail").value("Cancelamento de venda concluída temporariamente desabilitado"))
+                .andExpect(jsonPath("$.mensagem").doesNotHaveJsonPath());
 
         // Venda permanece CONCLUIDA
         Venda vendaAposTentativa = vendaRepository.findById(vendaId).orElseThrow();
@@ -478,7 +484,10 @@ class CancelamentoVendaConcluidaIT {
         mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.mensagem").value("Venda #" + vendaId + " não pode ser cancelada pois está no status: AGUARDANDO_PAGAMENTO"));
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.title").value("Conflito de Estado"))
+                .andExpect(jsonPath("$.detail").value("Venda #" + vendaId + " não pode ser cancelada pois está no status: AGUARDANDO_PAGAMENTO"))
+                .andExpect(jsonPath("$.mensagem").doesNotHaveJsonPath());
 
         // Venda permanece AGUARDANDO_PAGAMENTO
         Venda vendaAposTentativa = vendaRepository.findById(vendaId).orElseThrow();

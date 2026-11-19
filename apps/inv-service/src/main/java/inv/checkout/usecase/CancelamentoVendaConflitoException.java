@@ -5,12 +5,14 @@
  */
 package inv.checkout.usecase;
 
+import common.exception.ConflictException;
+
 /**
  * Exceção lançada quando uma solicitação de cancelamento de venda concluída entra em conflito
  * com o estado atual da venda (ex: venda já cancelada ou ainda em aberto).
  * Mapeada para HTTP 409 Conflict.
  */
-public class CancelamentoVendaConflitoException extends RuntimeException {
+public class CancelamentoVendaConflitoException extends ConflictException {
 
     private static final String DEFAULT_MESSAGE = "Conflito ao cancelar venda: status atual incompatível";
 
