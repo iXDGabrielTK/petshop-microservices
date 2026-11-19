@@ -3,7 +3,7 @@
 O módulo **Inventory** é responsável pelo catálogo de produtos, rastreabilidade física de mercadorias, prevenção de *overselling* (vendas a descoberto) via **SQL Atômico** e alertas de estoque baixo orientados a eventos com proteção anti-spam.
 
 A fronteira pública do módulo (*Published Language* em `inv.inventory.api`, anotada com `@NamedInterface("api")` do Spring Modulith) expõe três contratos puros:
-* **`EstoqueCommandService`** (`reservar`, `confirmarBaixa`, `estornarReserva` recebendo `ComandoEstoqueVenda` com `Propagation.MANDATORY`), implementado por `EstoqueService` (`package-private`), que ordena os itens por `produtoId ASC` (`ORDEM_DE_LOCK`) antes dos `UPDATE`s nativos para eliminar deadlocks (`SQLState 40P01`) em carrinhos concorrentes com múltiplos itens.
+* **`EstoqueCommandService`** recebe `ComandoEstoqueVenda` nas operações `reservar`, `confirmarBaixa`, `estornarReserva` e `devolverEstoque`. Todas participam da transação do chamador (`Propagation.MANDATORY`). A implementação `EstoqueService` processa os produtos em ordem crescente de ID para manter a mesma ordem de aquisição de locks em carrinhos concorrentes.
 * **`CatalogoQueryService`** (`buscarParaCheckout`), implementado por `JpaCatalogoQueryService` (`package-private`), fornecendo snapshots imutáveis (`ProdutoCheckoutView`) ao **Checkout**.
 * **`EstoqueQueryService`** (`resumo` retornando `ResumoEstoque`), implementado por `JpaEstoqueQueryService` (`package-private`), consumido pelo módulo **Dashboard**.
 
@@ -17,7 +17,7 @@ A fronteira pública do módulo (*Published Language* em `inv.inventory.api`, an
 | **Estoque Disponível** | Quantidade física de produto livre para novas compras nos caixas de PDV. |
 | **Estoque Reservado** | Quantidade alocada para vendas em andamento que ainda aguardam liquidação de pagamento. |
 | **Estoque Mínimo** | Ponto de reposição (*Reorder Point*); limiar crítico que dispara alertas automáticos para compras/administração. |
-| **Movimentação de Estoque** | Registro de auditoria (`movimentacoes_estoque`) com tipo (`RESERVA`, `SAIDA`, `CANCELAMENTO_RESERVA`, `ENTRADA`, `AJUSTE`) e timestamp. |
+| **Movimentação de Estoque** | Registro de auditoria (`movimentacoes_estoque`) com tipo (`RESERVA`, `SAIDA`, `CANCELAMENTO_RESERVA`, `ENTRADA`, `DEVOLUCAO`) e timestamp. |
 | **Transição de Limiar (Anti-Spam)** | Regra que dispara o evento de alerta apenas quando o saldo cruza o limite mínimo pela primeira vez (\(Antes > Minimo\) e \(Depois \le Minimo\)), evitando spams de e-mail em vendas subsequentes. |
 
 ---
@@ -35,7 +35,7 @@ stateDiagram-v2
     Livre --> Reservado: Início da Venda (reservarEstoqueAtomo)
     Reservado --> Vendido: Pagamento Confirmado (confirmarBaixaEstoqueAtomo)
     Reservado --> Livre: Venda Expirada / Cancelada (estornarReservaEstoqueAtomo)
-    Vendido --> [*]
+    Vendido --> Livre: Cancelamento de venda concluída (devolverEstoque)
 ```
 
 ### Comportamento das Queries SQL Nativas ([`ProdutoRepository.java`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/persistence/ProdutoRepository.java#L27-L50))
@@ -46,10 +46,17 @@ classDiagram
         +reservarEstoqueAtomo(id, qtd) : UPDATE produtos SET disponivel = disponivel - qtd, reservado = reservado + qtd WHERE disponivel >= qtd RETURNING disponivel
         +confirmarBaixaEstoqueAtomo(id, qtd) : UPDATE produtos SET reservado = reservado - qtd WHERE reservado >= qtd RETURNING reservado
         +estornarReservaEstoqueAtomo(id, qtd) : UPDATE produtos SET reservado = reservado - qtd, disponivel = disponivel + qtd WHERE reservado >= qtd RETURNING disponivel
+        +devolverEstoqueAtomo(id, qtd) : UPDATE produtos SET disponivel = disponivel + qtd RETURNING disponivel
     }
 ```
 
 ---
+
+### Devolução integral de venda concluída
+
+O Checkout envia todos os itens ao cancelar a venda. O Inventory consolida os itens repetidos e compara os totais de cada produto com a soma das movimentações `SAIDA` daquela venda. Uma venda sem saídas aceita apenas um comando vazio. Para uma venda com saídas, qualquer produto omitido ou adicional e qualquer quantidade abaixo ou acima do total vendido causam `BusinessException`.
+
+Cada produto admite uma única `DEVOLUCAO`. O Inventory grava a movimentação antes de recompor o saldo disponível. Uma repetição com a mesma quantidade preserva a movimentação e o saldo, inclusive quando só a escala decimal difere. Se a devolução registrada divergir do total vendido, a transação reverte todo o lote, incluindo produtos já processados.
 
 ## 3. Lógica de Alerta Anti-Spam para Estoque Baixo
 
@@ -93,7 +100,7 @@ erDiagram
         bigint id PK
         bigint produto_id FK
         bigint venda_id FK
-        varchar tipo "RESERVA, SAIDA, CANCELAMENTO_RESERVA, ENTRADA"
+        varchar tipo "RESERVA, SAIDA, CANCELAMENTO_RESERVA, ENTRADA, DEVOLUCAO"
         numeric quantidade
         timestamp data_hora
         varchar observacao

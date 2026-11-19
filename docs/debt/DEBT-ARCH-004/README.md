@@ -11,7 +11,7 @@
 | **1** | **E1** | [E1.md](./E1.md) | `hasRole('ADMIN')` em `VendaController`, `VendaSecurityFilterTest` (red → green), `ProdutoSecurityFilterTest`, env var da flag (`false`) e docs (`F1`, `Q1`) | `[x]` Concluído |
 | **2** | **E2** | [E2.md](./E2.md) | `MovimentacaoResponse` via JPQL + `countQuery`, `ProdutoResumoResponse` (`estoqueDisponivel`), normalização de `page`/`size`, whitelist de `sort` + HTTP 400 (`F2`, `Q2`) | `[x]` Implementação concluída; alinhamento externo antes do deploy |
 | **3** | **E3** | [E3.md](./E3.md) | Protocolo em 6 etapas em `criarIntencaoPagamento`, `ON CONFLICT DO NOTHING RETURNING id`, rejeição de escala `> 2`, `ConflictException` (`409`) em `common-lib` (`F3`, `Q3`) | `[x]` Implementação concluída; alinhamento externo antes do deploy |
-| **4** | **E4** | [E4.md](./E4.md) | Devolução estritamente integral (`SAIDA`s vs comando e `DEVOLUCAO`), remoção do `return` antecipado, rollback de lote e avaliação condicional de `V9` (`F4`, `Q4`) | `[ ]` Pendente |
+| **4** | **E4** | [E4.md](./E4.md) | Devolução estritamente integral (`SAIDA`s vs comando e `DEVOLUCAO`), remoção do `return` antecipado, rollback de lote e avaliação condicional de `V9` (`F4`, `Q4`) | `[x]` Concluído |
 | **5** | **E5** | [E5.md](./E5.md) | `ServiceUnavailableException` (`503 ProblemDetail`) em `common-lib`, remoção dos handlers locais de `VendaController` e alinhamento de consumidores (`F5`, `Q5`) | `[ ]` Pendente |
 
 ```mermaid
@@ -121,6 +121,6 @@ flowchart LR
 - [x] **PR 2 (`E2`):** `GET /movimentacoes` e `GET /produtos*` retornam `MovimentacaoResponse` e `ProdutoResumoResponse` (`estoqueDisponivel`), sem `LazyInitializationException`, com paginação normalizada e ordenação/whitelist testadas, incluindo `dataHora` ISO-8601 no novo DTO. Alinhamento com consumidores permanece como gate de deploy abaixo.
 - [ ] **Deploy PR 2:** confirmar com SPA/PDV a adoção dos novos contratos e a ausência de uso dos campos removidos de produtos antes de publicar a alteração.
 - [x] **PR 3 (`E3`):** `ConflictException` (`409 ProblemDetail`) em `common-lib`; `criarIntencaoPagamento` executa o protocolo de 6 etapas (`ON CONFLICT DO NOTHING RETURNING id`) e rejeita `> 2` casas decimais sem arredondar, provado por testes unitários e `*IT` concorrentes em PostgreSQL.
-- [ ] **PR 4 (`E4`):** `EstoqueService.devolverEstoque` impõe devolução estritamente integral contra `SAIDA`s e valida quantidade em repetição de `DEVOLUCAO`, com avaliação `EXPLAIN (ANALYZE, BUFFERS)` documentada para `V9`.
+- [x] **PR 4 (`E4`):** `EstoqueService.devolverEstoque` impõe devolução estritamente integral contra `SAIDA`s e valida quantidade em repetição de `DEVOLUCAO`, com avaliação `EXPLAIN (ANALYZE, BUFFERS)` documentada para `V9`.
 - [ ] **PR 5 (`E5`):** `ServiceUnavailableException` (`503 ProblemDetail`) em `common-lib`; handlers locais removidos de `VendaController`; consumidores e suítes (`GlobalExceptionHandlerTest`, `VendaControllerTest`, `CancelamentoVendaConcluidaIT`) migrados para `ProblemDetail`.
 - [ ] **Evidência Surefire e Gates:** todos os unitários, `*IT` pertinentes (inspecionados em `apps/inv-service/target/surefire-reports/` com `skipped = 0`, `failures = 0`, `errors = 0`), `ArquiteturaTest` (`R1`–`R15`) e `ModulithTest` verdes em Java 21 LTS com Docker ativo.
