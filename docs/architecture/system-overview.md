@@ -334,13 +334,16 @@ O tratamento de exceções HTTP é centralizado no [`GlobalExceptionHandler`](..
 | :---: | :--- | :--- | :--- |
 | **400** | `MethodArgumentNotValidException` (inclui `fields`) | `Dados Inválidos` | `https://petshop.com/errors/invalid-data` |
 | **400** | `BusinessException` | `Regra de Negócio Violada` | `https://petshop.com/errors/business-rule-violation` |
-| **401** | `BadCredentialsException`, `InternalAuthenticationServiceException` (e falhas de JWT no filtro Security) | `Falha na Autenticação` | `https://petshop.com/errors/unauthorized` |
+| **401** | `BadCredentialsException`, `InternalAuthenticationServiceException` (camada MVC) | `Falha na Autenticação` | `https://petshop.com/errors/unauthorized` |
 | **403** | `AccessDeniedException` | `Acesso Negado` | `https://petshop.com/errors/forbidden` |
 | **404** | `ResourceNotFoundException` | `Recurso não encontrado` | `https://petshop.com/errors/resource-not-found` |
 | **409** | `ConflictException` (inclui `CancelamentoVendaConflitoException` e conflitos de intenção de pagamento) | `Conflito de Estado` | `https://petshop.com/errors/conflict` |
 | **409** | `OptimisticLockingFailureException`, `ObjectOptimisticLockingFailureException` | `Conflito de Concorrência` | `https://petshop.com/errors/optimistic-lock-failure` |
 | **503** | `ServiceUnavailableException` (inclui `CancelamentoVendaDesabilitadoException`) | `Serviço Indisponível` | `https://petshop.com/errors/service-unavailable` |
 | **500** | `Exception` (fallback genérico) | `Erro Interno do Servidor` | `https://petshop.com/errors/internal-server-error` |
+
+> [!NOTE]
+> **Rejeição na cadeia de filtros JWT (`401` sem `ProblemDetail`):** no `inv-service` e demais Resource Servers, requisições sem token Bearer ou com JWT ausente, malformado, expirado ou assinado por chave não confiável são interceptadas na cadeia de filtros do Spring Security antes de alcançar os controllers e o `GlobalExceptionHandler`. O comportamento atual devolve HTTP `401 Unauthorized` com o cabeçalho `WWW-Authenticate` (`Bearer` ou `Bearer error="invalid_token", ...`) e **corpo vazio**, diferentemente das exceções `BadCredentialsException` e `InternalAuthenticationServiceException` tratadas na camada MVC pelo `GlobalExceptionHandler` (que respondem `ProblemDetail` com `title: "Falha na Autenticação"`).
 
 ---
 
