@@ -24,6 +24,8 @@ import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +50,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -534,33 +537,188 @@ class EstoqueCommandServiceIT {
     }
 
     @Test
+    void devolucaoVaziaSemSaidaNaoAlteraEstoqueNemMovimentacoes() {
+        salvarProdutoDevolucao("7891000000099", "P1");
+        long vendaId = criarVendaFixture();
+        EstadoEstoque antes = consultarEstadoEstoque();
+
+        txTemplate.executeWithoutResult(status ->
+                estoqueCommandService.devolverEstoque(new ComandoEstoqueVenda(vendaId, List.of())));
+
+        assertThat(consultarEstadoEstoque()).isEqualTo(antes);
+    }
+
+    @Test
+    void devolucaoVaziaComSaidaRejeitaOmissaoTotal() {
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        long vendaId = criarVendaFixture();
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "2.000");
+
+        verificarDevolucaoRejeitadaSemAlteracoes(vendaId, List.of(),
+                "Produtos da devolução divergem das saídas da venda");
+    }
+
+    @Test
+    void devolucaoComItemSemSaidaPreviaEhRejeitada() {
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        long vendaId = criarVendaFixture();
+        registrarMovimentacao(criarVendaFixture(), p1, TipoMovimentacao.SAIDA, "2.000");
+
+        verificarDevolucaoRejeitadaSemAlteracoes(vendaId,
+                List.of(new ItemComando(p1.getId(), new BigDecimal("2.000"))),
+                "Produtos da devolução divergem das saídas da venda");
+    }
+
+    @Test
+    void devolucaoRejeitaProdutoOmitidoEProdutoEstranhoAVenda() {
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        Produto p2 = salvarProdutoDevolucao("7891000000100", "P2");
+        Produto p3 = salvarProdutoDevolucao("7891000000101", "P3");
+        long vendaId = criarVendaFixture();
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "2.000");
+        registrarMovimentacao(vendaId, p2, TipoMovimentacao.SAIDA, "3.000");
+
+        ItemComando itemP1 = new ItemComando(p1.getId(), new BigDecimal("2.000"));
+        ItemComando itemP2 = new ItemComando(p2.getId(), new BigDecimal("3.000"));
+        ItemComando itemP3 = new ItemComando(p3.getId(), new BigDecimal("1.000"));
+        verificarDevolucaoRejeitadaSemAlteracoes(vendaId, List.of(itemP1),
+                "Produtos da devolução divergem das saídas da venda");
+        verificarDevolucaoRejeitadaSemAlteracoes(vendaId, List.of(itemP1, itemP2, itemP3),
+                "Produtos da devolução divergem das saídas da venda");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1.000", "3.000"})
+    void devolucaoRejeitaQuantidadeParcialOuExcedente(String quantidadeP1) {
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        Produto p2 = salvarProdutoDevolucao("7891000000100", "P2");
+        long vendaId = criarVendaFixture();
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "2.000");
+        registrarMovimentacao(vendaId, p2, TipoMovimentacao.SAIDA, "3.000");
+
+        verificarDevolucaoRejeitadaSemAlteracoes(vendaId, List.of(
+                new ItemComando(p1.getId(), new BigDecimal(quantidadeP1)),
+                new ItemComando(p2.getId(), new BigDecimal("3.000"))),
+                "Quantidade de devolução diverge da saída do produto", p1.getId().toString());
+    }
+
+    @Test
+    void devolucaoJaRegistradaComQuantidadeIdenticaNaoAlteraEstoqueNemMovimentacoes() {
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        long vendaId = criarVendaFixture();
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "0.500");
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "1.500");
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.DEVOLUCAO, "2.000");
+        EstadoEstoque antes = consultarEstadoEstoque();
+        ComandoEstoqueVenda comando = new ComandoEstoqueVenda(vendaId,
+                List.of(new ItemComando(p1.getId(), new BigDecimal("2"))));
+
+        txTemplate.executeWithoutResult(status -> estoqueCommandService.devolverEstoque(comando));
+
+        assertThat(consultarEstadoEstoque()).isEqualTo(antes);
+    }
+
+    @Test
+    void devolucaoJaRegistradaComQuantidadeDivergenteEhRejeitada() {
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        long vendaId = criarVendaFixture();
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "2.000");
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.DEVOLUCAO, "1.000");
+
+        verificarDevolucaoRejeitadaSemAlteracoes(vendaId,
+                List.of(new ItemComando(p1.getId(), new BigDecimal("2.000"))),
+                "Devolução registrada divergente", p1.getId().toString());
+    }
+
+    @Test
     @DisplayName("Falha em item subsequente em devolverEstoque reverte integralmente o UPDATE e a movimentação do 1º item")
     void falhaEmItemSubsequenteEmDevolverEstoqueReverteLoteInteiro() {
-        Produto p1 = salvarProduto("7891000000099", "Produto Devolução Rollback",
-                new BigDecimal("25.00"), new BigDecimal("10.000"), new BigDecimal("2.000"));
+        Produto p1 = salvarProdutoDevolucao("7891000000099", "P1");
+        Produto p2 = salvarProdutoDevolucao("7891000000100", "P2");
+        assertThat(p1.getId()).isLessThan(p2.getId());
 
         long vendaId = criarVendaFixture();
-        long produtoIdInexistente = 999999L;
+        registrarMovimentacao(vendaId, p1, TipoMovimentacao.SAIDA, "2.000");
+        registrarMovimentacao(vendaId, p2, TipoMovimentacao.SAIDA, "1.000");
+        registrarMovimentacao(vendaId, p2, TipoMovimentacao.DEVOLUCAO, "3.000");
+        EstadoEstoque antes = consultarEstadoEstoque();
+        assertThat(quantidadesDevolvidas(vendaId, p1)).isEmpty();
+
         ComandoEstoqueVenda comando = new ComandoEstoqueVenda(vendaId, List.of(
-                new ItemComando(p1.getId(), new BigDecimal("2.000")),
-                new ItemComando(produtoIdInexistente, new BigDecimal("1.000"))
+                new ItemComando(p2.getId(), new BigDecimal("1.000")),
+                new ItemComando(p1.getId(), new BigDecimal("2.000"))
         ));
 
+        assertThatThrownBy(() -> txTemplate.executeWithoutResult(status -> {
+            try {
+                estoqueCommandService.devolverEstoque(comando);
+            } catch (BusinessException ex) {
+                assertThat(ex).hasMessageContainingAll("Devolução registrada divergente", p2.getId().toString());
+
+                // A mesma transação ainda enxerga ambas as escritas de P1 quando P2 falha.
+                assertThat(quantidadesDevolvidas(vendaId, p1)).singleElement()
+                        .satisfies(quantidade -> assertThat(quantidade).isEqualByComparingTo("2.000"));
+                BigDecimal saldoP1 = jdbcTemplate.queryForObject(
+                        "SELECT estoque_disponivel FROM produtos WHERE id = ?", BigDecimal.class, p1.getId());
+                assertThat(saldoP1).isEqualByComparingTo("12.000");
+                throw ex;
+            }
+        })).isInstanceOf(BusinessException.class)
+                .hasMessageContainingAll("Devolução registrada divergente", p2.getId().toString());
+
+        txTemplate.executeWithoutResult(status -> {
+            assertThat(consultarEstadoEstoque()).isEqualTo(antes);
+            Produto p1Apos = produtoRepository.findById(p1.getId()).orElseThrow();
+            assertThat(p1Apos.getEstoqueDisponivel()).isEqualByComparingTo("10.000");
+            assertThat(p1Apos.getEstoqueReservado()).isEqualByComparingTo("0.000");
+            assertThat(quantidadesDevolvidas(vendaId, p1)).isEmpty();
+            assertThat(quantidadesDevolvidas(vendaId, p2)).singleElement()
+                    .satisfies(quantidade -> assertThat(quantidade).isEqualByComparingTo("3.000"));
+        });
+    }
+
+    private void verificarDevolucaoRejeitadaSemAlteracoes(long vendaId, List<ItemComando> itens,
+                                                         String... mensagemEsperada) {
+        EstadoEstoque antes = consultarEstadoEstoque();
+        ComandoEstoqueVenda comando = new ComandoEstoqueVenda(vendaId, itens);
         assertThatThrownBy(() -> txTemplate.executeWithoutResult(status -> estoqueCommandService.devolverEstoque(comando)))
-                .isInstanceOf(RuntimeException.class);
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContainingAll(mensagemEsperada);
+        assertThat(consultarEstadoEstoque()).isEqualTo(antes);
+    }
 
-        Produto p1Apos = produtoRepository.findById(p1.getId()).orElseThrow();
-        assertThat(p1Apos.getEstoqueDisponivel())
-                .as("Estoque disponível do 1º item deve permanecer inalterado após rollback")
-                .isEqualByComparingTo("10.000");
-        assertThat(p1Apos.getEstoqueReservado()).isEqualByComparingTo("0.000");
+    private EstadoEstoque consultarEstadoEstoque() {
+        return new EstadoEstoque(
+                jdbcTemplate.queryForList("""
+                        SELECT id, estoque_disponivel, estoque_reservado, ctid::text AS versao_fisica
+                          FROM produtos ORDER BY id
+                        """),
+                jdbcTemplate.queryForList("SELECT * FROM movimentacoes_estoque ORDER BY id"));
+    }
 
-        List<MovimentacaoEstoque> movsDevolucao = movimentacaoRepository.findAll().stream()
-                .filter(m -> m.getTipo() == TipoMovimentacao.DEVOLUCAO && m.getVendaId() != null && m.getVendaId() == vendaId)
-                .toList();
-        assertThat(movsDevolucao)
-                .as("Nenhuma movimentação de DEVOLUCAO deve ser persistida para a venda após rollback da transação")
-                .isEmpty();
+    private record EstadoEstoque(List<Map<String, Object>> produtos, List<Map<String, Object>> movimentacoes) {}
+
+    private List<BigDecimal> quantidadesDevolvidas(long vendaId, Produto produto) {
+        return jdbcTemplate.queryForList("""
+                SELECT quantidade FROM movimentacoes_estoque
+                 WHERE venda_id = ? AND produto_id = ? AND tipo = 'DEVOLUCAO'
+                """, BigDecimal.class, vendaId, produto.getId());
+    }
+
+    private Produto salvarProdutoDevolucao(String codigoBarras, String nome) {
+        return salvarProduto(codigoBarras, nome, new BigDecimal("25.00"),
+                new BigDecimal("10.000"), new BigDecimal("2.000"));
+    }
+
+    private void registrarMovimentacao(long vendaId, Produto produto, TipoMovimentacao tipo, String quantidade) {
+        MovimentacaoEstoque movimentacao = new MovimentacaoEstoque();
+        movimentacao.setProduto(produto);
+        movimentacao.setQuantidade(new BigDecimal(quantidade));
+        movimentacao.setTipo(tipo);
+        movimentacao.setDataHora(LocalDateTime.now());
+        movimentacao.setObservacao("Movimentação prévia da venda #" + vendaId);
+        movimentacao.setVendaId(vendaId);
+        movimentacaoRepository.saveAndFlush(movimentacao);
     }
 
     private Produto salvarProduto(String codigoBarras, String nome, BigDecimal precoVenda,

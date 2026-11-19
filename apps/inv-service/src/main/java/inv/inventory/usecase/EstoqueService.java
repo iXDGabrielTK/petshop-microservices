@@ -17,6 +17,7 @@ import inv.inventory.infrastructure.messaging.EstoqueBaixoMessage;
 import inv.inventory.infrastructure.persistence.MovimentacaoRepository;
 import inv.inventory.infrastructure.persistence.ProdutoMetadadosEstoque;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
+import inv.inventory.infrastructure.persistence.SaidaPorProduto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -99,21 +100,30 @@ class EstoqueService implements EstoqueCommandService {
     @Transactional(propagation = Propagation.MANDATORY)
     public void devolverEstoque(ComandoEstoqueVenda comando) {
         Objects.requireNonNull(comando, "comando");
-        if (comando.itens().isEmpty()) {
-            return;
-        }
-
         NavigableMap<Long, BigDecimal> consolidado = new TreeMap<>();
         for (ItemComando item : comando.itens()) {
             consolidado.merge(item.produtoId(), item.quantidade(), BigDecimal::add);
+        }
+
+        Map<Long, BigDecimal> saidasPorProduto = movimentacaoRepository.buscarSaidasPorVenda(comando.vendaId())
+                .stream().collect(Collectors.toMap(SaidaPorProduto::produtoId, SaidaPorProduto::quantidade));
+        if (!consolidado.keySet().equals(saidasPorProduto.keySet())) {
+            throw new BusinessException("Produtos da devolução divergem das saídas da venda #" + comando.vendaId());
         }
 
         for (Map.Entry<Long, BigDecimal> entry : consolidado.entrySet()) {
             Long produtoId = entry.getKey();
             BigDecimal quantidadeTotal = entry.getValue();
 
-            if (movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(
-                    comando.vendaId(), produtoId, TipoMovimentacao.DEVOLUCAO)) {
+            if (quantidadeTotal.compareTo(saidasPorProduto.get(produtoId)) != 0) {
+                throw new BusinessException("Quantidade de devolução diverge da saída do produto #" + produtoId);
+            }
+            Optional<BigDecimal> devolucao = movimentacaoRepository.buscarQuantidadeDevolucao(comando.vendaId(), produtoId);
+            if (devolucao.isPresent()) {
+                if (devolucao.get().compareTo(quantidadeTotal) != 0) {
+                    throw new BusinessException("Devolução registrada divergente para o produto #" + produtoId
+                            + " na venda #" + comando.vendaId());
+                }
                 log.info("Devolução de estoque já registrada para vendaId={} e produtoId={}. Ignorando.",
                         comando.vendaId(), produtoId);
                 continue;
