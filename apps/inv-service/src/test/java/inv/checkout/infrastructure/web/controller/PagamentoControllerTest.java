@@ -13,6 +13,8 @@ import inv.checkout.domain.model.StatusPagamento;
 import inv.checkout.infrastructure.web.dto.CriarIntencaoPagamentoRequest;
 import inv.checkout.usecase.PagamentoService;
 import inv.shared.domain.MetodoPagamento;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -30,6 +32,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -372,9 +375,11 @@ class PagamentoControllerTest {
         @CsvSource({
                 "10.000, 10",
                 "10.00, 10",
-                "100, 100"
+                "100, 100",
+                "1e7, 10000000",
+                "99999999.9900, 99999999.99"
         })
-        @DisplayName("Deve aceitar 10.000, 10.00 e 100 sem arredondamento e com escala <= 2")
+        @DisplayName("Deve aceitar valores representáveis sem arredondamento e com escala <= 2")
         void deveAceitarValoresNormalizadosSemArredondar(String valorJson, String esperado) throws Exception {
             UUID uuid = UUID.randomUUID();
             String json = """
@@ -401,7 +406,7 @@ class PagamentoControllerTest {
         }
 
         @ParameterizedTest(name = "Deve rejeitar valor fora do padrão @Digits(8,2): {0}")
-        @ValueSource(strings = {"10.005", "100000000.00"})
+        @ValueSource(strings = {"10.005", "100000000.00", "1e12", "1e10000000", "1e2147483647", "1e-2147483647"})
         @DisplayName("Deve retornar 400 Bad Request quando valor tiver mais de 2 casas decimais ou mais de 8 dígitos inteiros")
         void deveRejeitarValorForaDeDigits(String valorInvalido) throws Exception {
             String json = """
@@ -423,7 +428,7 @@ class PagamentoControllerTest {
         }
 
         @ParameterizedTest(name = "Deve rejeitar valor nulo ou não positivo: {0}")
-        @ValueSource(strings = {"0", "-1.00", "null"})
+        @ValueSource(strings = {"0", "-1.00", "-1e12", "-1e2147483647", "null"})
         @DisplayName("Deve retornar 400 Bad Request quando valor for 0, negativo ou null")
         void deveRejeitarValorZeroNegativoOuNulo(String valorInvalido) throws Exception {
             String json = """
@@ -441,6 +446,39 @@ class PagamentoControllerTest {
                     .andExpect(jsonPath("$.title").value("Dados Inválidos"));
 
             verifyNoInteractions(pagamentoService);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"1e12", "1e10000000", "1e2147483647", "-1e12", "-1e2147483647"})
+        void devePreservarEscalaDeValorForaDaFaixa(String literal) {
+            BigDecimal valor = new BigDecimal(literal);
+            var request = new CriarIntencaoPagamentoRequest(UUID.randomUUID(), MetodoPagamento.PIX, valor);
+
+            assertThat(request.valor().scale()).isEqualTo(valor.scale());
+        }
+
+        @Test
+        void deveValidarLimiteMonetarioMesmoNosExtremosDeEscala() {
+            try (var factory = Validation.buildDefaultValidatorFactory()) {
+                var validator = factory.getValidator();
+                for (BigDecimal valor : List.of(
+                        BigDecimal.ONE.scaleByPowerOfTen(Integer.MAX_VALUE),
+                        BigDecimal.ONE.scaleByPowerOfTen(10_000_000))) {
+                    var request = new CriarIntencaoPagamentoRequest(UUID.randomUUID(), MetodoPagamento.PIX, valor);
+                    assertThat(request.valor().scale()).isEqualTo(valor.scale());
+                    assertThat(validator.validate(request))
+                            .extracting(ConstraintViolation::getMessage)
+                            .contains("Valor deve ter no máximo 8 dígitos inteiros e 2 casas decimais");
+                }
+
+                BigDecimal negativoExtremo = BigDecimal.ONE.negate().scaleByPowerOfTen(Integer.MAX_VALUE);
+                var requestNegativo = new CriarIntencaoPagamentoRequest(
+                        UUID.randomUUID(), MetodoPagamento.PIX, negativoExtremo);
+                assertThat(requestNegativo.valor().scale()).isEqualTo(negativoExtremo.scale());
+                assertThat(validator.validate(requestNegativo))
+                        .extracting(ConstraintViolation::getMessage)
+                        .contains("Valor deve ser maior que zero");
+            }
         }
 
         @Test

@@ -851,13 +851,23 @@ class PagamentoConcorrenciaGatesIT {
                 try {
                     txTemplate.executeWithoutResult(status -> {
                         Venda v1 = vendaRepository.findByIdWithLock(vendaPosLockId).orElseThrow();
+                        Integer pidT1 = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
                         latchT1DetemLock.countDown();
 
                         await().atMost(5, TimeUnit.SECONDS)
                                 .pollInterval(10, TimeUnit.MILLISECONDS)
                                 .until(() -> {
-                                    Integer bloqueadas = jdbcTemplate.queryForObject(
-                                            "SELECT COUNT(*) FROM pg_locks WHERE NOT granted", Integer.class);
+                                    // Quem espera pela mesma linha pode estar atrás de outro participante na fila.
+                                    Integer bloqueadas = jdbcTemplate.queryForObject("""
+                                            WITH RECURSIVE fila(pid) AS (
+                                                SELECT CAST(? AS integer)
+                                                UNION
+                                                SELECT l.pid FROM pg_locks l
+                                                JOIN fila f ON f.pid = ANY(pg_blocking_pids(l.pid))
+                                                WHERE NOT l.granted
+                                            )
+                                            SELECT COUNT(*) FROM fila WHERE pid <> ?
+                                            """, Integer.class, pidT1, pidT1);
                                     return bloqueadas != null && bloqueadas >= 2;
                                 });
 
@@ -1023,7 +1033,7 @@ class PagamentoConcorrenciaGatesIT {
         doAnswer(invocation -> {
             latchAntesDoInsert.countDown();
             if (!latchAntesDoInsert.await(5, TimeUnit.SECONDS)) {
-                throw new TimeoutException("Timeout aguardando sincronização antes do INSERT nativo");
+                throw new IllegalStateException("Timeout aguardando sincronização antes do INSERT nativo");
             }
             return repositorioReal.answer(invocation);
         }).when(pagamentoRepository).inserirIntencaoIdempotente(
