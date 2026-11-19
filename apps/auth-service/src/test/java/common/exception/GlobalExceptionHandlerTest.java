@@ -149,6 +149,24 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("handleServiceUnavailable deve mapear ServiceUnavailableException para HTTP 503 com ProblemDetail")
+    void deveTratarServiceUnavailableException() {
+        String detalhe = "Operação temporariamente indisponível";
+        var ex = new ServiceUnavailableException(detalhe);
+
+        ResponseEntity<ProblemDetail> response = handler.handleServiceUnavailable(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        ProblemDetail problem = response.getBody();
+        assertThat(problem).isNotNull();
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE.value());
+        assertThat(problem.getTitle()).isEqualTo("Serviço Indisponível");
+        assertThat(problem.getDetail()).isEqualTo(detalhe);
+        assertThat(problem.getType()).hasToString("https://petshop.com/errors/service-unavailable");
+        assertThat(problem.getProperties()).containsKey("timestamp");
+    }
+
+    @Test
     @DisplayName("handleMethodArgumentNotValid deve mapear erros de validação de campos para HTTP 400 com mapa de campos")
     void deveTratarMethodArgumentNotValid() throws Exception {
         Object target = new Object();

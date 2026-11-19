@@ -144,4 +144,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         );
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
+
+    // 9. Serviço Indisponível (503)
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleServiceUnavailable(ServiceUnavailableException ex) {
+        ProblemDetail problem = buildProblemDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ex.getMessage(),
+                "Serviço Indisponível",
+                "service-unavailable"
+        );
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(problem);
+    }
 }
