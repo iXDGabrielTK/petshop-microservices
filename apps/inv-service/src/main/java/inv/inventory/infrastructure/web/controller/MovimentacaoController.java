@@ -5,7 +5,11 @@
  */
 package inv.inventory.infrastructure.web.controller;
 
-import inv.inventory.domain.model.MovimentacaoEstoque;
+import common.exception.BusinessException;
+import inv.inventory.infrastructure.web.dto.MovimentacaoResponse;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.web.bind.annotation.RequestParam;
+import java.util.Set;
 import inv.inventory.infrastructure.persistence.MovimentacaoRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -27,8 +31,21 @@ public class MovimentacaoController {
     }
 
     @GetMapping
-    public ResponseEntity<Page<MovimentacaoEstoque>> listar(
-            @PageableDefault(size = 20, sort = "dataHora", direction = Sort.Direction.DESC) Pageable pageable) {
-        return ResponseEntity.ok(repository.findAll(pageable));
+    public ResponseEntity<Page<MovimentacaoResponse>> listar(
+            @PageableDefault(size = 20, sort = "dataHora", direction = Sort.Direction.DESC) Pageable pageable,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Sort sort = pageable.getSort();
+        for (Sort.Order order : sort) {
+            if (!Set.of("id", "dataHora", "tipo", "quantidade").contains(order.getProperty())
+                    || order.isIgnoreCase()) {
+                throw new BusinessException("Ordenação de movimentações inválida: " + order.getProperty());
+            }
+        }
+        if (sort.getOrderFor("id") == null) {
+            sort = sort.and(Sort.by(Sort.Order.asc("id")));
+        }
+        Pageable normalizado = PageRequest.of(Math.max(page, 0), size < 1 ? 20 : Math.min(size, 50), sort);
+        return ResponseEntity.ok(repository.listarResumo(normalizado));
     }
 }

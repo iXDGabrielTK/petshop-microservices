@@ -6,6 +6,8 @@
 package inv.inventory.infrastructure.web.controller;
 
 import inv.inventory.infrastructure.web.dto.ProdutoRequest;
+import inv.inventory.infrastructure.web.dto.ProdutoResumoResponse;
+import org.springframework.data.domain.Sort;
 import inv.inventory.infrastructure.web.dto.ProdutoResponse;
 import inv.inventory.domain.model.Produto;
 import inv.inventory.usecase.ProdutoService;
@@ -48,35 +50,35 @@ public class ProdutoController {
     }
 
     @GetMapping("/ean/{ean}")
-    public ResponseEntity<Produto> buscarPorEan(
+    public ResponseEntity<ProdutoResumoResponse> buscarPorEan(
             @PathVariable
             @Pattern(regexp = "\\d{8,14}", message = "O EAN deve conter entre 8 e 14 dígitos numéricos")
             String ean
     ) {
-        return ResponseEntity.ok(produtoService.buscarPorEan(ean));
+        return ResponseEntity.ok(ProdutoResumoResponse.from(produtoService.buscarPorEan(ean)));
     }
 
     @GetMapping
-    public ResponseEntity<Page<Produto>> listar(
+    public ResponseEntity<Page<ProdutoResumoResponse>> listar(
             @RequestParam(required = false) String nome,
             @RequestParam(required = false) String busca,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size
     ) {
-        int tamanhoSeguro = Math.min(size, 50);
-        Pageable pageable = PageRequest.of(page, tamanhoSeguro);
+        int tamanhoSeguro = size < 1 ? 10 : Math.min(size, 50);
+        Pageable pageable = PageRequest.of(Math.max(page, 0), tamanhoSeguro, Sort.by("id").ascending());
 
         String termoBusca = (nome != null && !nome.isBlank()) ? nome : busca;
 
         if (termoBusca != null && !termoBusca.isBlank()) {
-            return ResponseEntity.ok(produtoService.buscarPorNome(termoBusca, pageable));
+            return ResponseEntity.ok(produtoService.buscarPorNome(termoBusca, pageable).map(ProdutoResumoResponse::from));
         }
 
-        return ResponseEntity.ok(produtoService.listarTodos(pageable));
+        return ResponseEntity.ok(produtoService.listarTodos(pageable).map(ProdutoResumoResponse::from));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {
-        return ResponseEntity.ok(produtoService.buscarPorId(id));
+    public ResponseEntity<ProdutoResumoResponse> buscarPorId(@PathVariable Long id) {
+        return ResponseEntity.ok(ProdutoResumoResponse.from(produtoService.buscarPorId(id)));
     }
 }
