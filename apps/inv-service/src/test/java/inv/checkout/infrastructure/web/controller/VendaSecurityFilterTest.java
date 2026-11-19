@@ -28,6 +28,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -50,6 +51,9 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 
+import static org.hamcrest.Matchers.anyOf;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -57,6 +61,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -211,7 +217,10 @@ class VendaSecurityFilterTest {
                 result.andExpect(status().isForbidden())
                         .andExpect(jsonPath("$.title").value("Acesso Negado"));
             } else {
-                result.andExpect(status().isUnauthorized());
+                result.andExpect(status().isUnauthorized())
+                        .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
+                                anyOf(equalTo("Bearer"), startsWith("Bearer "))))
+                        .andExpect(content().string(""));
             }
         }
         verifyNoInteractions(service, registry);

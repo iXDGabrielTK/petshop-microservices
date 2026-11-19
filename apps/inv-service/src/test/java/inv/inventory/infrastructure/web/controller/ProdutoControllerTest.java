@@ -7,14 +7,12 @@ package inv.inventory.infrastructure.web.controller;
 
 import common.exception.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.data.domain.*;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -41,9 +39,13 @@ class ProdutoControllerTest {
     @ParameterizedTest
     @ValueSource(strings = {"/produtos/1", "/produtos/ean/7891234567890", "/produtos"})
     void expoeContratoExato(String url) throws Exception {
-        when(service.buscarPorId(1L)).thenReturn(produto);
-        when(service.buscarPorEan("7891234567890")).thenReturn(produto);
-        when(service.listarTodos(any())).thenAnswer(i -> new PageImpl<>(List.of(produto), i.getArgument(0), 1));
+        switch (url) {
+            case "/produtos/1" -> when(service.buscarPorId(1L)).thenReturn(produto);
+            case "/produtos/ean/7891234567890" -> when(service.buscarPorEan("7891234567890")).thenReturn(produto);
+            case "/produtos" -> when(service.listarTodos(any()))
+                    .thenAnswer(i -> new PageImpl<>(List.of(produto), i.getArgument(0), 1));
+            default -> throw new IllegalArgumentException(url);
+        }
         String root = url.equals("/produtos") ? "$.content[0]" : "$";
         mvc.perform(get(url)).andExpect(status().isOk())
                 .andExpect(jsonPath(root + ".length()").value(6))
@@ -56,6 +58,14 @@ class ProdutoControllerTest {
                 .andExpect(jsonPath(root + ".estoqueMinimo").doesNotExist())
                 .andExpect(jsonPath(root + ".estoqueReservado").doesNotExist())
                 .andExpect(jsonPath(root + ".version").doesNotExist());
+
+        switch (url) {
+            case "/produtos/1" -> verify(service).buscarPorId(1L);
+            case "/produtos/ean/7891234567890" -> verify(service).buscarPorEan("7891234567890");
+            case "/produtos" -> verify(service).listarTodos(any());
+            default -> throw new IllegalArgumentException(url);
+        }
+        verifyNoMoreInteractions(service);
     }
 
     @ParameterizedTest

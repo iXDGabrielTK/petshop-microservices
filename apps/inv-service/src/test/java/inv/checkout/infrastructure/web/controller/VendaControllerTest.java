@@ -28,6 +28,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -94,10 +95,11 @@ class VendaControllerTest {
     void deveRetornar409QuandoStatusForConflitante() throws Exception {
         Long vendaId = 42L;
         String msg = "Venda #42 não pode ser cancelada pois está no status: CANCELADA";
+        String causaInterna = "causa-interna-conflito-nao-expor-409";
         when(vendaService.cancelarVendaConcluida(vendaId))
-                .thenThrow(new CancelamentoVendaConflitoException(msg, new IllegalStateException("Falha interna")));
+                .thenThrow(new CancelamentoVendaConflitoException(msg, new IllegalStateException(causaInterna)));
 
-        mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
+        MvcResult result = mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
@@ -107,7 +109,11 @@ class VendaControllerTest {
                 .andExpect(jsonPath("$.timestamp").isNotEmpty())
                 .andExpect(jsonPath("$.detail").value(msg))
                 .andExpect(jsonPath("$.mensagem").doesNotHaveJsonPath())
-                .andExpect(jsonPath("$.cause").doesNotHaveJsonPath());
+                .andExpect(jsonPath("$.cause").doesNotHaveJsonPath())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .doesNotContain(causaInterna);
 
         verify(vendaService).cancelarVendaConcluida(vendaId);
     }
@@ -139,10 +145,11 @@ class VendaControllerTest {
     void deveRetornar503QuandoFeatureFlagDesabilitada() throws Exception {
         Long vendaId = 42L;
         String msg = "Cancelamento de venda concluída temporariamente desabilitado";
+        String causaInterna = "causa-interna-indisponibilidade-nao-expor-503";
         when(vendaService.cancelarVendaConcluida(vendaId))
-                .thenThrow(new CancelamentoVendaDesabilitadoException(msg, new IllegalStateException("Falha interna")));
+                .thenThrow(new CancelamentoVendaDesabilitadoException(msg, new IllegalStateException(causaInterna)));
 
-        mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
+        MvcResult result = mockMvc.perform(post("/vendas/{id}/cancelar", vendaId)
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
@@ -152,7 +159,11 @@ class VendaControllerTest {
                 .andExpect(jsonPath("$.timestamp").isNotEmpty())
                 .andExpect(jsonPath("$.detail").value(msg))
                 .andExpect(jsonPath("$.mensagem").doesNotHaveJsonPath())
-                .andExpect(jsonPath("$.cause").doesNotHaveJsonPath());
+                .andExpect(jsonPath("$.cause").doesNotHaveJsonPath())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .doesNotContain(causaInterna);
 
         verify(vendaService).cancelarVendaConcluida(vendaId);
     }

@@ -636,10 +636,7 @@ class EstoqueServiceLoteTest {
                     new ItemComando(2L, new BigDecimal("3.000"))
             ));
 
-            when(movimentacaoRepository.buscarSaidasPorVenda(102L)).thenReturn(List.of(
-                    new SaidaPorProduto(1L, new BigDecimal("2.000")),
-                    new SaidaPorProduto(2L, new BigDecimal("3.000"))
-            ));
+            registrarSaidasDeDoisProdutos(102L);
             when(movimentacaoRepository.buscarQuantidadeDevolucao(102L, 1L)).thenReturn(Optional.of(new BigDecimal("2")));
             when(movimentacaoRepository.buscarQuantidadeDevolucao(102L, 2L)).thenReturn(Optional.empty());
             Produto p2 = new Produto();
@@ -657,6 +654,7 @@ class EstoqueServiceLoteTest {
         }
 
         @Test
+        @DisplayName("Cenário 3 (b) — Idempotência integral: repetição idêntica não realiza novas escritas (Q5)")
         void devolverEstoqueRepeticaoIntegralIdenticaNaoMutaEstoque() {
             ComandoEstoqueVenda comando = new ComandoEstoqueVenda(102L, List.of(
                     new ItemComando(1L, new BigDecimal("2.000"))

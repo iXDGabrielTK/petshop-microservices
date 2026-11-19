@@ -21,8 +21,11 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -530,14 +533,32 @@ class PagamentoServiceTest {
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
             when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
             when(pagamentoRepository.inserirIntencaoIdempotente(
-                    uuidRef, 10L, "PIX", "PENDENTE", valor, BigDecimal.ZERO, false, false))
+                    eq(uuidRef),
+                    eq(10L),
+                    eq("PIX"),
+                    eq("PENDENTE"),
+                    valorComEscalaEfetivaAteDuasCasas(valor),
+                    eq(BigDecimal.ZERO),
+                    eq(false),
+                    eq(false)))
                     .thenReturn(Optional.of(210L));
 
             Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, valor, uuidRef);
 
             assertThat(id).isEqualTo(210L);
+            ArgumentCaptor<BigDecimal> valorCaptor = ArgumentCaptor.forClass(BigDecimal.class);
             verify(pagamentoRepository).inserirIntencaoIdempotente(
-                    uuidRef, 10L, "PIX", "PENDENTE", valor, BigDecimal.ZERO, false, false);
+                    eq(uuidRef),
+                    eq(10L),
+                    eq("PIX"),
+                    eq("PENDENTE"),
+                    valorCaptor.capture(),
+                    eq(BigDecimal.ZERO),
+                    eq(false),
+                    eq(false));
+            BigDecimal valorEnviado = valorCaptor.getValue();
+            assertThat(valorEnviado).isNotNull().isEqualByComparingTo(valor);
+            assertThat(valorEnviado.stripTrailingZeros().scale()).isLessThanOrEqualTo(2);
         }
 
         @Test
@@ -683,6 +704,7 @@ class PagamentoServiceTest {
         @DisplayName("Cenário 4 — Fallback da Etapa 6 deve retornar ID existente quando conflito no INSERT tiver payload igual")
         void deveRetornarIdNoFallbackEtapa6QuandoPayloadIgual() {
             UUID uuidRef = UUID.randomUUID();
+            BigDecimal valor = new BigDecimal("50.0");
             Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
             Pagamento vencedor = criarPagamento(400L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
                     new BigDecimal("50.00"), uuidRef);
@@ -693,51 +715,83 @@ class PagamentoServiceTest {
                     .thenReturn(Optional.of(vencedor));
             when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
             when(pagamentoRepository.inserirIntencaoIdempotente(
-                    uuidRef, 10L, "PIX", "PENDENTE", new BigDecimal("50.0"), BigDecimal.ZERO, false, false))
+                    eq(uuidRef),
+                    eq(10L),
+                    eq("PIX"),
+                    eq("PENDENTE"),
+                    valorComEscalaEfetivaAteDuasCasas(valor),
+                    eq(BigDecimal.ZERO),
+                    eq(false),
+                    eq(false)))
                     .thenReturn(Optional.empty());
 
-            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.0"), uuidRef);
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, valor, uuidRef);
 
             assertThat(id).isEqualTo(400L);
             verify(pagamentoRepository, times(3)).findByUuidReferencia(uuidRef);
         }
 
-        @Test
+        @ParameterizedTest(name = "Fallback Etapa 6 divergindo em {0}")
+        @CsvSource({
+                "vendaId, 401, 99, PIX, 50.00",
+                "metodo, 402, 10, DINHEIRO, 50.00",
+                "valor, 403, 10, PIX, 60.00"
+        })
         @DisplayName("Cenário 4 — Fallback da Etapa 6 deve lançar ConflictException quando conflito no INSERT divergir em vendaId, metodo ou valor")
-        void deveLancarConflictExceptionNoFallbackEtapa6QuandoPayloadDivergir() {
+        void deveLancarConflictExceptionNoFallbackEtapa6QuandoPayloadDivergir(
+                String campoDivergente,
+                Long pagamentoVencedorId,
+                Long vendaVencedoraId,
+                MetodoPagamento metodoVencedor,
+                BigDecimal valorVencedor) {
             UUID uuidRef = UUID.randomUUID();
+            BigDecimal valorSolicitado = new BigDecimal("50.00");
             Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
-            Pagamento vencedorOutraVenda = criarPagamento(401L, 99L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
-                    new BigDecimal("50.00"), uuidRef);
-            Pagamento vencedorOutroMetodo = criarPagamento(402L, 10L, MetodoPagamento.DINHEIRO, StatusPagamento.PENDENTE,
-                    new BigDecimal("50.00"), uuidRef);
-            Pagamento vencedorOutroValor = criarPagamento(403L, 10L, MetodoPagamento.PIX, StatusPagamento.PENDENTE,
-                    new BigDecimal("60.00"), uuidRef);
+            Pagamento vencedor = criarPagamento(pagamentoVencedorId, vendaVencedoraId, metodoVencedor, StatusPagamento.PENDENTE,
+                    valorVencedor, uuidRef);
 
+            when(pagamentoRepository.findByUuidReferencia(uuidRef))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(vencedor));
             when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
-            when(pagamentoRepository.inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean()))
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    eq(uuidRef),
+                    eq(10L),
+                    eq("PIX"),
+                    eq("PENDENTE"),
+                    valorComEscalaEfetivaAteDuasCasas(valorSolicitado),
+                    eq(BigDecimal.ZERO),
+                    eq(false),
+                    eq(false)))
                     .thenReturn(Optional.empty());
 
-            when(pagamentoRepository.findByUuidReferencia(uuidRef))
-                    .thenReturn(Optional.empty())
-                    .thenReturn(Optional.empty())
-                    .thenReturn(Optional.of(vencedorOutraVenda));
-            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
-                    .isInstanceOf(ConflictException.class);
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, valorSolicitado, uuidRef))
+                    .isInstanceOf(ConflictException.class)
+                    .hasMessage("UUID de referência já utilizado por intenção de pagamento com dados divergentes.");
 
-            when(pagamentoRepository.findByUuidReferencia(uuidRef))
-                    .thenReturn(Optional.empty())
-                    .thenReturn(Optional.empty())
-                    .thenReturn(Optional.of(vencedorOutroMetodo));
-            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
-                    .isInstanceOf(ConflictException.class);
+            InOrder inOrder = inOrder(pagamentoRepository, vendaRepository);
+            inOrder.verify(pagamentoRepository).findByUuidReferencia(uuidRef);
+            inOrder.verify(vendaRepository).findByIdWithLock(10L);
+            inOrder.verify(pagamentoRepository).findByUuidReferencia(uuidRef);
+            inOrder.verify(pagamentoRepository).inserirIntencaoIdempotente(
+                    eq(uuidRef),
+                    eq(10L),
+                    eq("PIX"),
+                    eq("PENDENTE"),
+                    valorComEscalaEfetivaAteDuasCasas(valorSolicitado),
+                    eq(BigDecimal.ZERO),
+                    eq(false),
+                    eq(false));
+            inOrder.verify(pagamentoRepository).findByUuidReferencia(uuidRef);
+            verifyNoMoreInteractions(pagamentoRepository, vendaRepository);
+            verifyNoInteractions(eventPublisher);
+        }
 
-            when(pagamentoRepository.findByUuidReferencia(uuidRef))
-                    .thenReturn(Optional.empty())
-                    .thenReturn(Optional.empty())
-                    .thenReturn(Optional.of(vencedorOutroValor));
-            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("50.00"), uuidRef))
-                    .isInstanceOf(ConflictException.class);
+        private static BigDecimal valorComEscalaEfetivaAteDuasCasas(BigDecimal esperado) {
+            return argThat(v -> v != null
+                    && v.compareTo(esperado) == 0
+                    && v.stripTrailingZeros().scale() <= 2);
         }
     }
 

@@ -13,6 +13,7 @@ import com.nimbusds.jwt.SignedJWT;
 import common.exception.GlobalExceptionHandler;
 import common.security.RsaKeyUtils;
 import inv.inventory.domain.model.Produto;
+import inv.inventory.domain.model.UnidadeMedida;
 import inv.inventory.usecase.ProdutoService;
 import inv.shared.config.SecurityConfig;
 import jakarta.servlet.Filter;
@@ -25,6 +26,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -38,6 +41,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
+import java.math.BigDecimal;
 import java.security.KeyPair;
 import java.security.interfaces.RSAPrivateKey;
 import java.time.Duration;
@@ -45,12 +49,17 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 
+import static org.hamcrest.Matchers.anyOf;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -135,7 +144,30 @@ class ProdutoSecurityFilterTest {
     }
 
     private List<MockHttpServletRequestBuilder> protectedRequests() {
-        return List.of(novoProduto());
+        return List.of(
+                novoProduto(),
+                get("/produtos"),
+                get("/produtos/42"),
+                get("/produtos/ean/7891234567890")
+        );
+    }
+
+    private Produto produtoValido() {
+        return new Produto(
+                42L,
+                "7891234567890",
+                "Racao",
+                BigDecimal.ONE,
+                UnidadeMedida.UN,
+                BigDecimal.TEN,
+                BigDecimal.ZERO,
+                new BigDecimal("25.00"),
+                1L
+        );
+    }
+
+    private String userAuthorization() throws Exception {
+        return "Bearer " + createValidToken("user@petshop.com", List.of("ROLE_USER"));
     }
 
     @Test
@@ -150,11 +182,60 @@ class ProdutoSecurityFilterTest {
         verify(service).criarProduto(any());
     }
 
+    @Test
+    void devePermitirListagemParaUsuarioComum() throws Exception {
+        Produto produto = produtoValido();
+        when(service.listarTodos(any()))
+                .thenAnswer(inv -> new PageImpl<>(List.of(produto), inv.getArgument(0), 1));
+
+        mockMvc.perform(get("/produtos").header("Authorization", userAuthorization()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(42))
+                .andExpect(jsonPath("$.content[0].codigoBarras").value("7891234567890"))
+                .andExpect(jsonPath("$.content[0].nome").value("Racao"));
+
+        verify(service).listarTodos(any());
+    }
+
+    @Test
+    void devePermitirBuscaPorIdParaUsuarioComum() throws Exception {
+        when(service.buscarPorId(42L)).thenReturn(produtoValido());
+
+        mockMvc.perform(get("/produtos/42").header("Authorization", userAuthorization()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(42))
+                .andExpect(jsonPath("$.codigoBarras").value("7891234567890"))
+                .andExpect(jsonPath("$.nome").value("Racao"));
+
+        verify(service).buscarPorId(42L);
+    }
+
+    @Test
+    void devePermitirBuscaPorEanParaUsuarioComum() throws Exception {
+        when(service.buscarPorEan("7891234567890")).thenReturn(produtoValido());
+
+        mockMvc.perform(get("/produtos/ean/7891234567890").header("Authorization", userAuthorization()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(42))
+                .andExpect(jsonPath("$.codigoBarras").value("7891234567890"))
+                .andExpect(jsonPath("$.nome").value("Racao"));
+
+        verify(service).buscarPorEan("7891234567890");
+    }
+
+    @Test
+    void deveBloquearCadastroParaUsuarioComum() throws Exception {
+        mockMvc.perform(novoProduto().header("Authorization", userAuthorization()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.title").value("Acesso Negado"));
+
+        verifyNoInteractions(service);
+    }
+
     @ParameterizedTest
-    @ValueSource(strings = {"user", "missing", "no-bearer", "malformed", "expired", "untrusted"})
-    void deveBloquearAcessoSemCredenciaisAdministrativas(String credential) throws Exception {
+    @ValueSource(strings = {"missing", "no-bearer", "malformed", "expired", "untrusted"})
+    void deveBloquearAcessoSemCredencialValida(String credential) throws Exception {
         String authorization = switch (credential) {
-            case "user" -> "Bearer " + createValidToken("user@petshop.com", List.of("ROLE_USER"));
             case "missing" -> null;
             case "no-bearer" -> createValidToken("admin@petshop.com", List.of("ROLE_ADMIN"));
             case "malformed" -> "Bearer token-invalido";
@@ -166,13 +247,11 @@ class ProdutoSecurityFilterTest {
             if (authorization != null) {
                 request.header("Authorization", authorization);
             }
-            var result = mockMvc.perform(request);
-            if (credential.equals("user")) {
-                result.andExpect(status().isForbidden())
-                        .andExpect(jsonPath("$.title").value("Acesso Negado"));
-            } else {
-                result.andExpect(status().isUnauthorized());
-            }
+            mockMvc.perform(request)
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
+                            anyOf(equalTo("Bearer"), startsWith("Bearer "))))
+                    .andExpect(content().string(""));
         }
         verifyNoInteractions(service);
     }
