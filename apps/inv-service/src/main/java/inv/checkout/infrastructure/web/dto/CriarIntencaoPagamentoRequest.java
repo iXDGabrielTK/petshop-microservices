@@ -6,6 +6,8 @@
 package inv.checkout.infrastructure.web.dto;
 
 import inv.shared.domain.MetodoPagamento;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
@@ -21,5 +23,18 @@ public record CriarIntencaoPagamentoRequest(
 
         @NotNull(message = "Valor é obrigatório")
         @Positive(message = "Valor deve ser maior que zero")
+        @DecimalMax(value = CriarIntencaoPagamentoRequest.LIMITE, message = CriarIntencaoPagamentoRequest.ERRO_PRECISAO)
+        @Digits(integer = 8, fraction = 2, message = CriarIntencaoPagamentoRequest.ERRO_PRECISAO)
         BigDecimal valor
-) {}
+) {
+    private static final String LIMITE = "99999999.99";
+    private static final BigDecimal VALOR_MAXIMO = new BigDecimal(LIMITE);
+    private static final String ERRO_PRECISAO = "Valor deve ter no máximo 8 dígitos inteiros e 2 casas decimais";
+
+    public CriarIntencaoPagamentoRequest {
+        if (valor != null && valor.signum() > 0 && valor.compareTo(VALOR_MAXIMO) <= 0) {
+            BigDecimal normalizado = valor.stripTrailingZeros();
+            valor = normalizado.scale() < 0 ? normalizado.setScale(0) : normalizado;
+        }
+    }
+}

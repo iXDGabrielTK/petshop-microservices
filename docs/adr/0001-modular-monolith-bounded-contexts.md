@@ -42,7 +42,7 @@ Por outro lado, um monólito clássico sem barreiras arquiteturais ("Big Ball of
 
 Decidimos adotar a **Opção 3: Monólito Modular com Bounded Contexts**, porque:
 * Permite executar transações locais confiáveis no PostgreSQL ([`V1__Schema_Inicial.sql`](../../apps/inv-service/src/main/resources/db/migration/V1__Schema_Inicial.sql)) enquanto garante limites arquiteturais claros entre os domínios.
-* A comunicação entre domínios no mesmo processo ocorre exclusivamente via *Open Host Services* / *Published Languages* (`inv.<contexto>.api`, compostos por interfaces, `record`s imutáveis e `enum`s — ver [ADR-0010](0010-dashboard-read-only-composition-module.md) e [ADR-0011](0011-synchronous-open-host-service-checkout-inventory.md)) ou eventos de integração (`VendaPagaEvent`, `LancamentoRegistradoEvent`, `EstoqueAtingiuMinimoEvent`).
+* A comunicação entre domínios no mesmo processo ocorre exclusivamente via *Open Host Services* / *Published Languages* (`inv.<contexto>.api`, compostos por interfaces, `record`s imutáveis e `enum`s — ver [ADR-0010](0010-dashboard-read-only-composition-module.md) e [ADR-0011](0011-synchronous-open-host-service-checkout-inventory.md)) ou eventos de integração (`VendaPagaEvent`, `VendaEstornadaEvent`, `LancamentoRegistradoEvent`, `EstoqueAtingiuMinimoEvent`).
 * Mantém a stack simplificada para desenvolvimento local e testes de integração com Testcontainers.
 
 ### Estrutura de Pacotes Adotada
@@ -103,11 +103,11 @@ Essas três FKs são classificadas como **FKs de fronteira modular** e só devem
 ## 6. Estratégia de Validação & Testes
 
 * **Testes de Arquitetura (ArchUnit e Spring Modulith):**
-  * [`ArquiteturaTest.java`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java) com **14 regras ativas (`R1` a `R14`)** para validação contínua de fronteiras DDD, pureza da *Published Language* (`*.api`), confinamento de entidades/repositórios (`onlyHaveDependentClassesThat()`), encapsulamento `package-private` das implementações de `*.api` e ausência de ciclos entre módulos — **sem `@ArchIgnore`, sem `FreezingArchRule` e com `archunit_store/` integralmente removido**.
+  * [`ArquiteturaTest.java`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java) com **15 regras ativas (`R1` a `R15`)** para validação contínua de fronteiras DDD, pureza da *Published Language* (`*.api`), confinamento de entidades/repositórios (`onlyHaveDependentClassesThat()`), encapsulamento `package-private` das implementações de `*.api`, ausência de ciclos entre módulos e obrigatoriedade de `VendaRepository.findByIdWithLock` em mutações de `Venda` existente (`R15`, `escritasEmVendaDevemUsarFindByIdWithLock`) — **sem `@ArchIgnore`, sem `FreezingArchRule` e com `archunit_store/` integralmente removido**.
   * [`ModulithTest.java`](../../apps/inv-service/src/test/java/inv/architect/ModulithTest.java) validando o grafo de `@ApplicationModule` e `@NamedInterface("api")` via `ApplicationModules.of(InvServiceApplication.class).verify()` e gerando documentação C4/PlantUML e Module Canvases via `Documenter`.
 
 > [!NOTE]
-> **Aviso de Governança & Débitos Técnicos `[DEBT-ARCH-001]` e `[DEBT-ARCH-002]` — Status: Resolvidos (Outubro/2026):**
+> **Aviso de Governança & Débitos Técnicos `[DEBT-ARCH-001]` a `[DEBT-ARCH-004]` — Status: Resolvidos (Outubro–Novembro/2026):**
 > * **Resolução Definitiva do `[DEBT-ARCH-001]` (Dashboard & Finance):**
 >   1. O acoplamento transversal do antigo `DashboardService` dentro de `inv.finance` foi erradicado com a criação do módulo de composição de leitura `inv.dashboard` ([ADR-0010](0010-dashboard-read-only-composition-module.md)) e da projeção CQRS temporal diária ([ADR-0006](0006-cqrs-asynchronous-projections-and-self-healing-retry.md)).
 >   2. O código legado (`finance.usecase.DashboardService`), os modos de transição (`legacy`/`shadow`) e a catraca do `Finance` no ArchUnit foram integralmente removidos na Etapa 6 do [plano DEBT-ARCH-001](../debt/DEBT-ARCH-001-desacoplamento-dashboard.md).
@@ -117,7 +117,11 @@ Essas três FKs são classificadas como **FKs de fronteira modular** e só devem
 > * **Resolução Definitiva do `[DEBT-ARCH-003]` (Pipeline de Pagamento e Cancelamento de Venda Concluída — Novembro/2026):**
 >   1. O pipeline de pagamento foi blindado com cinco camadas de defesa, idempotência nativa no Ledger (`ON CONFLICT DO NOTHING RETURNING id`) e marcação determinística de pagamentos tardios (`excedente = true`).
 >   2. O cancelamento atômico de venda concluída foi estabelecido em fase única síncrona (`CONCLUIDA -> CANCELADA`) no Checkout, orquestrando a recomposição de estoque via Open Host Service `devolverEstoque` em `inv.inventory.api` respaldado por índice único parcial (`V8`) e publicando `VendaEstornadaEvent` no Transactional Outbox para consumo idempotente no Finance ([ADR-0012](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)).
->   3. A integridade estrutural e a ausência física de deadlocks (`40P01`) sob alta concorrência foram comprovadas em suítes dedicadas no pacote `inv.it` (`DevolucaoConcorrenciaDeadlockIT`, `CancelamentoPagamentoRaceIT`, `LedgerConcorrenciaIdempotenciaIT`), mantendo 100% de conformidade com as regras `R1` a `R14` do ArchUnit e o Spring Modulith.
+>   3. A integridade estrutural e a ausência física de deadlocks (`40P01`) sob alta concorrência foram comprovadas em suítes dedicadas no pacote `inv.it` (`DevolucaoConcorrenciaDeadlockIT`, `CancelamentoPagamentoRaceIT`, `LedgerConcorrenciaIdempotenciaIT`, `PagamentoConcorrenciaGatesIT`) e pela regra `R15` do `ArquiteturaTest`, mantendo 100% de conformidade com o Spring Modulith.
+> * **Resolução Definitiva do `[DEBT-ARCH-004]` (Segurança JWT, Contratos HTTP, Idempotência de Pagamento, Devolução Integral e RFC 7807 — Novembro/2026):**
+>   1. Alinhamento da autorização em `VendaController` para `@PreAuthorize("hasRole('ADMIN')")` com validação da cadeia real de filtros (`VendaSecurityFilterTest`, `ProdutoSecurityFilterTest`) e parametrização de `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` (default `false`) ([ADR-0009](0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)).
+>   2. Estabilização dos endpoints de leitura do Inventory sob `open-in-view=false`: `ProdutoResumoResponse` em `GET /produtos*` e projeção JPQL `MovimentacaoResponse` (`countQuery`, whitelist de `sort`, paginação normalizada teto 50) em `GET /movimentacoes` ([ADR-0011](0011-synchronous-open-host-service-checkout-inventory.md)).
+>   3. Protocolo de idempotência em 6 etapas na criação de intenção de pagamento (`findByIdWithLock`, `ON CONFLICT DO NOTHING RETURNING id` e rejeição sem arredondamento de escala `> 2`), exigência de devolução integral em `EstoqueService.devolverEstoque` auditada contra `SAIDA`s com índice parcial `V9` (`idx_movimentacoes_venda_saida`) e padronização integral de `409`/`503` em RFC 7807 (`ProblemDetail`) via `GlobalExceptionHandler` na `common-lib` ([ADR-0002](0002-atomic-sql-inventory-and-hybrid-locking.md), [ADR-0012](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)).
 
 * **Testes de Integração Cross-Context (`inv.it`):** Cenários integrados e de alta concorrência que exercitam a orquestração entre `Checkout` e `Inventory` residem no pacote dedicado `inv.it` (ex.: [`EstoqueConcorrenciaIntegrationTest`](../../apps/inv-service/src/test/java/inv/it/EstoqueConcorrenciaIntegrationTest.java), [`CarrinhosInvertidosDeadlockIT`](../../apps/inv-service/src/test/java/inv/it/CarrinhosInvertidosDeadlockIT.java), [`CicloVendaEstoqueCharacterizationIT`](../../apps/inv-service/src/test/java/inv/it/CicloVendaEstoqueCharacterizationIT.java), [`DevolucaoConcorrenciaDeadlockIT`](../../apps/inv-service/src/test/java/inv/it/DevolucaoConcorrenciaDeadlockIT.java), [`CancelamentoPagamentoRaceIT`](../../apps/inv-service/src/test/java/inv/it/CancelamentoPagamentoRaceIT.java), [`LedgerConcorrenciaIdempotenciaIT`](../../apps/inv-service/src/test/java/inv/it/LedgerConcorrenciaIdempotenciaIT.java)).
 
@@ -126,6 +130,8 @@ Essas três FKs são classificadas como **FKs de fronteira modular** e só devem
 ## 7. Referências e Links Relevantes
 
 * [Estrutura do Inv-Service](../../apps/inv-service/src/main/java/inv)
+* [Plano Executivo DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)
+* [ADR-0009: Arquitetura de Autenticação com Spring Authorization Server e RSA](0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)
 * [ADR-0010: Dashboard como Módulo de Composição de Leitura](0010-dashboard-read-only-composition-module.md)
 * [ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](0011-synchronous-open-host-service-checkout-inventory.md)
 * [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)

@@ -57,7 +57,7 @@ apps/inv-service/src/main/java/inv/
 │   │   ├── IndicadoresCalculadora.java         # Funções puras (crescimento MTD vs MTD, rótulos pt-BR)
 │   │   └── port/AtividadeSistemaPort.java      # Porta de saída para telemetria de borda
 │   └── infrastructure/
-│       ├── config/DashboardCacheConfig.java    # Cache Caffeine (TTL 15s, bypass em degradação)
+│       ├── cache/DashboardCacheConfig.java     # Cache Caffeine (TTL 15s, bypass em degradação)
 │       ├── redis/RedisAtividadeSistemaAdapter.java
 │       └── web/{DashboardController, DashboardStatsMapper, dto/DashboardStats}
 ├── checkout/api/                               # VendaQueryService, VendaRecenteView
@@ -69,7 +69,7 @@ apps/inv-service/src/main/java/inv/
 
 * **Positivas (+):**
   * **Zero acoplamento entre contextos de domínio:** `Finance`, `Checkout` e `Inventory` evoluem seus modelos internos sem impacto cruzado.
-  * **Observabilidade e Resiliência nativas:** Cada card é medido individualmente por `dashboard.card.duration{card}` e falhas incrementam `dashboard.card.failure{card}`, expondo o diagnóstico no bloco aditivo `meta` do payload JSON sem quebrar clientes legados.
+  * **Observabilidade e Resiliência nativas:** Cada card é medido individualmente por `dashboard.card.latency{card}` e falhas incrementam `dashboard.card.failure{card}`, expondo o diagnóstico no bloco aditivo `meta` do payload JSON sem quebrar clientes legados.
   * **Facilidade de Extração Futura:** Caso o `inv-service` seja fatiado em microsserviços independentes no futuro, basta substituir as implementações locais de `*.api` por clientes HTTP/gRPC sem alterar uma linha de `inv.dashboard.application`.
 * **Negativas / Desafios (-):**
   * Exige mapeamento explícito entre os records da *Published Language* (`*.api`), o snapshot de aplicação (`DashboardSnapshot`) e o DTO web (`DashboardStats`).
@@ -100,7 +100,7 @@ apps/inv-service/src/main/java/inv/
 ### Cenários de Teste Automatizados
 * **Testes de Fronteira Arquitetural (`R1`–`R12`):** [`ArquiteturaTest`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java) garante ausência de ciclos (`R4`), que ninguém depende de `inv.dashboard` (`R5`), que `inv.dashboard` consome apenas `*.api` (`R6`), pureza dos contratos `*.api` (`R9`) e visibilidade `package-private` das implementações de query (`R10`).
 * **Carga Sintética de 7 Dias e Cutover:** [`CargaSintetica7DiasCutoverIT`](../../apps/inv-service/src/test/java/inv/dashboard/CargaSintetica7DiasCutoverIT.java) valida vendas à vista, pagamentos divididos, retenção líquida de troco em dinheiro, estornos parciais, lançamentos na fronteira da meia-noite, filtro de vendas faturadas (`CONCLUIDA`, `CANCELAMENTO_SOLICITADO`), reconciliação 100% (`Σ projeção diária == Σ ledger`) e fechamento D+0 sem divergência.
-* **Cache e Auto-Cura de Degradação:** [`DashboardCacheIT`](../../apps/inv-service/src/test/java/inv/dashboard/DashboardCacheIT.java) e [`DashboardQueryServiceTest`](../../apps/inv-service/src/test/java/inv/dashboard/application/DashboardQueryServiceTest.java) provam que respostas com `cardsDegradados` não são armazenadas no Caffeine (`unless = "!#result.meta().cardsDegradados().isEmpty()"`).
+* **Cache e Auto-Cura de Degradação:** [`DashboardCacheIT`](../../apps/inv-service/src/test/java/inv/dashboard/DashboardCacheIT.java) e [`DashboardQueryServiceTest`](../../apps/inv-service/src/test/java/inv/dashboard/DashboardQueryServiceTest.java) provam que respostas com `cardsDegradados` não são armazenadas no Caffeine (`unless = "!#result.meta().cardsDegradados().isEmpty()"`).
 
 ---
 

@@ -91,7 +91,7 @@ O Gateway registra métricas de atividade de tráfego através do [`ActivityFilt
 
 ---
 
-## 3. Estrutura do JWT e Claims Customizadas
+## 3. Estrutura do JWT, Claims Customizadas e Autorização nos Resource Servers
 
 O payload do Access Token carrega os dados de identidade para que os Resource Servers downstream tomem decisões de autorização (`@PreAuthorize`) de forma totalmente autônoma:
 
@@ -103,13 +103,36 @@ O payload do Access Token carrega os dados de identidade para que os Resource Se
   "name": "Administrador Principal",
   "email": "admin@petshop.com",
   "roles": [
-    "ADMIN",
-    "OPERADOR"
+    "ROLE_ADMIN"
   ],
   "exp": 1724851200,
   "iat": 1724847600
 }
 ```
+
+### A. Alinhamento entre `auth-service` e `inv-service`
+
+1. **Emissão no `auth-service`:** [`UserDetailsServiceImpl`](../../apps/auth-service/src/main/java/auth/security/user/UserDetailsServiceImpl.java) constrói `SimpleGrantedAuthority("ROLE_" + role.getNome())` (`ROLE_ADMIN`, `ROLE_USER`), e o `OAuth2TokenCustomizer` em [`SecurityConfig`](../../apps/auth-service/src/main/java/auth/config/SecurityConfig.java) grava essas strings na claim `"roles"` do Access Token.
+2. **Conversão no `inv-service`:** o [`SecurityConfig`](../../apps/inv-service/src/main/java/inv/shared/config/SecurityConfig.java) (`@EnableMethodSecurity`) combina o conversor padrão de `scope` (`SCOPE_*`) com um `JwtGrantedAuthoritiesConverter` configurado com `setAuthoritiesClaimName("roles")` e `setAuthorityPrefix("")`, preservando integralmente os nomes `ROLE_ADMIN` e `ROLE_USER` sem duplicar o prefixo.
+3. **Expressões `@PreAuthorize`:** como o `SecurityExpressionRoot` do Spring Security adiciona automaticamente o prefixo `"ROLE_"` em `hasRole(...)` / `hasAnyRole(...)`, os endpoints protegidos devem utilizar **`hasRole('ADMIN')`** (e nunca `hasAuthority('ADMIN')`, que exigiria a string literal sem prefixo — corrigido em [`VendaController`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/controller/VendaController.java) no `DEBT-ARCH-004`).
+4. **Distinção com `/usuarios/me`:** o payload JSON de `GET /usuarios/me` expõe os nomes de perfil sem prefixo (`["ADMIN"]` ou `["USER"]`) para exibição na SPA; esses nomes não devem ser confundidos com as autoridades emitidas na claim `"roles"` do JWT.
+
+### B. Matriz de Controle de Acesso (`inv-service`)
+
+| Rota / Recurso | Regra de Segurança | Comportamento por Perfil / Token |
+| :--- | :--- | :--- |
+| `/vendas/**` (`POST /vendas`, `GET /vendas/{id}/status`, `GET /vendas/aberta`, `POST /vendas/{id}/cancelar`) | `.anyRequest().authenticated()` + `@PreAuthorize("hasRole('ADMIN')")` na classe `VendaController` | `ROLE_ADMIN` autorizado; `ROLE_USER` recebe HTTP 403 (`ProblemDetail`); ausente/inválido recebe HTTP 401. |
+| `POST /produtos` | `.anyRequest().authenticated()` + `@PreAuthorize("hasRole('ADMIN')")` no método `ProdutoController.criar` | `ROLE_ADMIN` autorizado; `ROLE_USER` recebe HTTP 403 (`ProblemDetail`); ausente/inválido recebe HTTP 401. |
+| `GET /produtos*`, `GET /movimentacoes`, `GET /dashboard/stats`, `POST /pagamentos/intencao/{vendaId}`, `GET /pagamentos/{id}/status` | `.anyRequest().authenticated()` | Qualquer JWT válido (`ROLE_ADMIN` ou `ROLE_USER`) autenticado; ausente/inválido recebe HTTP 401. |
+| `/pagamentos/webhook/**`, `/actuator/**`, `/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html` | `.permitAll()` | Acesso público sem Bearer token (webhooks isentos de rate limit no Gateway). |
+
+### C. Cobertura da Cadeia Real de Filtros (`springSecurityFilterChain`)
+
+Para impedir regressões mascaradas por testes que desabilitam filtros (`addFilters = false`), o `inv-service` mantém suítes que sobem a cadeia real de filtros JWT (`SecurityConfig` + `GlobalExceptionHandler` + chaves RSA geradas em runtime via `RsaKeyUtils`):
+
+* **[`VendaSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/checkout/infrastructure/web/controller/VendaSecurityFilterTest.java):** cobre `POST /vendas`, `GET /vendas/{id}/status`, `GET /vendas/aberta` e `POST /vendas/{id}/cancelar` (`ROLE_ADMIN` → `200`/`204`; `ROLE_USER` → `403 ProblemDetail` com `title: "Acesso Negado"` e `verifyNoInteractions` no service; token ausente, sem `Bearer`, malformado, expirado ou de chave não confiável → `401`).
+* **[`ProdutoSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/inventory/infrastructure/web/controller/ProdutoSecurityFilterTest.java):** cobre a mesma matriz para `POST /produtos`.
+* **[`PagamentoSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/checkout/infrastructure/web/controller/PagamentoSecurityFilterTest.java):** valida acesso autenticado a `/pagamentos/intencao/{vendaId}` e `/pagamentos/{id}/status`, liberação pública dos webhooks `/pagamentos/webhook/**` e rejeição `401` sem credencial válida.
 
 ---
 
@@ -140,7 +163,7 @@ Recupera os dados do usuário autenticado após recarregamento de página (F5) o
     "nome": "Operador Caixa",
     "email": "caixa@petshop.com",
     "roles": [
-      "OPERADOR"
+      "USER"
     ],
     "theme": "DARK"
   }
@@ -222,8 +245,12 @@ Atualiza configurações visuais do operador autenticado (suporta JWT via `user_
     - **HTTP 400 Bad Request (RFC 7807):** Se as senhas divergirem (`detail: "As senhas não conferem."`) ou o token estiver expirado (`detail: "Token expirado"`).
     - **HTTP 404 Not Found (RFC 7807):** Se o token não for encontrado no banco (`detail: "Token inválido"`).
 
+> [!NOTE]
+> A matriz completa de mapeamento RFC 7807 (`ProblemDetail`) do [`GlobalExceptionHandler`](../../apps/common-lib/src/main/java/common/exception/GlobalExceptionHandler.java) para os serviços (`400`, `401`, `403`, `404`, `409 ConflictException` e `503 ServiceUnavailableException`) está consolidada na [Visão Geral da Arquitetura](../architecture/system-overview.md#5-padronização-transversal-de-erros-http-rfc-7807--problemdetail).
+
 ---
 
 ## 6. ADRs Vinculados a Este Domínio
 
 * 📑 **[ADR-0009: Arquitetura de Autenticação com Spring Authorization Server e RSA](../adr/0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)**
+* 📑 **[ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](../adr/0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)**

@@ -6,18 +6,24 @@
 package inv.checkout.infrastructure.web.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import common.exception.ConflictException;
 import common.exception.GlobalExceptionHandler;
+import common.exception.ResourceNotFoundException;
 import inv.checkout.domain.model.StatusPagamento;
 import inv.checkout.infrastructure.web.dto.CriarIntencaoPagamentoRequest;
 import inv.checkout.usecase.PagamentoService;
 import inv.shared.domain.MetodoPagamento;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -26,8 +32,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -361,6 +369,162 @@ class PagamentoControllerTest {
                             .content("{}"))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.title").value("Dados Inválidos"));
+        }
+
+        @ParameterizedTest(name = "Deve aceitar valor JSON {0} normalizando escala sem arredondar")
+        @CsvSource({
+                "10.000, 10",
+                "10.00, 10",
+                "100, 100",
+                "1e7, 10000000",
+                "99999999.9900, 99999999.99"
+        })
+        @DisplayName("Deve aceitar valores representáveis sem arredondamento e com escala <= 2")
+        void deveAceitarValoresNormalizadosSemArredondar(String valorJson, String esperado) throws Exception {
+            UUID uuid = UUID.randomUUID();
+            String json = """
+                    {
+                        "uuidReferencia": "%s",
+                        "metodo": "PIX",
+                        "valor": %s
+                    }
+                    """.formatted(uuid, valorJson);
+
+            when(pagamentoService.criarIntencaoPagamento(eq(10L), eq(MetodoPagamento.PIX), any(BigDecimal.class), eq(uuid)))
+                    .thenReturn(101L);
+
+            mockMvc.perform(post("/pagamentos/intencao/10")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.pagamentoId").value(101L));
+
+            ArgumentCaptor<BigDecimal> valorCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+            verify(pagamentoService).criarIntencaoPagamento(eq(10L), eq(MetodoPagamento.PIX), valorCaptor.capture(), eq(uuid));
+            assertThat(valorCaptor.getValue()).isEqualByComparingTo(esperado);
+            assertThat(valorCaptor.getValue().scale()).isBetween(0, 2);
+        }
+
+        @ParameterizedTest(name = "Deve rejeitar valor fora do padrão @Digits(8,2): {0}")
+        @ValueSource(strings = {"10.005", "100000000.00", "1e12", "1e10000000", "1e2147483647", "1e-2147483647"})
+        @DisplayName("Deve retornar 400 Bad Request quando valor tiver mais de 2 casas decimais ou mais de 8 dígitos inteiros")
+        void deveRejeitarValorForaDeDigits(String valorInvalido) throws Exception {
+            String json = """
+                    {
+                        "uuidReferencia": "%s",
+                        "metodo": "PIX",
+                        "valor": %s
+                    }
+                    """.formatted(UUID.randomUUID(), valorInvalido);
+
+            mockMvc.perform(post("/pagamentos/intencao/10")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Dados Inválidos"))
+                    .andExpect(jsonPath("$.fields.valor").value("Valor deve ter no máximo 8 dígitos inteiros e 2 casas decimais"));
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @ParameterizedTest(name = "Deve rejeitar valor nulo ou não positivo: {0}")
+        @ValueSource(strings = {"0", "-1.00", "-1e12", "-1e2147483647", "null"})
+        @DisplayName("Deve retornar 400 Bad Request quando valor for 0, negativo ou null")
+        void deveRejeitarValorZeroNegativoOuNulo(String valorInvalido) throws Exception {
+            String json = """
+                    {
+                        "uuidReferencia": "%s",
+                        "metodo": "PIX",
+                        "valor": %s
+                    }
+                    """.formatted(UUID.randomUUID(), valorInvalido);
+
+            mockMvc.perform(post("/pagamentos/intencao/10")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Dados Inválidos"));
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"1e12", "1e10000000", "1e2147483647", "-1e12", "-1e2147483647"})
+        void devePreservarEscalaDeValorForaDaFaixa(String literal) {
+            BigDecimal valor = new BigDecimal(literal);
+            var request = new CriarIntencaoPagamentoRequest(UUID.randomUUID(), MetodoPagamento.PIX, valor);
+
+            assertThat(request.valor().scale()).isEqualTo(valor.scale());
+        }
+
+        @Test
+        void deveValidarLimiteMonetarioMesmoNosExtremosDeEscala() {
+            try (var factory = Validation.buildDefaultValidatorFactory()) {
+                var validator = factory.getValidator();
+                for (BigDecimal valor : List.of(
+                        BigDecimal.ONE.scaleByPowerOfTen(Integer.MAX_VALUE),
+                        BigDecimal.ONE.scaleByPowerOfTen(10_000_000))) {
+                    var request = new CriarIntencaoPagamentoRequest(UUID.randomUUID(), MetodoPagamento.PIX, valor);
+                    assertThat(request.valor().scale()).isEqualTo(valor.scale());
+                    assertThat(validator.validate(request))
+                            .extracting(ConstraintViolation::getMessage)
+                            .contains("Valor deve ter no máximo 8 dígitos inteiros e 2 casas decimais");
+                }
+
+                BigDecimal negativoExtremo = BigDecimal.ONE.negate().scaleByPowerOfTen(Integer.MAX_VALUE);
+                var requestNegativo = new CriarIntencaoPagamentoRequest(
+                        UUID.randomUUID(), MetodoPagamento.PIX, negativoExtremo);
+                assertThat(requestNegativo.valor().scale()).isEqualTo(negativoExtremo.scale());
+                assertThat(validator.validate(requestNegativo))
+                        .extracting(ConstraintViolation::getMessage)
+                        .contains("Valor deve ser maior que zero");
+            }
+        }
+
+        @Test
+        @DisplayName("Deve retornar 404 ProblemDetail quando service lançar ResourceNotFoundException")
+        void deveRetornar404QuandoServiceLancarResourceNotFoundException() throws Exception {
+            UUID uuid = UUID.randomUUID();
+            CriarIntencaoPagamentoRequest request = new CriarIntencaoPagamentoRequest(
+                    uuid,
+                    MetodoPagamento.PIX,
+                    new BigDecimal("50.00")
+            );
+
+            when(pagamentoService.criarIntencaoPagamento(eq(999L), eq(MetodoPagamento.PIX), any(BigDecimal.class), eq(uuid)))
+                    .thenThrow(new ResourceNotFoundException("Venda não encontrada"));
+
+            mockMvc.perform(post("/pagamentos/intencao/999")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.status").value(404))
+                    .andExpect(jsonPath("$.title").value("Recurso não encontrado"))
+                    .andExpect(jsonPath("$.detail").value("Venda não encontrada"))
+                    .andExpect(jsonPath("$.type").value("https://petshop.com/errors/resource-not-found"));
+        }
+
+        @Test
+        @DisplayName("Deve retornar 409 ProblemDetail quando service lançar ConflictException")
+        void deveRetornar409QuandoServiceLancarConflictException() throws Exception {
+            UUID uuid = UUID.randomUUID();
+            CriarIntencaoPagamentoRequest request = new CriarIntencaoPagamentoRequest(
+                    uuid,
+                    MetodoPagamento.CARTAO_CREDITO,
+                    new BigDecimal("50.00")
+            );
+
+            when(pagamentoService.criarIntencaoPagamento(eq(10L), eq(MetodoPagamento.CARTAO_CREDITO), any(BigDecimal.class), eq(uuid)))
+                    .thenThrow(new ConflictException("Conflito ao registrar intenção de pagamento"));
+
+            mockMvc.perform(post("/pagamentos/intencao/10")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.status").value(409))
+                    .andExpect(jsonPath("$.title").value("Conflito de Estado"))
+                    .andExpect(jsonPath("$.detail").value("Conflito ao registrar intenção de pagamento"))
+                    .andExpect(jsonPath("$.type").value("https://petshop.com/errors/conflict"));
         }
     }
 }

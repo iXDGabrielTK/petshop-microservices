@@ -106,9 +106,10 @@ Durante a execução do plano **[DEBT-ARCH-003](../debt/DEBT-ARCH-003/README.md)
   ```
   Isso garante que a engine do PostgreSQL descarte silenciosamente a inserção redundante, retornando `Optional.empty()` sem contaminar a transação.
 
-### B. Gate de Publicação de `LancamentoRegistradoEvent`
+### B. Gate de Publicação de `LancamentoRegistradoEvent` e Pendência Durável de Projeção
 * O evento interno [`LancamentoRegistradoEvent`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/LancamentoRegistradoEvent.java) (consumido pelo `FinancialProjectionListener` para atualizar `financial_projection_venda` e `financial_projection_diaria`) só é emitido quando `idGerado.isPresent()`.
 * Em reentregas concorrentes ou idempotentes, o evento CQRS não é disparado novamente, poupando processamento de checkpoint e retry queues.
+* Quando `idGerado.isPresent()`, tanto [`VendaPagaEventListener`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaPagaEventListener.java) quanto [`VendaEstornadaEventListener`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaEstornadaEventListener.java) também persistem a pendência de projeção em `projection_retry_queue` na mesma transação do Ledger via [`RegistroPendenciaProjecao.registrarNaTransacaoDoLedger`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/RegistroPendenciaProjecao.java) (`Propagation.MANDATORY`), garantindo convergência CQRS mesmo em caso de crash da JVM logo após o commit (`ProjecaoDuravelIT`).
 
 ### C. Chave Determinística para Estornos de Venda Concluída (Decisão Q6)
 * Para estornos contábeis disparados pelo cancelamento de vendas concluídas, o UUID de referência é derivado deterministicamente a partir do ID da venda:
@@ -123,6 +124,8 @@ Durante a execução do plano **[DEBT-ARCH-003](../debt/DEBT-ARCH-003/README.md)
 
 * [Entidade LancamentoFinanceiro](../../apps/inv-service/src/main/java/inv/finance/domain/model/LancamentoFinanceiro.java)
 * [Repositório LancamentoFinanceiroRepository](../../apps/inv-service/src/main/java/inv/finance/infrastructure/persistence/LancamentoFinanceiroRepository.java)
+* [Listener VendaPagaEventListener](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaPagaEventListener.java)
+* [Listener VendaEstornadaEventListener](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaEstornadaEventListener.java)
 * [ADR-0006: Projeções CQRS Assíncronas](0006-cqrs-asynchronous-projections-and-self-healing-retry.md)
 * [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)
 * [Documentação do Domínio Finance](../domains/finance.md)

@@ -5,11 +5,13 @@
  */
 package inv.checkout.usecase;
 
+import common.exception.ServiceUnavailableException;
+
 /**
  * Exceção lançada quando a feature flag de cancelamento de venda concluída está desabilitada
  * (kill switch operacional). Mapeada para HTTP 503 Service Unavailable.
  */
-public class CancelamentoVendaDesabilitadoException extends RuntimeException {
+public class CancelamentoVendaDesabilitadoException extends ServiceUnavailableException {
 
     private static final String DEFAULT_MESSAGE = "Cancelamento de venda concluída temporariamente desabilitado";
 

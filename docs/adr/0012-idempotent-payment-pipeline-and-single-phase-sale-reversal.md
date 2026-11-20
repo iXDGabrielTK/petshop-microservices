@@ -124,11 +124,45 @@ A robustez da solução é comprovada por quatro suítes de alta concorrência (
 
 ---
 
-## 7. Referências e Links Relevantes
+## 7. Adendo (Novembro/2026 — DEBT-ARCH-004): Protocolo de Idempotência em 6 Etapas na Intenção de Pagamento, Parametrização da Feature Flag e Padronização RFC 7807 (`409`/`503`)
 
+Durante a execução do épico **[DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)**, o pipeline de pagamento, o controle operacional do cancelamento e as respostas de erro HTTP foram endurecidos e padronizados nos seguintes pontos:
+
+### A. Protocolo de Idempotência em 6 Etapas em `PagamentoService.criarIntencaoPagamento` e Validação Decimal Sem Arredondamento (`E3`)
+* **Validação Decimal Sem Arredondamento:** [`CriarIntencaoPagamentoRequest`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/dto/CriarIntencaoPagamentoRequest.java) declara `@Positive` e `@Digits(integer = 8, fraction = 2)`, normalizando zeros à direita em seu construtor compacto (`stripTrailingZeros()`, ajustando escalas negativas com `setScale(0)`) para aceitar `10.000`, `10.00` e `100` e rejeitar com HTTP `400` valores com mais de 2 casas decimais significativas (ex.: `10.005`), evitando arredondamentos silenciosos em `NUMERIC(10, 2)` e falsos `409` em retries. [`PagamentoService`](../../apps/inv-service/src/main/java/inv/checkout/usecase/PagamentoService.java#L42-L55) aplica defesa em profundidade rejeitando `valor == null`, `<= 0`, `> 99999999.99` ou `scale() > 2` com `BusinessException` (`400`).
+* **Protocolo em 6 Etapas (`criarIntencaoPagamento`):**
+  1. **Consulta rápida:** `findByUuidReferencia(uuidReferencia)` retorna o `pagamentoId` (`200`) se `vendaId`, `metodo` e `valorEsperado.compareTo(valor) == 0` coincidirem (inclusive se a venda já estiver `CONCLUIDA` ou `CANCELADA`), ou lança `ConflictException` (`409`) se divergirem.
+  2. **Lock pessimista na venda:** `VendaRepository.findByIdWithLock(vendaId)` (`ResourceNotFoundException` `404` se inexistente), serializando a criação de intenção com conclusão, expiração e cancelamento na hierarquia global `vendas -> produtos`.
+  3. **Reconsulta pós-lock:** executa novamente `findByUuidReferencia(uuidReferencia)` antes de validar o status da venda, preservando retries legítimos de transações concorrentes que mudaram a venda durante a espera pelo lock.
+  4. **Validação de status da venda:** exige `venda.getStatus().aceitaPagamento()`; caso contrário, lança `ConflictException` (`409`).
+  5. **Inserção atômica com fonte única do domínio:** instancia `Pagamento` (aplicando `processar()` quando `metodo.isExigeProcessamento()` for `true`) e executa [`PagamentoRepository.inserirIntencaoIdempotente`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/persistence/PagamentoRepository.java#L29-L50) (`INSERT INTO pagamentos ... ON CONFLICT (uuid_referencia) DO NOTHING RETURNING id`).
+  6. **Fallback em colisão concorrente (`uk_pagamento_uuid`):** caso `Optional<Long>` venha vazio, reconsulta `findByUuidReferencia(uuidReferencia)` e aplica a validação compartilhada (`200` se igual; `ConflictException` `409` revertendo a transação se divergente, sem sobrescrever o registro existente).
+
+### B. Parametrização da Feature Flag `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` e Autorização (`E1`)
+* **Kill Switch Parametrizado:** `features.cancelamento-venda-concluida.enabled` passou a ser configurada via variável de ambiente `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` em `application.properties`, `docker-compose.yml` e `.env.example`, mantendo **`false`** como valor padrão seguro.
+* **Fronteira com o Adquirente (`DEBT-PAY-001`):** o cancelamento atual executa estorno interno/contábil (`StatusPagamento.ESTORNADO`, devolução física de estoque e lançamento `ESTORNO` no Finance); a integração de reembolso real no adquirente pertence ao backlog `DEBT-PAY-001`, exigindo conciliação operacional manual validada para pagamentos `ESTORNADO` e `excedente = true` antes de habilitar a flag com pagamentos reais.
+* **Autorização JWT Alinhada:** `POST /vendas/{id}/cancelar` é protegido por `@PreAuthorize("hasRole('ADMIN')")` em [`VendaController`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/web/controller/VendaController.java), validado na cadeia real de filtros JWT por [`VendaSecurityFilterTest`](../../apps/inv-service/src/test/java/inv/checkout/infrastructure/web/controller/VendaSecurityFilterTest.java) ([ADR-0009](0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)).
+
+### C. Devolução Estritamente Integral contra `SAIDA`s (`E4`)
+* `EstoqueService.devolverEstoque` passou a exigir integralidade estrita contra todas as movimentações `SAIDA` da venda (`MovimentacaoRepository.buscarSaidasPorVenda`) e igualdade de quantidade em repetições de `DEVOLUCAO`, apoiado pelo índice parcial concorrente **`idx_movimentacoes_venda_saida`** da migration [`V9__indice_movimentacoes_estoque_saida.sql`](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql) (detalhes em [ADR-0002](0002-atomic-sql-inventory-and-hybrid-locking.md) e [ADR-0011](0011-synchronous-open-host-service-checkout-inventory.md)).
+
+### D. Padronização RFC 7807 (`ProblemDetail`) para HTTP `409` e `503` via `common-lib` (`E3` e `E5`)
+* Introduzidas [`ConflictException`](../../apps/common-lib/src/main/java/common/exception/ConflictException.java) (`409`, `title: "Conflito de Estado"`, `type: "https://petshop.com/errors/conflict"`) e [`ServiceUnavailableException`](../../apps/common-lib/src/main/java/common/exception/ServiceUnavailableException.java) (`503`, `title: "Serviço Indisponível"`, `type: "https://petshop.com/errors/service-unavailable"`) no [`GlobalExceptionHandler`](../../apps/common-lib/src/main/java/common/exception/GlobalExceptionHandler.java) da `common-lib`.
+* [`CancelamentoVendaConflitoException`](../../apps/inv-service/src/main/java/inv/checkout/usecase/CancelamentoVendaConflitoException.java) passou a estender `ConflictException` e [`CancelamentoVendaDesabilitadoException`](../../apps/inv-service/src/main/java/inv/checkout/usecase/CancelamentoVendaDesabilitadoException.java) passou a estender `ServiceUnavailableException`; os `@ExceptionHandler` locais de `VendaController` (e o formato legado `{"mensagem": "..."}`) foram integralmente removidos.
+
+---
+
+## 8. Referências e Links Relevantes
+
+* [Plano Executivo DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)
+* [Runbook Executável DEBT-ARCH-003 E4](../debt/DEBT-ARCH-003/E4.md)
+* [GlobalExceptionHandler (common-lib)](../../apps/common-lib/src/main/java/common/exception/GlobalExceptionHandler.java)
+* [ConflictException (common-lib)](../../apps/common-lib/src/main/java/common/exception/ConflictException.java)
+* [ServiceUnavailableException (common-lib)](../../apps/common-lib/src/main/java/common/exception/ServiceUnavailableException.java)
 * [ADR-0001: Monólito Modular e Bounded Contexts](0001-modular-monolith-bounded-contexts.md)
 * [ADR-0002: Modelo Híbrido de Concorrência e Estoque Atômico](0002-atomic-sql-inventory-and-hybrid-locking.md)
 * [ADR-0004: Transactional Outbox Pattern](0004-transactional-outbox-with-skip-locked.md)
 * [ADR-0005: Ledger Financeiro Append-Only e Idempotência](0005-append-only-financial-ledger-and-idempotency.md)
+* [ADR-0009: Arquitetura de Autenticação com Spring Authorization Server e RSA](0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)
 * [ADR-0011: Open Host Service Síncrono de Comandos (Checkout → Inventory)](0011-synchronous-open-host-service-checkout-inventory.md)
-* [Runbook Executável DEBT-ARCH-003 E4](../debt/DEBT-ARCH-003/E4.md)
+* [Documentação do Domínio Checkout](../domains/checkout.md)

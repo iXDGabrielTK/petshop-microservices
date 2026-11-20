@@ -18,10 +18,13 @@ import inv.inventory.infrastructure.messaging.EstoqueBaixoMessage;
 import inv.inventory.infrastructure.persistence.MovimentacaoRepository;
 import inv.inventory.infrastructure.persistence.ProdutoMetadadosEstoque;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
+import inv.inventory.infrastructure.persistence.SaidaPorProduto;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
@@ -33,6 +36,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -542,8 +546,13 @@ class EstoqueServiceLoteTest {
                     new ItemComando(1L, new BigDecimal("0.500"))
             ));
 
-            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(eq(100L), anyLong(), eq(TipoMovimentacao.DEVOLUCAO)))
-                    .thenReturn(false);
+            when(movimentacaoRepository.buscarSaidasPorVenda(100L)).thenReturn(List.of(
+                    new SaidaPorProduto(3L, new BigDecimal("1")),
+                    new SaidaPorProduto(1L, new BigDecimal("2.5")),
+                    new SaidaPorProduto(2L, new BigDecimal("1.50"))
+            ));
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(eq(100L), anyLong()))
+                    .thenReturn(Optional.empty());
             when(produtoRepository.getReferenceById(anyLong())).thenAnswer(inv -> {
                 Produto p = new Produto();
                 p.setId(inv.getArgument(0));
@@ -577,17 +586,18 @@ class EstoqueServiceLoteTest {
             assertThat(movs.get(2).getVendaId()).isEqualTo(100L);
 
             InOrder inOrder = inOrder(movimentacaoRepository, produtoRepository);
-            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(100L, 1L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(movimentacaoRepository).buscarSaidasPorVenda(100L);
+            inOrder.verify(movimentacaoRepository).buscarQuantidadeDevolucao(100L, 1L);
             inOrder.verify(produtoRepository).getReferenceById(1L);
             inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
             inOrder.verify(produtoRepository).devolverEstoqueAtomo(1L, new BigDecimal("2.500"));
 
-            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(100L, 2L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(movimentacaoRepository).buscarQuantidadeDevolucao(100L, 2L);
             inOrder.verify(produtoRepository).getReferenceById(2L);
             inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
             inOrder.verify(produtoRepository).devolverEstoqueAtomo(2L, new BigDecimal("1.500"));
 
-            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(100L, 3L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(movimentacaoRepository).buscarQuantidadeDevolucao(100L, 3L);
             inOrder.verify(produtoRepository).getReferenceById(3L);
             inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
             inOrder.verify(produtoRepository).devolverEstoqueAtomo(3L, new BigDecimal("1.000"));
@@ -603,14 +613,17 @@ class EstoqueServiceLoteTest {
                     new ItemComando(10L, new BigDecimal("4.000"))
             ));
 
-            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(101L, 10L, TipoMovimentacao.DEVOLUCAO)).thenReturn(false);
+            when(movimentacaoRepository.buscarSaidasPorVenda(101L))
+                    .thenReturn(List.of(new SaidaPorProduto(10L, new BigDecimal("4.000"))));
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(101L, 10L)).thenReturn(Optional.empty());
             when(produtoRepository.getReferenceById(10L)).thenReturn(new Produto());
             when(produtoRepository.devolverEstoqueAtomo(10L, new BigDecimal("4.000"))).thenReturn(new BigDecimal("14.000"));
 
             estoqueService.devolverEstoque(comando);
 
             InOrder inOrder = inOrder(movimentacaoRepository, produtoRepository);
-            inOrder.verify(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(101L, 10L, TipoMovimentacao.DEVOLUCAO);
+            inOrder.verify(movimentacaoRepository).buscarSaidasPorVenda(101L);
+            inOrder.verify(movimentacaoRepository).buscarQuantidadeDevolucao(101L, 10L);
             inOrder.verify(movimentacaoRepository).save(any(MovimentacaoEstoque.class));
             inOrder.verify(produtoRepository).devolverEstoqueAtomo(10L, new BigDecimal("4.000"));
         }
@@ -623,8 +636,9 @@ class EstoqueServiceLoteTest {
                     new ItemComando(2L, new BigDecimal("3.000"))
             ));
 
-            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(102L, 1L, TipoMovimentacao.DEVOLUCAO)).thenReturn(true);
-            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(102L, 2L, TipoMovimentacao.DEVOLUCAO)).thenReturn(false);
+            registrarSaidasDeDoisProdutos(102L);
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(102L, 1L)).thenReturn(Optional.of(new BigDecimal("2")));
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(102L, 2L)).thenReturn(Optional.empty());
             Produto p2 = new Produto();
             p2.setId(2L);
             when(produtoRepository.getReferenceById(2L)).thenReturn(p2);
@@ -640,13 +654,121 @@ class EstoqueServiceLoteTest {
         }
 
         @Test
-        @DisplayName("Cenário 3 (b) — Lista vazia deve retornar imediatamente sem interagir com repositórios (Q5)")
-        void devolverEstoqueListaVaziaENoOp() {
-            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of());
+        @DisplayName("Cenário 3 (b) — Idempotência integral: repetição idêntica não realiza novas escritas (Q5)")
+        void devolverEstoqueRepeticaoIntegralIdenticaNaoMutaEstoque() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(102L, List.of(
+                    new ItemComando(1L, new BigDecimal("2.000"))
+            ));
+            when(movimentacaoRepository.buscarSaidasPorVenda(102L))
+                    .thenReturn(List.of(new SaidaPorProduto(1L, new BigDecimal("2.000"))));
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(102L, 1L))
+                    .thenReturn(Optional.of(new BigDecimal("2.00")));
 
             estoqueService.devolverEstoque(comando);
 
-            verifyNoInteractions(movimentacaoRepository, produtoRepository);
+            verify(movimentacaoRepository).buscarSaidasPorVenda(102L);
+            verify(movimentacaoRepository).buscarQuantidadeDevolucao(102L, 1L);
+            verifyNoMoreInteractions(movimentacaoRepository);
+            verifyNoInteractions(produtoRepository);
+        }
+
+        @Test
+        @DisplayName("Lista vazia sem SAÍDA registrada retorna sem movimentação ou atualização de saldo (Q4)")
+        void devolverEstoqueListaVaziaENoOp() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of());
+            when(movimentacaoRepository.buscarSaidasPorVenda(103L)).thenReturn(List.of());
+
+            estoqueService.devolverEstoque(comando);
+
+            verificarSomenteConsultaDeSaidas(103L);
+        }
+
+        @Test
+        void devolverEstoqueRejeitaListaVaziaComSaida() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of());
+            when(movimentacaoRepository.buscarSaidasPorVenda(103L))
+                    .thenReturn(List.of(new SaidaPorProduto(1L, new BigDecimal("2.000"))));
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(BusinessException.class);
+
+            verificarSomenteConsultaDeSaidas(103L);
+        }
+
+        @Test
+        void devolverEstoqueRejeitaItensSemSaida() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of(
+                    new ItemComando(1L, new BigDecimal("2.000"))
+            ));
+            when(movimentacaoRepository.buscarSaidasPorVenda(103L)).thenReturn(List.of());
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(BusinessException.class);
+
+            verificarSomenteConsultaDeSaidas(103L);
+        }
+
+        @Test
+        void devolverEstoqueRejeitaOmissaoDeProduto() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of(
+                    new ItemComando(1L, new BigDecimal("2.000"))
+            ));
+            registrarSaidasDeDoisProdutos(103L);
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(BusinessException.class);
+
+            verificarSomenteConsultaDeSaidas(103L);
+        }
+
+        @Test
+        void devolverEstoqueRejeitaProdutoEstranhoAVenda() {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of(
+                    new ItemComando(1L, new BigDecimal("2.000")),
+                    new ItemComando(2L, new BigDecimal("3.000")),
+                    new ItemComando(3L, new BigDecimal("1.000"))
+            ));
+            registrarSaidasDeDoisProdutos(103L);
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(BusinessException.class);
+
+            verificarSomenteConsultaDeSaidas(103L);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"1.000", "3.000"})
+        void devolverEstoqueRejeitaQuantidadeParcialOuExcedente(String quantidade) {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of(
+                    new ItemComando(1L, new BigDecimal(quantidade)),
+                    new ItemComando(2L, new BigDecimal("3.000"))
+            ));
+            registrarSaidasDeDoisProdutos(103L);
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(BusinessException.class);
+
+            verificarSomenteConsultaDeSaidas(103L);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"1.000", "3.000"})
+        void devolverEstoqueRejeitaRepeticaoComQuantidadeRegistradaDivergente(String quantidadeRegistrada) {
+            ComandoEstoqueVenda comando = new ComandoEstoqueVenda(103L, List.of(
+                    new ItemComando(1L, new BigDecimal("2.000"))
+            ));
+            when(movimentacaoRepository.buscarSaidasPorVenda(103L))
+                    .thenReturn(List.of(new SaidaPorProduto(1L, new BigDecimal("2.000"))));
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(103L, 1L))
+                    .thenReturn(Optional.of(new BigDecimal(quantidadeRegistrada)));
+
+            assertThatThrownBy(() -> estoqueService.devolverEstoque(comando))
+                    .isInstanceOf(BusinessException.class);
+
+            verify(movimentacaoRepository).buscarSaidasPorVenda(103L);
+            verify(movimentacaoRepository).buscarQuantidadeDevolucao(103L, 1L);
+            verifyNoMoreInteractions(movimentacaoRepository);
+            verifyNoInteractions(produtoRepository);
         }
 
         @Test
@@ -656,7 +778,9 @@ class EstoqueServiceLoteTest {
                     new ItemComando(999L, new BigDecimal("1.000"))
             ));
 
-            when(movimentacaoRepository.existsByVendaIdAndProdutoIdAndTipo(104L, 999L, TipoMovimentacao.DEVOLUCAO)).thenReturn(false);
+            when(movimentacaoRepository.buscarSaidasPorVenda(104L))
+                    .thenReturn(List.of(new SaidaPorProduto(999L, new BigDecimal("1.000"))));
+            when(movimentacaoRepository.buscarQuantidadeDevolucao(104L, 999L)).thenReturn(Optional.empty());
             when(produtoRepository.getReferenceById(999L)).thenReturn(new Produto());
             when(produtoRepository.devolverEstoqueAtomo(999L, new BigDecimal("1.000"))).thenReturn(null);
 
@@ -671,6 +795,19 @@ class EstoqueServiceLoteTest {
             assertThatThrownBy(() -> estoqueService.devolverEstoque(null))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("comando");
+        }
+
+        private void registrarSaidasDeDoisProdutos(long vendaId) {
+            when(movimentacaoRepository.buscarSaidasPorVenda(vendaId)).thenReturn(List.of(
+                    new SaidaPorProduto(1L, new BigDecimal("2.000")),
+                    new SaidaPorProduto(2L, new BigDecimal("3.000"))
+            ));
+        }
+
+        private void verificarSomenteConsultaDeSaidas(long vendaId) {
+            verify(movimentacaoRepository).buscarSaidasPorVenda(vendaId);
+            verifyNoMoreInteractions(movimentacaoRepository);
+            verifyNoInteractions(produtoRepository);
         }
     }
 }

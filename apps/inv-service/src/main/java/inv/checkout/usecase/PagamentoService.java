@@ -6,6 +6,8 @@
 package inv.checkout.usecase;
 
 import common.exception.BusinessException;
+import common.exception.ConflictException;
+import common.exception.ResourceNotFoundException;
 import inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent;
 import inv.shared.domain.MetodoPagamento;
 import inv.checkout.domain.model.Pagamento;
@@ -18,11 +20,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 @Service
 public class PagamentoService {
+
+    private static final BigDecimal VALOR_MAXIMO_INTENCAO = new BigDecimal("99999999.99");
 
     private final PagamentoRepository pagamentoRepository;
     private final VendaRepository vendaRepository;
@@ -40,21 +45,72 @@ public class PagamentoService {
                                        BigDecimal valor,
                                        UUID uuidReferencia) {
 
-        Optional<Pagamento> pagamentoExistente = pagamentoRepository.findByUuidReferencia(uuidReferencia);
-        if (pagamentoExistente.isPresent()) {
-            return pagamentoExistente.get().getId();
+        if (valor == null
+                || valor.signum() <= 0
+                || valor.compareTo(VALOR_MAXIMO_INTENCAO) > 0
+                || valor.stripTrailingZeros().scale() > 2) {
+            throw new BusinessException(
+                    "Valor inválido para intenção de pagamento: deve ser positivo, com no máximo 8 dígitos inteiros e 2 casas decimais.");
         }
 
-        Venda venda = vendaRepository.findById(vendaId)
-                .orElseThrow(() -> new BusinessException("Venda não encontrada"));
+        // 1. Consulta rápida idempotente antes de adquirir lock na venda
+        Optional<Pagamento> pagamentoExistenteRapido = pagamentoRepository.findByUuidReferencia(uuidReferencia);
+        if (pagamentoExistenteRapido.isPresent()) {
+            return validarIntencaoExistente(pagamentoExistenteRapido.get(), vendaId, metodo, valor);
+        }
 
+        // 2. Lock pessimista na venda (serializa com conclusão, expiração e cancelamento)
+        Venda venda = vendaRepository.findByIdWithLock(vendaId)
+                .orElseThrow(() -> new ResourceNotFoundException("Venda não encontrada"));
+
+        // 3. Reconsulta pós-lock antes da validação de status da venda
+        Optional<Pagamento> pagamentoExistentePosLock = pagamentoRepository.findByUuidReferencia(uuidReferencia);
+        if (pagamentoExistentePosLock.isPresent()) {
+            return validarIntencaoExistente(pagamentoExistentePosLock.get(), vendaId, metodo, valor);
+        }
+
+        // 4. Validação do status da venda
+        if (!venda.getStatus().aceitaPagamento()) {
+            throw new ConflictException("A venda não aceita pagamentos no status: " + venda.getStatus());
+        }
+
+        // 5. Inserção atômica idempotente usando o domínio como fonte única dos valores iniciais
         Pagamento pagamento = new Pagamento(venda, metodo, valor, uuidReferencia);
-
         if (metodo.isExigeProcessamento()) {
             pagamento.processar();
         }
 
-        return pagamentoRepository.save(pagamento).getId();
+        Optional<Long> idInserido = pagamentoRepository.inserirIntencaoIdempotente(
+                pagamento.getUuidReferencia(),
+                venda.getId(),
+                pagamento.getMetodo().name(),
+                pagamento.getStatus().name(),
+                pagamento.getValorEsperado(),
+                pagamento.getValorRecebido(),
+                pagamento.isExcedente(),
+                pagamento.isContabilizado()
+        );
+        if (idInserido.isPresent()) {
+            return idInserido.get();
+        }
+
+        // 6. Fallback em conflito concorrente no índice único de uuid_referencia
+        Pagamento pagamentoConflitante = pagamentoRepository.findByUuidReferencia(uuidReferencia)
+                .orElseThrow(() -> new ConflictException(
+                        "Conflito de idempotência ao registrar intenção de pagamento para o UUID: " + uuidReferencia));
+        return validarIntencaoExistente(pagamentoConflitante, vendaId, metodo, valor);
+    }
+
+    private Long validarIntencaoExistente(Pagamento existente, Long vendaId, MetodoPagamento metodo, BigDecimal valor) {
+        Long vendaExistenteId = existente.getVenda() != null ? existente.getVenda().getId() : null;
+        if (!Objects.equals(vendaExistenteId, vendaId)
+                || existente.getMetodo() != metodo
+                || existente.getValorEsperado() == null
+                || existente.getValorEsperado().compareTo(valor) != 0) {
+            throw new ConflictException(
+                    "UUID de referência já utilizado por intenção de pagamento com dados divergentes.");
+        }
+        return existente.getId();
     }
 
     @Transactional(readOnly = true)

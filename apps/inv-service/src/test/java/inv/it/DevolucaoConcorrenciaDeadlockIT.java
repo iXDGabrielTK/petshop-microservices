@@ -53,6 +53,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -325,13 +326,15 @@ class DevolucaoConcorrenciaDeadlockIT {
     void duasChamadasSimultaneasDevolverEstoqueSemLockCheckoutColideNoIndiceV8Com23505() throws Exception {
         TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
         long deadlocksServidorInicio = obterDeadlocksServidor();
+        BigDecimal quantidadeVendida = new BigDecimal("3.000");
 
         // Subcenário (a): Corrida livre com CyclicBarrier(2)
         Produto prodA = salvarProduto("7891000300010", "Produto V8 SubA",
                 new BigDecimal("10.00"), new BigDecimal("7.000"), new BigDecimal("1.000"));
         Venda vendaA = vendaRepository.save(new Venda());
+        registrarSaida(vendaA.getId(), prodA, quantidadeVendida);
         ComandoEstoqueVenda comandoA = new ComandoEstoqueVenda(
-                vendaA.getId(), List.of(new ItemComando(prodA.getId(), new BigDecimal("3.000"))));
+                vendaA.getId(), List.of(new ItemComando(prodA.getId(), quantidadeVendida)));
 
         CyclicBarrier barreiraA = new CyclicBarrier(2);
         AtomicInteger sucessosA = new AtomicInteger();
@@ -353,7 +356,7 @@ class DevolucaoConcorrenciaDeadlockIT {
             assertThat(poolA.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
         }
 
-        // Em corrida livre, ou 2 sucedem (1 inserção + 1 no-op via exists) ou 1 sucede e 1 falha com 23505
+        // Em corrida livre, ou 2 sucedem (1 inserção + 1 repetição idempotente) ou 1 sucede e 1 falha com 23505
         assertThat(sucessosA.get()).isGreaterThanOrEqualTo(1);
         assertThat(produtoRepository.findById(prodA.getId()).orElseThrow().getEstoqueDisponivel())
                 .isEqualByComparingTo("10.000");
@@ -362,12 +365,13 @@ class DevolucaoConcorrenciaDeadlockIT {
                 .count();
         assertThat(devolucoesA).isEqualTo(1L);
 
-        // Subcenário (b): Sincronizadas por CountDownLatch para que ambas leiam exists == false antes do INSERT
+        // Subcenário (b): O CountDownLatch garante que ambas as consultas retornem vazio para a corrida pelo INSERT.
         Produto prodB = salvarProduto("7891000300020", "Produto V8 SubB",
                 new BigDecimal("10.00"), new BigDecimal("7.000"), new BigDecimal("1.000"));
         Venda vendaB = vendaRepository.save(new Venda());
+        registrarSaida(vendaB.getId(), prodB, quantidadeVendida);
         ComandoEstoqueVenda comandoB = new ComandoEstoqueVenda(
-                vendaB.getId(), List.of(new ItemComando(prodB.getId(), new BigDecimal("3.000"))));
+                vendaB.getId(), List.of(new ItemComando(prodB.getId(), quantidadeVendida)));
 
         CountDownLatch latchLeitura = new CountDownLatch(2);
 
@@ -377,9 +381,8 @@ class DevolucaoConcorrenciaDeadlockIT {
             if (!unblocked) {
                 throw new TimeoutException("Latch leitura timed out");
             }
-            return false;
-        }).when(movimentacaoRepository).existsByVendaIdAndProdutoIdAndTipo(
-                eq(vendaB.getId()), eq(prodB.getId()), eq(TipoMovimentacao.DEVOLUCAO));
+            return Optional.empty();
+        }).when(movimentacaoRepository).buscarQuantidadeDevolucao(eq(vendaB.getId()), eq(prodB.getId()));
 
         AtomicInteger sucessosB = new AtomicInteger();
         Queue<Throwable> errosB = new ConcurrentLinkedQueue<>();
@@ -540,6 +543,11 @@ class DevolucaoConcorrenciaDeadlockIT {
         assertThat(bFim.getEstoqueDisponivel()).isEqualByComparingTo("70.000");
         assertThat(bFim.getEstoqueReservado()).isEqualByComparingTo("15.000");
         assertThat(bFim.getEstoqueDisponivel().add(bFim.getEstoqueReservado())).isEqualByComparingTo("85.000");
+    }
+
+    private void registrarSaida(Long vendaId, Produto produto, BigDecimal quantidade) {
+        movimentacaoRepository.saveAndFlush(new MovimentacaoEstoque(
+                null, produto, vendaId, TipoMovimentacao.SAIDA, quantidade, LocalDateTime.now(), null));
     }
 
     private Long criarEConcluirVenda(List<ItemVendaRequest> itens) {
