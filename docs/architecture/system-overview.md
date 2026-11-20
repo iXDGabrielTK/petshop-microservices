@@ -343,7 +343,7 @@ O tratamento de exceções HTTP é centralizado no [`GlobalExceptionHandler`](..
 | **500** | `Exception` (fallback genérico) | `Erro Interno do Servidor` | `https://petshop.com/errors/internal-server-error` |
 
 > [!NOTE]
-> **Rejeição na cadeia de filtros JWT (`401` sem `ProblemDetail`):** no `inv-service` e demais Resource Servers, requisições sem token Bearer ou com JWT ausente, malformado, expirado ou assinado por chave não confiável são interceptadas na cadeia de filtros do Spring Security antes de alcançar os controllers e o `GlobalExceptionHandler`. O comportamento atual devolve HTTP `401 Unauthorized` com o cabeçalho `WWW-Authenticate` (`Bearer` ou `Bearer error="invalid_token", ...`) e **corpo vazio**, diferentemente das exceções `BadCredentialsException` e `InternalAuthenticationServiceException` tratadas na camada MVC pelo `GlobalExceptionHandler` (que respondem `ProblemDetail` com `title: "Falha na Autenticação"`).
+> **Rejeição na cadeia de filtros JWT no `inv-service` (`401` sem `ProblemDetail`):** em rotas que exigem autenticação, a ausência de token Bearer resulta em HTTP `401` com cabeçalho `WWW-Authenticate: Bearer` e **corpo vazio**. Rotas públicas (`permitAll()`), como `/pagamentos/webhook/**`, admitem requisições sem token, mas não ignoram um token Bearer inválido enviado pelo cliente. Quando a cadeia de filtros JWT rejeita uma credencial, a resposta (`401` com `WWW-Authenticate` e corpo vazio) ocorre antes do controller — diferentemente dos erros de autenticação tratados na camada MVC pelo `GlobalExceptionHandler` (`BadCredentialsException` e `InternalAuthenticationServiceException`), que retornam `ProblemDetail`.
 
 ---
 
