@@ -8,6 +8,7 @@ package inv.architect;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.EvaluationResult;
+import inv.checkout.r15fixture.R15DoisFluxosBaseFixture;
 import inv.checkout.r15fixture.R15EscritaAntesDoLockFixture;
 import inv.checkout.r15fixture.R15FluxosBaseFixture;
 import inv.checkout.r15fixture.R15LockAntesDaEscritaFixture;
@@ -42,11 +43,11 @@ class ArquiteturaR15Test {
     @Test
     void deveAceitarFluxoEquivalenteComLockAntesDaEscrita() {
         JavaClasses classes = new ClassFileImporter()
-                .importClasses(R15FluxosBaseFixture.class, R15LockAntesDaEscritaFixture.class);
+                .importClasses(R15DoisFluxosBaseFixture.class, R15LockAntesDaEscritaFixture.class);
 
         EvaluationResult resultado = ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.evaluate(classes);
 
-        assertFalse(resultado.hasViolation());
+        assertFalse(resultado.hasViolation(), () -> String.join(System.lineSeparator(), resultado.getFailureReport().getDetails()));
         assertTrue(resultado.getFailureReport().getDetails().isEmpty());
         assertDoesNotThrow(() -> ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.check(classes));
     }
