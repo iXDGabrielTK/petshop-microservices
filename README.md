@@ -178,8 +178,11 @@ Os testes de estresse validam os pontos críticos de concorrência com container
 4. **Idempotência de Entrega ([ADR-0008](docs/adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)):** Rajada de 10 mensagens duplicadas no broker garantindo disparo único de notificação.
 
 ```bash
-# Executar a suíte de testes completa
-./mvnw test
+# Executar os testes unitários
+mvn test
+
+# Executar os testes unitários e de integração (requer Docker ativo)
+mvn verify
 ```
 
 ---
