@@ -197,7 +197,7 @@ class CarrinhosInvertidosDeadlockIT {
             Future<?> f1 = pool.submit(() -> {
                 try {
                     tt1.execute(status -> {
-                        jdbcTemplate.execute("SET LOCAL deadlock_timeout = '100ms'");
+                        prepararTransacaoDoControleNegativo();
                         produtoRepository.reservarEstoqueAtomo(idA, new BigDecimal("1.000"));
                         t1TravouA.countDown();
 
@@ -238,7 +238,7 @@ class CarrinhosInvertidosDeadlockIT {
                             throw new RuntimeException(e);
                         }
 
-                        jdbcTemplate.execute("SET LOCAL deadlock_timeout = '100ms'");
+                        prepararTransacaoDoControleNegativo();
                         produtoRepository.reservarEstoqueAtomo(idB, new BigDecimal("1.000"));
                         t2TravouB.countDown();
 
@@ -270,16 +270,21 @@ class CarrinhosInvertidosDeadlockIT {
             assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
         }
 
-        // A1: Comprova no pg_stat_database que o servidor detectou e contabilizou exatamente 1 deadlock
-        long deadlocksServidorFim = obterDeadlocksServidor();
-        assertThat(deadlocksServidorFim - deadlocksServidorInicio)
-                .withFailMessage("O controle negativo deve registrar exatamente 1 deadlock no servidor PostgreSQL")
-                .isEqualTo(1L);
-
         // Deve ocorrer exatamente 1 deadlock (SQLState 40P01) e exatamente 1 sucesso (a transação sobrevivente)
         assertThat(outrosErros).isEmpty();
         assertThat(deadlocks.get()).isEqualTo(1);
         assertThat(sucessos.get()).isEqualTo(1);
+
+        long deadlocksServidorFim = obterDeadlocksServidor();
+        assertThat(deadlocksServidorFim - deadlocksServidorInicio)
+                .as("Deadlocks registrados no PostgreSQL durante o controle negativo")
+                .isEqualTo(1L);
+    }
+
+    private void prepararTransacaoDoControleNegativo() {
+        jdbcTemplate.execute("SET LOCAL deadlock_timeout = '100ms'");
+        // O flush é por conexão. Qualquer uma das duas pode ser a vítima e publicar o 40P01 ao encerrar a transação.
+        jdbcTemplate.execute("SELECT pg_stat_force_next_flush()");
     }
 
     private long obterDeadlocksServidor() {
