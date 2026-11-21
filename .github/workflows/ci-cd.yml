@@ -74,8 +74,21 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Compilar common-lib e rodar testes
-        run: mvn clean test -DfailIfNoTests=false
+      - name: Executar testes unitários e de integração
+        run: mvn clean verify
+
+      - name: Validar relatórios Surefire e Failsafe
+        run: python3 .github/scripts/check-test-reports.py
+
+      - name: Publicar relatórios de testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-test-reports
+          path: |
+            apps/*/target/surefire-reports/TEST-*.xml
+            apps/*/target/failsafe-reports/TEST-*.xml
+            apps/*/target/failsafe-reports/failsafe-summary.xml
 
   # --------------------------------------------------------
   # ETAPA 3: Análise de Segurança (SAST / CVEs)
