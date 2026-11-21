@@ -12,6 +12,8 @@ import inv.checkout.r15fixture.R15DoisFluxosBaseFixture;
 import inv.checkout.r15fixture.R15EscritaAntesDoLockFixture;
 import inv.checkout.r15fixture.R15FluxosBaseFixture;
 import inv.checkout.r15fixture.R15LockAntesDaEscritaFixture;
+import inv.checkout.r15fixture.R15LockAntesDeSaveAndFlushEMutacaoFixture;
+import inv.checkout.r15fixture.R15SaveAndFlushAntesDoLockFixture;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -80,5 +82,47 @@ class ArquiteturaR15Test {
                 () -> ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.check(classes));
         assertTrue(erro.getMessage().contains("R15EscritaAntesDoLockFixture.executar"));
         assertTrue(PADRAO_ESCRITA_PRE_LOCK.matcher(erro.getMessage()).find());
+    }
+
+    @Test
+    void deveRejeitarSaveAndFlushAntesDoLockMesmoComMutacaoPosterior() {
+        JavaClasses classes = new ClassFileImporter()
+                .importClasses(R15FluxosBaseFixture.class, R15SaveAndFlushAntesDoLockFixture.class);
+
+        EvaluationResult resultado = ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.evaluate(classes);
+
+        assertTrue(resultado.hasViolation());
+        List<String> detalhes = resultado.getFailureReport().getDetails();
+        assertEquals(1, detalhes.size());
+
+        String violacao = detalhes.getFirst();
+        assertTrue(violacao.contains(
+                "inv.checkout.r15fixture.R15SaveAndFlushAntesDoLockFixture.executar(java.lang.Long, inv.checkout.domain.model.Venda)"));
+        Matcher matcher = PADRAO_ESCRITA_PRE_LOCK.matcher(violacao);
+        assertTrue(matcher.find(), () -> "Mensagem inesperada da R15: " + violacao);
+        int linhaEscrita = Integer.parseInt(matcher.group(1));
+        int linhaLock = Integer.parseInt(matcher.group(2));
+        assertTrue(linhaEscrita < linhaLock, () -> "Esperava linhaEscrita < linhaLock em: " + violacao);
+
+        assertFalse(violacao.contains("pelo menos 3 fluxos"));
+        assertFalse(violacao.contains("sem adquirir lock pessimista"));
+
+        AssertionError erro = assertThrows(
+                AssertionError.class,
+                () -> ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.check(classes));
+        assertTrue(erro.getMessage().contains("R15SaveAndFlushAntesDoLockFixture.executar"));
+        assertTrue(PADRAO_ESCRITA_PRE_LOCK.matcher(erro.getMessage()).find());
+    }
+
+    @Test
+    void deveAceitarLockAntesDeSaveAndFlushEMutacao() {
+        JavaClasses classes = new ClassFileImporter()
+                .importClasses(R15DoisFluxosBaseFixture.class, R15LockAntesDeSaveAndFlushEMutacaoFixture.class);
+
+        EvaluationResult resultado = ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.evaluate(classes);
+
+        assertFalse(resultado.hasViolation(), () -> String.join(System.lineSeparator(), resultado.getFailureReport().getDetails()));
+        assertTrue(resultado.getFailureReport().getDetails().isEmpty());
+        assertDoesNotThrow(() -> ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock.check(classes));
     }
 }

@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideOutsideOfPackage;
@@ -280,13 +281,12 @@ public class ArquiteturaTest {
                         continue;
                     }
 
-                    int primeiraMutacao = chamadasMutadoras.stream()
+                    int primeiraMutacao = Stream.concat(
+                                    chamadasMutadoras.stream(),
+                                    chamadasEscritaDiretaVendaRepo.stream())
                             .mapToInt(JavaMethodCall::getLineNumber)
                             .min()
-                            .orElseGet(() -> chamadasEscritaDiretaVendaRepo.stream()
-                                    .mapToInt(JavaMethodCall::getLineNumber)
-                                    .min()
-                                    .orElse(Integer.MAX_VALUE));
+                            .orElse(Integer.MAX_VALUE);
 
                     if (linhaLock.getAsInt() > primeiraMutacao) {
                         events.add(SimpleConditionEvent.violated(method,
