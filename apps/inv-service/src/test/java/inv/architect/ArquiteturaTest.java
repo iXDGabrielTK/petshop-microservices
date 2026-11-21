@@ -175,9 +175,10 @@ public class ArquiteturaTest {
      *       falso positivo ou falso negativo.</li>
      *   <li><b>Rastreamento de argumentos:</b> A regra não inspeciona por fluxo de dados se o ID passado ao lock corresponde
      *       ao ID da instância de {@code Venda} que está sendo mutada.</li>
-     *   <li><b>Ausência de teste sintético negativo:</b> A suíte não possui teste sintético negativo comprovando falha da regra
-     *       sob violação intencional (lacuna conhecida, atuando como gate estático complementado por testes dinâmicos em
-     *       {@code PagamentoConcorrenciaGatesIT}).</li>
+     *   <li><b>Cobertura sintética restrita à inversão pré-lock:</b> {@code ArquiteturaR15Test} comprova via
+     *       {@code ClassFileImporter} e fixtures em {@code inv.checkout.r15fixture} que a regra {@code R15} detecta a
+     *       escrita em {@code Venda} anterior a {@code VendaRepository.findByIdWithLock}, sem cobertura sintética isolada
+     *       dos demais ramos de falha (complementada por testes dinâmicos em {@code PagamentoConcorrenciaGatesIT}).</li>
      * </ul>
      */
     @ArchTest

@@ -19,7 +19,7 @@
 | PR | Etapa | Runbook | Entregáveis Chave | Status |
 | :---: | :---: | :--- | :--- | :---: |
 | **1** | **E1** | [E1.md](./E1.md) | Separação Surefire (`test`) vs Failsafe (`verify`) nos POMs, preservação do `-javaagent` do Mockito e comandos direcionados, `mvn clean verify` na CI e aceite por relatórios XML (`F1`, `F2`, `Q1`, `Q2`) | `[x]` Concluída |
-| **2** | **E2** | [E2.md](./E2.md) | `ArquiteturaR15Test` via `ClassFileImporter` reutilizando `R15`, `R15FluxosBaseFixture` (3 fluxos), par equivalente lock-antes vs escrita-antes sem Docker e atualização do Javadoc da `R15` (`F3`, `Q3`) | `[ ]` Pendente |
+| **2** | **E2** | [E2.md](./E2.md) | `ArquiteturaR15Test` via `ClassFileImporter` reutilizando `R15`, `R15FluxosBaseFixture` (3 fluxos), par equivalente lock-antes vs escrita-antes sem Docker e atualização do Javadoc da `R15` (`F3`, `Q3`) | `[x]` Concluída |
 
 ```mermaid
 flowchart LR
@@ -74,5 +74,5 @@ flowchart LR
 
 - [x] **PR 1 (`E1`):** `mvn clean test` executa apenas as `55` classes `*Test` (sem Docker); `mvn clean verify` com Docker ativo compara por módulo e fase o inventário descoberto nos fontes (usando o `package` declarado; referência `55/30` em `E1`) com os relatórios XML gerados, com 1 relatório por classe, interseção vazia, pelo menos um `<testcase>` por relatório, `skipped="0"`, `failures="0"`, `errors="0"` na `<testsuite>` e ausência de `<skipped>`, `<failure>` e `<error>` nos casos.
 - [x] **PR 1 (`E1`):** Comandos direcionados (`-Dtest=...`, `'-Dtest=!*'`, `-Dit.test=...`, `clean package -DskipTests` nos `Dockerfile`s e `clean verify -DskipTests`) validados; job de testes da CI executando `mvn clean verify`, exigindo `failsafe-summary.xml` nos módulos com integrações (`mail-service` e `inv-service`), publicando relatórios com `if: always()` e bloqueando `build-and-push-docker` em falha de integração.
-- [ ] **PR 2 (`E2`):** `ArquiteturaR15Test` executa sem Docker exercitando `ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock` via `ClassFileImporter` sobre fixtures `public`, aceitando o cenário positivo e produzindo exatamente 1 violação de escrita antes do lock no cenário negativo (sem violação de contagem `< 3`), Javadoc da `R15` registrando exatamente a detecção de escrita em `Venda` anterior a `findByIdWithLock`, checagem da CI exigindo automaticamente `56/30` relatórios e `ArquiteturaTest` (`15` regras) + `ModulithTest` (`2` testes) verdes.
+- [x] **PR 2 (`E2`):** `ArquiteturaR15Test` executa sem Docker exercitando `ArquiteturaTest.escritasEmVendaDevemUsarFindByIdWithLock` via `ClassFileImporter` sobre fixtures `public`, aceitando o cenário positivo e produzindo exatamente 1 violação de escrita antes do lock no cenário negativo (sem violação de contagem `< 3`), Javadoc da `R15` registrando exatamente a detecção de escrita em `Venda` anterior a `findByIdWithLock`, checagem da CI exigindo automaticamente `56/30` relatórios e `ArquiteturaTest` (`15` regras) + `ModulithTest` (`2` testes) verdes.
 - [x] **Sanitização:** Documentação verificada após a execução da E1.
