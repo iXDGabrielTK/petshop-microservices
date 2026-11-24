@@ -24,7 +24,7 @@ O problema clássico ao integrar Banco de Dados Relacional e Message Broker é o
 * **Atomicidade Garantida (Zero Event Loss):** Um evento só deve ser despachado se, e somente se, a transação de negócio correspondente for comitada no banco de dados.
 * **Escalabilidade Horizontal de Workers:** Capacidade de rodar múltiplas instâncias do `inv-service` em paralelo consumindo a mesma tabela de outbox sem colisão de locks ou deadlocks.
 * **Desacoplamento de Disponibilidade do Broker:** A venda no PDV deve ser concluída mesmo se o RabbitMQ estiver temporariamente fora do ar.
-* **Ordenação Causal por Criação:** Despacho ordenado cronologicamente (`ORDER BY created_at ASC`).
+* **Prioridade por Criação:** A seleção prioriza o registro elegível mais antigo (`ORDER BY created_at ASC, id ASC`). Registros bloqueados ou em backoff podem ser ultrapassados.
 
 ---
 
@@ -37,7 +37,7 @@ O problema clássico ao integrar Banco de Dados Relacional e Message Broker é o
 3. **Opção 3: Transactional Outbox com Polling via `FOR UPDATE SKIP LOCKED` (Adotada):**
    * A entidade de negócio e o registro do evento na tabela `outbox` são gravados na **mesma transação ACID local**.
    * Um worker agendado consome a tabela `outbox` usando `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1`.
-   * Envia a mensagem ao broker e remove o registro da tabela. Se o envio falhar, o rollback mantém o registro para a próxima tentativa.
+   * Publica a mensagem e remove o registro após confirmação do broker e verificação de roteamento. Se a tentativa falhar, o rollback preserva o registro para tratamento conforme a categoria de falha.
 
 ---
 
@@ -63,13 +63,13 @@ SELECT * FROM outbox
  LIMIT 1
  FOR UPDATE SKIP LOCKED;
 ```
-* **O que faz o `SKIP LOCKED`:** Se a Instância A travar o registro elegível mais antigo, a Instância B que executar a query no mesmo instante **pula** o registro bloqueado e trava o próximo item elegível, sem espera e sem contenção.
+* **O que faz o `SKIP LOCKED`:** Se a Instância A travar o registro elegível mais antigo, a Instância B pula esse registro e trava o próximo item elegível. Cada worker mantém o lock de linha durante a publicação, a espera pela confirmação e até o fim da transação.
 * O instante `:agora` e os timestamps de `created_at`, backoff, quarentena e replay utilizam o bean `Clock` configurado em [`DateTimeConfig`](../../apps/inv-service/src/main/java/inv/shared/config/DateTimeConfig.java) (`America/Sao_Paulo`), injetado também nos três produtores `BEFORE_COMMIT` ([`PagamentoListener`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/PagamentoListener.java), [`VendaEstornadaOutboxListener`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEstornadaOutboxListener.java) e [`RabbitMQProducerListener`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/messaging/RabbitMQProducerListener.java)).
 
 ### C. Confirmação AMQP, Roteamento e Publicação Sem `__TypeId__` ([`OutboxDeliveryStep`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxDeliveryStep.java), [`RabbitMQConfig`](../../apps/inv-service/src/main/java/inv/shared/config/RabbitMQConfig.java))
 * `application.properties` habilita `spring.rabbitmq.publisher-confirm-type=correlated`, `spring.rabbitmq.publisher-returns=true` e `spring.rabbitmq.template.mandatory=true`, com prazo máximo de confirmação `outbox.publisher.confirm-timeout-ms=3000`.
 * `OutboxDeliveryStep` valida `version`, `eventType` e JSON contra a classe de evento e publica `Message` JSON UTF-8 persistente com `messageId = outbox-<id>`, `correlationId` único por tentativa (`outbox-<id>-<uuid>`), headers `x-outbox-id` e `x-event-version` e **sem header `__TypeId__`**, desacoplando contratos entre serviços e aceitando `version = 0` e `1`.
-* A linha só é excluída (`delete` + `flush` em `Propagation.REQUIRES_NEW`) após `Confirm(ack=true)` e `CorrelationData.getReturned() == null`. Em `NO_ROUTE`, `NACK`, fechamento `404 NOT_FOUND`, timeout ou falha de conexão, a transação sofre rollback e o registro permanece preservado.
+* A linha só é excluída (`delete` + `flush` em `Propagation.REQUIRES_NEW`) após `Confirm(ack=true)` e `CorrelationData.getReturned() == null`. O publisher ACK confirma o aceite pelo broker. Uma mensagem sem rota pode receber ACK junto de um return `NO_ROUTE`, por isso as duas condições são verificadas. O ACK do consumidor é independente. Em `NO_ROUTE`, `NACK`, fechamento `404 NOT_FOUND`, timeout ou falha de conexão, a transação sofre rollback e o registro permanece preservado.
 * A fila órfã `inventory.v1.stock-low.notify` (e sua DLX/DLQ) fica condicionada por `inv.rabbitmq.legacy-low-stock-queue.enabled=false`, evitando que mensagens de estoque baixo sejam absorvidas sem consumidor ativo quando o `mail-service` não declarou `inventory.v1.low-stock.send-email`.
 
 ### D. Agendamento, Isolamento de Falhas, Replay Admin e Observabilidade
@@ -77,8 +77,8 @@ SELECT * FROM outbox
 * **Separação pós-rollback:** [`OutboxProcessor`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxProcessor.java) (não transacional) coordena `OutboxDeliveryStep` (`REQUIRES_NEW`) e aciona [`OutboxFailureRecorder`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxFailureRecorder.java) (`REQUIRES_NEW` via `UPDATE` condicional `WHERE id = :id AND status = 'PENDING'`) quando ocorre rollback:
   * *Poison pills* (`ClassNotFoundException`, JSON inválido, versão negativa): movidos imediatamente para `QUARANTINED` e o ciclo segue (`FAILED_CONTINUE`).
   * Falhas de roteamento (`NO_ROUTE`, `404 NOT_FOUND`): agendados com backoff exponencial via `Clock` até `outbox.retry.max-attempts` (quando passam a `QUARANTINED`) e o ciclo segue (`FAILED_CONTINUE`).
-  * Broker indisponível (`AmqpConnectException`, timeout, `basic.nack` genérico) ou erro de persistência pós-confirmação AMQP: agendados com backoff transitório e pausam o ciclo (`FAILED_PAUSE`), nunca indo direto para quarentena em erro pós-confirm.
-* **Inspeção e replay administrativo:** [`OutboxAdminController`](../../apps/inv-service/src/main/java/inv/shared/outbox/web/OutboxAdminController.java) e [`OutboxReplayService`](../../apps/inv-service/src/main/java/inv/shared/outbox/service/OutboxReplayService.java) expõem `/admin/outbox/quarantined` (teto `size <= 100`), `/admin/outbox/{id}` e `POST /admin/outbox/{id}/replay` atômico (`WHERE id = :id AND status = 'QUARANTINED'`, `409`/`404` em RFC 7807), restritos a `ROLE_ADMIN` na rede interna (`server.port=8083`, sem rota no `api-gateway`).
+  * Broker indisponível (`AmqpConnectException`, timeout, `basic.nack` genérico) ou erro de persistência pós-confirmação AMQP: pausam o ciclo (`FAILED_PAUSE`). O mesmo teto de tentativas se aplica a essas falhas. Abaixo do teto, o registro recebe backoff. Ao atingi-lo, vai para quarentena.
+* **Inspeção e replay administrativo:** [`OutboxAdminController`](../../apps/inv-service/src/main/java/inv/shared/outbox/web/OutboxAdminController.java) e [`OutboxReplayService`](../../apps/inv-service/src/main/java/inv/shared/outbox/service/OutboxReplayService.java) expõem `GET /admin/outbox/quarantined` (teto `size <= 100`), `GET /admin/outbox/{id}` e `POST /admin/outbox/{id}/replay` atômico, restritos a JWT com `ROLE_ADMIN` no `inv-service`. O POST atua sobre uma linha em quarentena por ID. Retorna `200` ao recolocá-la em `PENDING` para nova tentativa, `409` se a linha estiver fora da quarentena e `404` se estiver ausente, inclusive após drenagem bem-sucedida. Os erros usam RFC 7807.
 * **Métricas e log operacional ([`OutboxMetrics`](../../apps/inv-service/src/main/java/inv/shared/outbox/metrics/OutboxMetrics.java)):** expõe via Micrometer/Prometheus os gauges `outbox.oldest.eligible.age.seconds` (`GREATEST(0, ...)` via `Clock`, tolerante a erro transitório de banco sem degradar `/actuator/prometheus`) e `outbox.quarantined.count`, os counters `outbox.quarantined.total` (tag `error_type`), `outbox.replay.requested.total` e `outbox.replay.completed.total`, além do log estruturado `event=outbox_replay_completed` ao concluir entrega com `replay_count > 0`.
 
 ---
@@ -89,10 +89,10 @@ SELECT * FROM outbox
 | :--- | :--- | :--- | :--- | :--- |
 | **Envio Síncrono Direto** | Fraca (Risco de perda) | N/A | Zero | Baixíssima |
 | **CDC (Debezium + Kafka)** | Altíssima | Altíssima | Altíssima (Kafka Connect) | Muito Alta |
-| **Outbox com SKIP LOCKED** | **Altíssima (*at-least-once* — pelo menos 1x)** | **Nativa (Zero locks)** | **Mínima (Apenas Postgres)** | **Média** |
+| **Outbox com SKIP LOCKED** | ***At-least-once* com retentativas e quarentena** | **Workers paralelos com locks de linha** | **Mínima (tabela no PostgreSQL existente)** | **Média** |
 
 ### Garantia Real de Entrega (*At-Least-Once*) e Limites por Consumidor
-O publicador da outbox garante entrega **pelo menos uma vez (*at-least-once*)** após `Confirm(ack=true)` sem `NO_ROUTE`. Como a exclusão da linha na tabela `outbox` ocorre em transação local do PostgreSQL **após** a confirmação do broker (não existe 2PC entre PostgreSQL e RabbitMQ), uma falha de persistência ou queda nessa janela pós-confirmação / pré-commit mantém o registro `PENDING` e gera **reentrega segura** na tentativa seguinte. Por isso, a garantia ponta a ponta depende da semântica de cada consumidor:
+A semântica *at-least-once* admite múltiplas publicações da mesma linha. Como a exclusão da linha ocorre em transação local do PostgreSQL depois da confirmação do broker, um rollback nessa janela preserva a linha. Uma nova tentativa pode produzir outra entrega AMQP. Se as falhas persistirem até o teto, a linha fica em quarentena e a retomada depende de replay administrativo. Os efeitos no destino dependem do consumidor:
 
 | Consumidor | Rota / Fila | Garantia Efetiva | Mecanismo e Limite Conhecido |
 | :--- | :--- | :--- | :--- |
@@ -129,7 +129,15 @@ O publicador da outbox garante entrega **pelo menos uma vez (*at-least-once*)** 
 
 ---
 
-## 7. Referências e Links Relevantes
+## 7. Adendo (Novembro/2026 — DEBT-ARCH-006): Limites do Replay Administrativo
+
+O replay reabilita uma linha em quarentena, zera as tentativas, torna a linha elegível imediatamente e atualiza `replayed_at` e `replay_count`. Exchange, rota, payload, versão e diagnóstico da falha são preservados. O sucesso do POST confirma a reativação da linha. A publicação ocorre no processamento posterior da outbox e pode repetir uma entrega já aceita pelo broker.
+
+O endpoint é acessado diretamente no `inv-service`, sem rota dedicada no `api-gateway`. O [Compose](../../docker-compose.yml) publica `8083:8083`, portanto a ausência de rota no gateway não restringe o acesso à rede interna. Em redes que alcançam a porta publicada, o endpoint fica acessível fora dos controles do gateway e depende da validação do JWT e de `ROLE_ADMIN` pelo próprio serviço.
+
+---
+
+## 8. Referências e Links Relevantes
 
 * **Núcleo da Outbox (`inv.shared.outbox`):**
   * [Outbox](../../apps/inv-service/src/main/java/inv/shared/outbox/model/Outbox.java)
