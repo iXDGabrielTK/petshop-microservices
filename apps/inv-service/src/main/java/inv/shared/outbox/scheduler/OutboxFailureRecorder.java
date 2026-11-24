@@ -5,6 +5,7 @@
  */
 package inv.shared.outbox.scheduler;
 
+import inv.shared.outbox.metrics.OutboxMetrics;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
 import org.slf4j.Logger;
@@ -25,6 +26,7 @@ class OutboxFailureRecorder {
     private static final int MAX_ERROR_TYPE_LENGTH = 64;
 
     private final OutboxRepository outboxRepository;
+    private final OutboxMetrics outboxMetrics;
     private final Clock clock;
     private final int maxAttempts;
     private final long baseDelayMs;
@@ -32,6 +34,7 @@ class OutboxFailureRecorder {
 
     OutboxFailureRecorder(
             OutboxRepository outboxRepository,
+            OutboxMetrics outboxMetrics,
             Clock clock,
             @Value("${outbox.retry.max-attempts:5}") int maxAttempts,
             @Value("${outbox.retry.base-delay-ms:2000}") long baseDelayMs,
@@ -46,6 +49,7 @@ class OutboxFailureRecorder {
             throw new IllegalArgumentException("outbox.retry.max-delay-ms deve ser maior ou igual a base-delay-ms.");
         }
         this.outboxRepository = outboxRepository;
+        this.outboxMetrics = outboxMetrics;
         this.clock = clock;
         this.maxAttempts = maxAttempts;
         this.baseDelayMs = baseDelayMs;
@@ -86,6 +90,7 @@ class OutboxFailureRecorder {
         }
 
         if (quarantine) {
+            outboxMetrics.recordQuarantined(safeErrorType);
             log.warn(
                     "Outbox ID {} movido para QUARANTINED (category={}, errorType={}, attempts={}, exchange={}, routingKey={}).",
                     snapshot.id(), category, safeErrorType, nextAttempts, snapshot.exchange(), snapshot.routingKey());

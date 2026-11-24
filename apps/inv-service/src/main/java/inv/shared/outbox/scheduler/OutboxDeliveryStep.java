@@ -66,11 +66,16 @@ class OutboxDeliveryStep {
                 message.getId(),
                 message.getAttempts(),
                 message.getExchange(),
-                message.getRoutingKey());
+                message.getRoutingKey(),
+                message.getEventType(),
+                message.getVersion(),
+                message.getReplayCount(),
+                null,
+                null);
         attemptRef.set(snapshot);
 
         validarPayload(message, snapshot);
-        enviarEAguardarConfirmacao(message, snapshot);
+        snapshot = enviarEAguardarConfirmacao(message, snapshot, attemptRef);
 
         try {
             outboxRepository.delete(message);
@@ -142,9 +147,14 @@ class OutboxDeliveryStep {
         }
     }
 
-    private void enviarEAguardarConfirmacao(Outbox message, OutboxAttemptSnapshot snapshot) {
+    private OutboxAttemptSnapshot enviarEAguardarConfirmacao(
+            Outbox message,
+            OutboxAttemptSnapshot baseSnapshot,
+            AtomicReference<OutboxAttemptSnapshot> attemptRef) {
         String messageId = "outbox-" + message.getId();
         String correlationId = messageId + "-" + UUID.randomUUID();
+        OutboxAttemptSnapshot snapshot = baseSnapshot.withDispatchIds(messageId, correlationId);
+        attemptRef.set(snapshot);
 
         MessageProperties properties = MessagePropertiesBuilder.newInstance()
                 .setContentType(MessageProperties.CONTENT_TYPE_JSON)
@@ -244,6 +254,7 @@ class OutboxDeliveryStep {
                             returned.getReplyCode(),
                             returned.getReplyText()));
         }
+        return snapshot;
     }
 
     private static boolean isNotFoundReason(String reason) {

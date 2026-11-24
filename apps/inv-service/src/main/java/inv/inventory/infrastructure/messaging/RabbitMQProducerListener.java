@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 @Component
@@ -26,6 +27,7 @@ public class RabbitMQProducerListener {
 
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
     /**
      * Ouve o evento de domínio e persiste no Outbox NA MESMA TRANSAÇÃO da Venda.
@@ -46,7 +48,7 @@ public class RabbitMQProducerListener {
             outbox.setEventType(event.payload().getClass().getName());
             outbox.setPayload(jsonPayload);
             outbox.setVersion(event.payload().version());
-            outbox.setCreatedAt(LocalDateTime.now());
+            outbox.setCreatedAt(LocalDateTime.now(clock));
 
             outboxRepository.save(outbox);
 

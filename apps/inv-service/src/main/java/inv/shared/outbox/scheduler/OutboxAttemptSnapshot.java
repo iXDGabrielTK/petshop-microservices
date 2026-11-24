@@ -5,5 +5,23 @@
  */
 package inv.shared.outbox.scheduler;
 
-record OutboxAttemptSnapshot(Long id, int attempts, String exchange, String routingKey) {
+record OutboxAttemptSnapshot(
+        Long id,
+        int attempts,
+        String exchange,
+        String routingKey,
+        String eventType,
+        int version,
+        int replayCount,
+        String messageId,
+        String correlationId) {
+
+    OutboxAttemptSnapshot(Long id, int attempts, String exchange, String routingKey) {
+        this(id, attempts, exchange, routingKey, null, 0, 0, null, null);
+    }
+
+    OutboxAttemptSnapshot withDispatchIds(String messageId, String correlationId) {
+        return new OutboxAttemptSnapshot(
+                id, attempts, exchange, routingKey, eventType, version, replayCount, messageId, correlationId);
+    }
 }

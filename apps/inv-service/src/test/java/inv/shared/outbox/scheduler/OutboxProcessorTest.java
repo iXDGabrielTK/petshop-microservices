@@ -5,19 +5,26 @@
  */
 package inv.shared.outbox.scheduler;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import inv.shared.config.DateTimeConfig;
+import inv.shared.outbox.metrics.OutboxMetrics;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpConnectException;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageDeliveryMode;
@@ -44,6 +51,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -65,6 +73,8 @@ class OutboxProcessorTest {
 
     private Clock clock;
     private ObjectMapper objectMapper;
+    private SimpleMeterRegistry meterRegistry;
+    private OutboxMetrics outboxMetrics;
     private OutboxDeliveryStep deliveryStep;
     private OutboxFailureRecorder failureRecorder;
     private OutboxProcessor outboxProcessor;
@@ -73,9 +83,11 @@ class OutboxProcessorTest {
     void setUp() {
         clock = Clock.fixed(FIXED_INSTANT, DateTimeConfig.ZONE_SAO_PAULO);
         objectMapper = new ObjectMapper();
+        meterRegistry = new SimpleMeterRegistry();
+        outboxMetrics = new OutboxMetrics(outboxRepository, meterRegistry, clock);
         deliveryStep = new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 3000L);
-        failureRecorder = new OutboxFailureRecorder(outboxRepository, clock, 5, 2000L, 60000L);
-        outboxProcessor = new OutboxProcessor(deliveryStep, failureRecorder, clock);
+        failureRecorder = new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 5, 2000L, 60000L);
+        outboxProcessor = new OutboxProcessor(deliveryStep, failureRecorder, outboxMetrics, clock);
     }
 
     @Test
@@ -95,11 +107,11 @@ class OutboxProcessorTest {
     void deveRejeitarConfiguracoesInvalidas() {
         assertThatThrownBy(() -> new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 0L))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, clock, 0, 2000L, 60000L))
+        assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 0, 2000L, 60000L))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, clock, 5, 0L, 60000L))
+        assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 5, 0L, 60000L))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, clock, 5, 5000L, 1000L))
+        assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 5, 5000L, 1000L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -195,6 +207,11 @@ class OutboxProcessorTest {
         verify(outboxRepository).recordFailure(
                 eq(1L), eq(Outbox.STATUS_QUARANTINED), eq(1), isNull(), eq(agora),
                 eq("CLASS_NOT_FOUND"), anyString(), eq(agora));
+        Counter quarantinedCounter = meterRegistry.find(OutboxMetrics.METRIC_QUARANTINED_TOTAL)
+                .tag("error_type", "CLASS_NOT_FOUND")
+                .counter();
+        assertThat(quarantinedCounter).isNotNull();
+        assertThat(quarantinedCounter.count()).isEqualTo(1.0d);
     }
 
     @Test
@@ -332,7 +349,7 @@ class OutboxProcessorTest {
     @DisplayName("Timeout: DEVE respeitar outbox.publisher.confirm-timeout-ms, registrar backoff e pausar")
     void deveRespeitarConfirmTimeoutEPausar() {
         OutboxDeliveryStep stepCurto = new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 100L);
-        OutboxProcessor processorCurto = new OutboxProcessor(stepCurto, failureRecorder, clock);
+        OutboxProcessor processorCurto = new OutboxProcessor(stepCurto, failureRecorder, outboxMetrics, clock);
         Outbox outbox = criarOutbox(14L, "pdv.exchange", "venda.pagamento.confirmado",
                 "java.util.HashMap", "{\"ok\":true}", 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
@@ -381,7 +398,7 @@ class OutboxProcessorTest {
     @DisplayName("Persistência pós-confirm no commit do REQUIRES_NEW DEVE gravar fallback via snapshot e pausar")
     void deveTratarFalhaNoCommitPosConfirmViaSnapshotEPausar() {
         OutboxDeliveryStep stepMock = mock(OutboxDeliveryStep.class);
-        OutboxProcessor processor = new OutboxProcessor(stepMock, failureRecorder, clock);
+        OutboxProcessor processor = new OutboxProcessor(stepMock, failureRecorder, outboxMetrics, clock);
 
         doAnswer(invocation -> {
             @SuppressWarnings("unchecked")
@@ -419,6 +436,82 @@ class OutboxProcessorTest {
         verify(outboxRepository).recordFailure(
                 eq(30L), eq(Outbox.STATUS_PENDING), eq(1), any(), any(),
                 eq("E".repeat(64)), eq("E".repeat(64)), isNull());
+        assertThat(meterRegistry.find(OutboxMetrics.METRIC_QUARANTINED_TOTAL).counter()).isNull();
+    }
+
+    @Test
+    @DisplayName("Replay concluído (replayCount > 0) DEVE incrementar outbox.replay.completed.total e emitir log estruturado")
+    void deveIncrementarReplayCompletedEEmitirLogEstruturadoQuandoReplayCountPositivo() {
+        Outbox replayed = criarOutbox(77L, "pdv.exchange", "venda.estornada",
+                "java.util.HashMap", "{\"vendaId\":10}", 0, 0);
+        replayed.setReplayCount(2);
+        when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(replayed));
+        doAnswer(invocation -> {
+            CorrelationData cd = invocation.getArgument(3);
+            cd.getFuture().complete(new CorrelationData.Confirm(true, null));
+            return null;
+        }).when(rabbitTemplate).send(anyString(), anyString(), any(Message.class), any(CorrelationData.class));
+
+        Logger logger = (Logger) LoggerFactory.getLogger(OutboxProcessor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThat(outboxProcessor.processNextStep()).isEqualTo(OutboxStepResult.DELIVERED);
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(meterRegistry.find(OutboxMetrics.METRIC_REPLAY_COMPLETED_TOTAL).counter().count()).isEqualTo(1.0d);
+        assertThat(appender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(msg -> assertThat(msg)
+                        .contains("event=outbox_replay_completed")
+                        .contains("outboxId=77")
+                        .contains("eventType=java.util.HashMap")
+                        .contains("version=0")
+                        .contains("replayCount=2")
+                        .contains("messageId=outbox-77")
+                        .contains("correlationId=outbox-77-"));
+    }
+
+    @Test
+    @DisplayName("Entrega normal (replayCount = 0) ou rollback pós-confirm NÃO deve registrar outbox_replay_completed")
+    void naoDeveRegistrarReplayCompletedEmEntregaNormalOuRollbackPosConfirm() {
+        Outbox normal = criarOutbox(78L, "pdv.exchange", "venda.estornada",
+                "java.util.HashMap", "{\"vendaId\":10}", 1, 0);
+        Outbox replayFalho = criarOutbox(79L, "pdv.exchange", "venda.estornada",
+                "java.util.HashMap", "{\"vendaId\":11}", 1, 0);
+        replayFalho.setReplayCount(1);
+
+        when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class)))
+                .thenReturn(Optional.of(normal), Optional.of(replayFalho));
+        when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
+        doAnswer(invocation -> {
+            CorrelationData cd = invocation.getArgument(3);
+            cd.getFuture().complete(new CorrelationData.Confirm(true, null));
+            return null;
+        }).when(rabbitTemplate).send(anyString(), anyString(), any(Message.class), any(CorrelationData.class));
+        doNothing()
+                .doThrow(new DataAccessResourceFailureException("Erro no flush"))
+                .when(outboxRepository).flush();
+
+        Logger logger = (Logger) LoggerFactory.getLogger(OutboxProcessor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThat(outboxProcessor.processNextStep()).isEqualTo(OutboxStepResult.DELIVERED);
+            assertThat(outboxProcessor.processNextStep()).isEqualTo(OutboxStepResult.FAILED_PAUSE);
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(meterRegistry.find(OutboxMetrics.METRIC_REPLAY_COMPLETED_TOTAL).counter().count()).isZero();
+        assertThat(appender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .noneMatch(msg -> msg.contains("outbox_replay_completed"));
     }
 
     @Test

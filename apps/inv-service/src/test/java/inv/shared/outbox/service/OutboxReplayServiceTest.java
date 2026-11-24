@@ -8,10 +8,12 @@ package inv.shared.outbox.service;
 import common.exception.ConflictException;
 import common.exception.ResourceNotFoundException;
 import inv.shared.config.DateTimeConfig;
+import inv.shared.outbox.metrics.OutboxMetrics;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
 import inv.shared.outbox.web.OutboxRecordView;
 import inv.shared.outbox.web.OutboxReplayResponse;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,12 +46,16 @@ class OutboxReplayServiceTest {
     private OutboxRepository outboxRepository;
 
     private Clock clock;
+    private SimpleMeterRegistry meterRegistry;
+    private OutboxMetrics outboxMetrics;
     private OutboxReplayService service;
 
     @BeforeEach
     void setUp() {
         clock = Clock.fixed(FIXED_INSTANT, DateTimeConfig.ZONE_SAO_PAULO);
-        service = new OutboxReplayService(outboxRepository, clock);
+        meterRegistry = new SimpleMeterRegistry();
+        outboxMetrics = new OutboxMetrics(outboxRepository, meterRegistry, clock);
+        service = new OutboxReplayService(outboxRepository, outboxMetrics, clock);
     }
 
     @Test
@@ -105,6 +111,7 @@ class OutboxReplayServiceTest {
         assertThat(response.status()).isEqualTo(Outbox.STATUS_PENDING);
         assertThat(response.replayedAt()).isEqualTo(agora);
         assertThat(response.replayCount()).isEqualTo(1);
+        assertThat(meterRegistry.find(OutboxMetrics.METRIC_REPLAY_REQUESTED_TOTAL).counter().count()).isEqualTo(1.0d);
         verify(outboxRepository).replayQuarantined(15L, agora);
     }
 
@@ -117,6 +124,7 @@ class OutboxReplayServiceTest {
 
         assertThatThrownBy(() -> service.replay(20L))
                 .isInstanceOf(ConflictException.class);
+        assertThat(meterRegistry.find(OutboxMetrics.METRIC_REPLAY_REQUESTED_TOTAL).counter().count()).isZero();
     }
 
     @Test
@@ -128,6 +136,7 @@ class OutboxReplayServiceTest {
 
         assertThatThrownBy(() -> service.replay(404L))
                 .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(meterRegistry.find(OutboxMetrics.METRIC_REPLAY_REQUESTED_TOTAL).counter().count()).isZero();
     }
 
     private static Outbox criarQuarentena(Long id, int version, String payload) {

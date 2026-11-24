@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 @Component
@@ -26,6 +27,7 @@ public class PagamentoListener {
 
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
     @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
     public void onPagamentoConfirmado(PagamentoConfirmadoEvent event) {
@@ -38,7 +40,7 @@ public class PagamentoListener {
             outbox.setEventType(event.getClass().getName());
             outbox.setPayload(objectMapper.writeValueAsString(event));
             outbox.setVersion(1);
-            outbox.setCreatedAt(LocalDateTime.now());
+            outbox.setCreatedAt(LocalDateTime.now(clock));
 
             outboxRepository.save(outbox);
 
