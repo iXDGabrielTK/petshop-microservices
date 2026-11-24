@@ -49,7 +49,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.flyway.enabled=true",
         "spring.rabbitmq.listener.simple.auto-startup=false",
         "finance.projection.retry.fixed-delay-ms=3600000",
-        "finance.projection.diaria.catch-up.initial-delay-ms=3600000"
+        "finance.projection.diaria.catch-up.initial-delay-ms=3600000",
+        "inv.scheduling.enabled=false"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 abstract class ProjecaoDuravelSupport {

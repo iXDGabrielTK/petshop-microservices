@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * concorrentes, assegurando drenagem completa de 100 mensagens, zero duplicidade e ausência de conflitos.
  */
 @Testcontainers
-@SpringBootTest
+@SpringBootTest(properties = "inv.scheduling.enabled=false")
 class OutboxConcorrenciaIntegrationTest {
 
     @Container

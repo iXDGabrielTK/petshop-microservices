@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 @RecordApplicationEvents
 class EstoqueCommandServiceIT {
 

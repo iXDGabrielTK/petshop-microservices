@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * sob falha transitória induzida e subsequente reprocessamento idempotente pelo scheduler.
  */
 @Testcontainers
-@SpringBootTest
+@SpringBootTest(properties = "inv.scheduling.enabled=false")
 class ProjecaoRetryIntegrationTest {
 
     @Container

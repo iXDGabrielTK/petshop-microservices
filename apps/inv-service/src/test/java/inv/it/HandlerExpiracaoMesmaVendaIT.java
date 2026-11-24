@@ -57,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * zero deadlocks (40P01) e saldos físicos rigorosamente coerentes.
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class HandlerExpiracaoMesmaVendaIT {
 
     @Container

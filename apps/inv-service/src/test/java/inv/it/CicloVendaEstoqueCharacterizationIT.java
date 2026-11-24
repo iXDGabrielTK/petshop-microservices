@@ -65,7 +65,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 @AutoConfigureMockMvc(addFilters = false)
 @RecordApplicationEvents
 class CicloVendaEstoqueCharacterizationIT {

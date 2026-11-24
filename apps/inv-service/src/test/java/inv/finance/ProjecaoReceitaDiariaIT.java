@@ -65,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class ProjecaoReceitaDiariaIT {
 
     @Container

@@ -63,7 +63,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @RecordApplicationEvents
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class VendaEventHandlerIT {
 
     @Container

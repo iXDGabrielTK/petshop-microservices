@@ -56,7 +56,7 @@ import static org.awaitility.Awaitility.await;
  */
 @RecordApplicationEvents
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class LedgerConcorrenciaIdempotenciaIT {
 
     @Container

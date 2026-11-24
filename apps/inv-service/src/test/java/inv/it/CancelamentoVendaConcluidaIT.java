@@ -80,7 +80,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * estorno contábil idempotente no Finance e semântica HTTP (200, 409, 503).
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 @AutoConfigureMockMvc(addFilters = false)
 class CancelamentoVendaConcluidaIT {
 

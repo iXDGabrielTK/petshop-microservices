@@ -39,7 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class, properties = "spring.jpa.open-in-view=false")
+@SpringBootTest(classes = InvServiceApplication.class, properties = {"spring.jpa.open-in-view=false", "inv.scheduling.enabled=false"})
 @org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc(addFilters = false)
 class InventarioHttpIT {
 

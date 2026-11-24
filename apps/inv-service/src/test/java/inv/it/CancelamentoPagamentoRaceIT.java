@@ -53,7 +53,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Valida F2, F6, Q7 e a ausência física de deadlocks (40P01) no PostgreSQL.
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class CancelamentoPagamentoRaceIT {
 
     @Container

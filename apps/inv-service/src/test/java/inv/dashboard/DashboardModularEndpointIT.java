@@ -57,7 +57,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * regime de caixa líquido de troco (Q1) e filtragem por StatusVenda.FATURADAS (Q3).
  */
 @Testcontainers
-@SpringBootTest(classes = inv.InvServiceApplication.class)
+@SpringBootTest(classes = inv.InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 @AutoConfigureMockMvc(addFilters = false)
 class DashboardModularEndpointIT {
 

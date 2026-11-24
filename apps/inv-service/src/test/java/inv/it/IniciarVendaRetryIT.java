@@ -49,7 +49,7 @@ import static org.mockito.Mockito.*;
  * sob exceções de contenção de lock pessimista (CannotAcquireLockException / PessimisticLockingFailureException).
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class IniciarVendaRetryIT {
 
     @Container
