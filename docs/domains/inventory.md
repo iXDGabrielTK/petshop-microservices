@@ -86,7 +86,7 @@ flowchart TD
 
 ## 3. Lógica de Alerta Anti-Spam para Estoque Baixo
 
-Para evitar que múltiplos caixas vendendo o mesmo produto disparem dezenas de e-mails para o administrador quando o estoque já está abaixo do mínimo, o [`EstoqueService`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L56-L71) (`package-private`) reconstrói o saldo anterior diretamente do valor retornado pela cláusula `RETURNING` sob o row lock do `UPDATE` atômico (`saldoAnterior = novoSaldo.add(item.quantidade())`), eliminando leituras prévias fora de lock, e aplica a **verificação de transição de estado** ([`verificarEAlertarEstoqueBaixo`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L178-L184)). Quando o limite é rompido, o [`RabbitMQProducerListener`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/messaging/RabbitMQProducerListener.java) persiste o evento na tabela `outbox` (`BEFORE_COMMIT`), despachado pelo `OutboxProcessor` para o exchange `inventory.v1.events` (routing key `inventory.stock.low` → fila `inventory.v1.stock-low.notify`):
+Para evitar que múltiplos caixas vendendo o mesmo produto disparem dezenas de e-mails para o administrador quando o estoque já está abaixo do mínimo, o [`EstoqueService`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L56-L71) (`package-private`) reconstrói o saldo anterior diretamente do valor retornado pela cláusula `RETURNING` sob o row lock do `UPDATE` atômico (`saldoAnterior = novoSaldo.add(item.quantidade())`), eliminando leituras prévias fora de lock, e aplica a **verificação de transição de estado** ([`verificarEAlertarEstoqueBaixo`](../../apps/inv-service/src/main/java/inv/inventory/usecase/EstoqueService.java#L178-L184)). Quando o saldo cruza o limiar, o [`RabbitMQProducerListener`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/messaging/RabbitMQProducerListener.java) grava o alerta na tabela `outbox` em `BEFORE_COMMIT`, na mesma transação da reserva e da movimentação.
 
 ```mermaid
 flowchart TD
@@ -97,6 +97,10 @@ flowchart TD
     Disparo --> Fim(["Fim"])
     Silencio --> Fim
 ```
+
+O `OutboxProcessor` publica em `inventory.v1.events` com a routing key `inventory.stock.low`. O `mail-service` declara e consome `inventory.v1.low-stock.send-email`, fila durável sem DLQ nem política de retry configurada no listener. A fila legada `inventory.v1.stock-low.notify` e sua DLQ são declaradas pelo `inv-service` somente com `inv.rabbitmq.legacy-low-stock-queue.enabled=true` (padrão `false`). A fila legada está sem consumidor e, se o binding estiver presente no broker, pode mascarar `NO_ROUTE` quando falta a fila do Mail.
+
+O alerta pode ser entregue mais de uma vez. O `EmailConsumer` infere `EstoqueBaixoMessage` pelo tipo do parâmetro, consome JSON sem `__TypeId__` e verifica o `eventId` em `processed_events`. Como o envio SMTP ocorre antes da gravação dessa marca, uma falha entre o envio e o commit ou duas entregas concorrentes podem gerar e-mails duplicados. Ver [ADR-0008](../adr/0008-distributed-idempotent-consumer-and-schema-evolution.md).
 
 ---
 
