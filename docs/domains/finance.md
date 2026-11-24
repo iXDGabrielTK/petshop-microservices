@@ -61,8 +61,8 @@ sequenceDiagram
 
 No cancelamento em fase única de venda concluída, o Checkout grava `VendaEstornadaEvent` na tabela `outbox` (`BEFORE_COMMIT`). O `OutboxProcessor` despacha para `pdv.exchange` (`routing key: venda.estornada`), entregue à fila `pdv.venda.estornada.queue` (com DLQ `pdv.venda.estornada.queue.dlq`). O [`VendaEstornadaEventListener`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaEstornadaEventListener.java) (`@RabbitListener`, `@Transactional`) executa:
 
-1. **Desserialização Segura:** mensagens JSON ou tipos inválidos disparam `AmqpRejectAndDontRequeueException`, evitando loops infinitos de retry.
-2. **Idempotência Determinística no Ledger:** calcula `valorEstornoNegativo = event.valorEstorno().abs().negate()`, ou seja, `-(valorPago - valorTroco)`, e persiste com `inserirIdempotente` (`INSERT ... ON CONFLICT (referencia) DO NOTHING RETURNING id`, `TipoLancamento.ESTORNO`) usando a chave `UUID.nameUUIDFromBytes("ESTORNO:" + vendaId)`.
+1. **Desserialização:** aceita JSON sem `__TypeId__`. Erros de conversão disparam `AmqpRejectAndDontRequeueException`. Eventos desserializados com campos obrigatórios ausentes são registrados em log e ignorados.
+2. **Idempotência Determinística no Ledger:** usa a `uuidReferenciaEstorno` recebida do Checkout, derivada dos bytes UTF-8 de `ESTORNO:<vendaId>` com `UUID.nameUUIDFromBytes`. Se a referência já existir, retorna sem alterar o Ledger. Caso contrário, grava `TipoLancamento.ESTORNO` com `event.valorEstorno().abs().negate()` via `inserirIdempotente` (`INSERT ... ON CONFLICT (referencia) DO NOTHING RETURNING id`), que também absorve duplicatas concorrentes.
 3. **Gate de Pendência e Projeções CQRS:** somente quando `idOpt.isPresent()`, registra a pendência em `projection_retry_queue` (`RegistroPendenciaProjecao`) e publica `LancamentoRegistradoEvent`.
 
 ```mermaid
@@ -85,9 +85,13 @@ sequenceDiagram
     end
 ```
 
+O `OutboxEstornoRecuperacaoIT` simula uma falha de persistência da Outbox após o ACK do broker e antes do commit da exclusão. A tentativa seguinte republica o evento. O teste verifica duas entregas ao consumidor, um único lançamento `ESTORNO` com a mesma referência e projeções conciliadas.
+
+A Outbox retenta a publicação AMQP. A `projection_retry_queue`, consumida pelo `ProjectionRetryScheduler`, recupera a aplicação das projeções a partir de um lançamento já persistido no Ledger.
+
 **Impacto do `ESTORNO` nas Projeções CQRS e no Fechamento D+0:**
 * **`financial_projection_venda`:** `FinancialProjectionListener` soma `valorAssinado` negativo em `saldo` (zerando o saldo líquido da venda estornada) e acumula `ABS(valor)` em `total_estornos`.
-* **`financial_projection_diaria`:** a CTE `ProjecaoReceitaDiariaRepository.aplicar` contabiliza `GREATEST(-lf.valor, 0)` em `total_debitos` na data do lançamento (`lf.data_hora::date`), refletindo o estorno em regime de caixa no dia em que ocorreu.
+* **`financial_projection_diaria`:** a CTE `ProjecaoReceitaDiariaRepository.aplicar` contabiliza `GREATEST(-lf.valor, 0)` em `total_debitos` na data extraída por `lf.data_hora::date`. O PostgreSQL preenche a coluna `TIMESTAMP` sem fuso do Ledger com `CURRENT_TIMESTAMP`, que representa o início da transação. A conversão para o horário local usa o fuso da sessão ao gravar a coluna. O cast para `date` extrai a data local já gravada.
 * **`fechamento_caixa_diario` (D+0):** capturado automaticamente pelo *High Watermark* (`id > :ultimoId AND id <= max_id`), somando `ABS(valor)` em `total_debitos` quando `valor < 0` e validado pela reconciliação incremental $O(\Delta)$.
 
 ### C. Ciclo de Fechamento Diário D+0 e Reconciliação Incremental

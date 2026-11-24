@@ -7,6 +7,7 @@ package inv.shared.outbox.service;
 
 import common.exception.ConflictException;
 import common.exception.ResourceNotFoundException;
+import inv.shared.outbox.metrics.OutboxMetrics;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
 import inv.shared.outbox.web.OutboxRecordView;
@@ -23,10 +24,12 @@ import java.time.LocalDateTime;
 public class OutboxReplayService {
 
     private final OutboxRepository outboxRepository;
+    private final OutboxMetrics outboxMetrics;
     private final Clock clock;
 
-    public OutboxReplayService(OutboxRepository outboxRepository, Clock clock) {
+    public OutboxReplayService(OutboxRepository outboxRepository, OutboxMetrics outboxMetrics, Clock clock) {
         this.outboxRepository = outboxRepository;
+        this.outboxMetrics = outboxMetrics;
         this.clock = clock;
     }
 
@@ -51,6 +54,7 @@ public class OutboxReplayService {
         if (updated == 1) {
             Outbox replayed = outboxRepository.findById(id)
                     .orElseThrow(() -> new ResourceNotFoundException("Registro da outbox não encontrado: " + id));
+            outboxMetrics.recordReplayRequested();
             return new OutboxReplayResponse(
                     replayed.getId(),
                     replayed.getStatus(),

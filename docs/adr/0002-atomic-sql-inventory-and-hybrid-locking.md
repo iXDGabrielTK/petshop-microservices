@@ -98,7 +98,7 @@ Quando um webhook de confirmação chega:
 > Classe de teste: [`EstoqueConcorrenciaIntegrationTest`](../../apps/inv-service/src/test/java/inv/it/EstoqueConcorrenciaIntegrationTest.java)
 > Comando de execução:
 > ```bash
-> mvn test -pl apps/inv-service -Dtest=EstoqueConcorrenciaIntegrationTest
+> mvn verify -pl apps/inv-service -am '-Dtest=!*' "-Dsurefire.failIfNoSpecifiedTests=false" "-Dit.test=EstoqueConcorrenciaIntegrationTest" "-Dfailsafe.failIfNoSpecifiedTests=false"
 > ```
 
 ### Cenário de Teste Automatizado: *Stress Test de Esgotamento de Estoque*
@@ -113,7 +113,7 @@ Quando um webhook de confirmação chega:
   * Uso de `CountDownLatch(50)` para aguardar a conclusão de todas as execuções.
 
 ### Critérios de Aceite Obrigatórios (Asserts Validados)
-1. **Contagem de Sucesso:** Exatamente **5 threads** completam a reserva com sucesso (HTTP 200 / Venda criada).
+1. **Contagem de Sucesso:** Exatamente **5 threads** completam a reserva com sucesso pela chamada direta a `iniciarVenda`.
 2. **Contagem de Rejeição:** Exatamente **45 threads** recebem `BusinessException` por falta de estoque disponível.
 3. **Consistência Física do Banco:**
    * `estoque_disponivel` final é **exatamente 0.000**.
@@ -202,5 +202,6 @@ Durante a execução do plano **[DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)
 * [Migration V9 — Índice Parcial SAIDA](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql)
 * [ADR-0011: Open Host Service Síncrono de Comandos e Catálogo (Checkout → Inventory)](0011-synchronous-open-host-service-checkout-inventory.md)
 * [ADR-0012: Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída](0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)
+* [ADR-0013: Testes Unitários no Surefire e Integrações no Failsafe](0013-surefire-failsafe-test-lifecycle.md)
 * [Documentação do Domínio de Inventário](../domains/inventory.md)
 * [PostgreSQL Documentation - Concurrency Control & RETURNING clause](https://www.postgresql.org/docs/current/dml-returning.html)

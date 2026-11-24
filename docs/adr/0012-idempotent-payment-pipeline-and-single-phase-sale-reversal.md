@@ -119,7 +119,7 @@ A robustez da solução é comprovada por quatro suítes de alta concorrência (
 4. **`PagamentoConcorrenciaGatesIT` (Gates 1, 2 e 4 — 3 `@Test`) & `ArquiteturaTest` (`R15` — Gate 3):**
    * *Gate 1:* Rajada de 10 threads simultâneas para o mesmo `pagamentoId` em `confirmarPagamentoWebhook` e `handlePagamentoConfirmado` resulta em 1 contabilização, 1 lançamento e descarte das demais entregas com ACK.
    * *Gate 2:* Contenção de lock pessimista estoura `lock_timeout` (`SQLState 55P03` -> `PessimisticLockingFailureException`) com rollback íntegro, absorvendo reentregas pós-lock com ACK. Gate 2 valida estritamente o contrato de exceções da aplicação (`PessimisticLockingFailureException` para retentativa com rollback íntegro e `AmqpRejectAndDontRequeueException` para descarte sem requeue). O roteamento AMQP físico para a fila DLQ e os interceptores de retry dependem da infraestrutura do broker RabbitMQ, mockada na suíte de testes.
-   * *Gate 3:* Regra `R15` (`escritasEmVendaDevemUsarFindByIdWithLock`) garante que toda mutação em `Venda` existente passa por `VendaRepository.findByIdWithLock`.
+   * *Gate 3:* Regra `R15` (`escritasEmVendaDevemUsarFindByIdWithLock`) verifica a ordem entre as chamadas de lock e as escritas reconhecidas no mesmo método (ver adendo da seção 8).
    * *Gate 4:* Comprovação de `SHOW transaction_isolation == "read committed"` e de que `Venda.pagamentos` (`FetchType.LAZY`) não é carregado na sessão JPA antes do lock.
 
 ---
@@ -152,7 +152,15 @@ Durante a execução do épico **[DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md
 
 ---
 
-## 8. Referências e Links Relevantes
+## 8. Adendo (Novembro/2026 — DEBT-ARCH-005): Detecção de Escrita Pré-Lock pela R15
+
+A [R15 em `ArquiteturaTest`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaTest.java) inspeciona o bytecode dos métodos do Checkout e usa os números de linha para comparar `VendaRepository.findByIdWithLock` com a primeira escrita detectada. O cálculo inclui tanto chamadas mutadoras em `Venda` quanto as escritas diretas no repositório reconhecidas pela regra. Assim, `saveAndFlush(venda)` antes do lock é apontado mesmo quando `venda.cancelar()` aparece depois dele. A análise é intraprocedural e depende das chamadas visíveis no método. O fluxo por métodos auxiliares e a correspondência entre o ID do lock e a instância mutada ficam fora dessa verificação.
+
+[`ArquiteturaR15Test`](../../apps/inv-service/src/test/java/inv/architect/ArquiteturaR15Test.java) aplica a própria regra às fixtures via `ClassFileImporter`. Os casos de ordem correta passam e cada inversão produz uma única violação de escrita pré-lock. Os casos negativos incluem três fluxos-base válidos para satisfazer o piso de cobertura da regra. A prova sintética cobre essa inversão. Os cenários de concorrência em execução continuam em `PagamentoConcorrenciaGatesIT`. A [ADR-0013](0013-surefire-failsafe-test-lifecycle.md) descreve a execução das duas suítes.
+
+---
+
+## 9. Referências e Links Relevantes
 
 * [Plano Executivo DEBT-ARCH-004](../debt/DEBT-ARCH-004/README.md)
 * [Runbook Executável DEBT-ARCH-003 E4](../debt/DEBT-ARCH-003/E4.md)

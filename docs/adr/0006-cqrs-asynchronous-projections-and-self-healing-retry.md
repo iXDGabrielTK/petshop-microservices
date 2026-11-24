@@ -93,12 +93,12 @@ Se a projeção assíncrona falhar por timeout ou indisponibilidade:
 > Classe de teste: [`ProjecaoRetryIntegrationTest`](../../apps/inv-service/src/test/java/inv/finance/ProjecaoRetryIntegrationTest.java)
 > Comando de execução:
 > ```bash
-> mvn test -pl apps/inv-service -Dtest=ProjecaoRetryIntegrationTest
+> mvn verify -pl apps/inv-service -am '-Dtest=!*' "-Dsurefire.failIfNoSpecifiedTests=false" "-Dit.test=ProjecaoRetryIntegrationTest" "-Dfailsafe.failIfNoSpecifiedTests=false"
 > ```
 
 ### Cenário de Teste Automatizado: *Simulação de Falha Transitória e Auto-Cura CQRS*
 * **Classe:** `inv.finance.ProjecaoRetryIntegrationTest`
-* **Configuração:** Testcontainers PostgreSQL 15 (`postgres:15-alpine`) com `FinancialProjectionListener` e `ProjectionRetryScheduler`.
+* **Configuração:** Testcontainers PostgreSQL 15 (`postgres:15-alpine`) com `FinancialProjectionListener`, `ProjectionRetryScheduler` e acionamento manual do scheduler (`inv.scheduling.enabled=false`).
 * **Fluxo de Teste Validado:**
   1. Registrar uma venda e um lançamento contábil de R$ 150,00 no ledger (`lancamentos_financeiros`).
   2. **Injeção de Falha:** Forçar intencionalmente uma falha no `FinancialProjectionRepository.upsertProjection` durante a execução inicial via `@MockitoSpyBean`.

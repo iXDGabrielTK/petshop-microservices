@@ -8,19 +8,23 @@ package inv.checkout.infrastructure.messaging;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import common.exception.BusinessException;
+import inv.shared.config.DateTimeConfig;
 import inv.shared.config.RabbitMQConfig;
 import inv.shared.event.VendaEstornadaEvent;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,14 +36,22 @@ import static org.mockito.Mockito.*;
 @DisplayName("VendaEstornadaOutboxListener — Testes Unitários de Persistência no Outbox")
 class VendaEstornadaOutboxListenerTest {
 
+    private static final Instant FIXED_INSTANT = Instant.parse("2026-11-24T15:00:00Z");
+
     @Mock
     private OutboxRepository outboxRepository;
 
     @Mock
     private ObjectMapper objectMapper;
 
-    @InjectMocks
+    private Clock clock;
     private VendaEstornadaOutboxListener listener;
+
+    @BeforeEach
+    void setUp() {
+        clock = Clock.fixed(FIXED_INSTANT, DateTimeConfig.ZONE_SAO_PAULO);
+        listener = new VendaEstornadaOutboxListener(outboxRepository, objectMapper, clock);
+    }
 
     @Test
     @DisplayName("DEVE persistir registro no Outbox com sucesso com exchange e routing key corretos")
@@ -63,7 +75,7 @@ class VendaEstornadaOutboxListenerTest {
         assertThat(outbox.getEventType()).isEqualTo(VendaEstornadaEvent.class.getName());
         assertThat(outbox.getPayload()).isEqualTo(jsonPayload);
         assertThat(outbox.getVersion()).isEqualTo(1);
-        assertThat(outbox.getCreatedAt()).isNotNull();
+        assertThat(outbox.getCreatedAt()).isEqualTo(LocalDateTime.now(clock));
     }
 
     @Test
@@ -152,7 +164,7 @@ class VendaEstornadaOutboxListenerTest {
     @DisplayName("DEVE serializar e permitir desserialização idempotente de VendaEstornadaEvent com ObjectMapper real (OutboxProcessor)")
     void deveSerializarEPermitirDesserializacaoComObjectMapperReal() throws Exception {
         ObjectMapper realObjectMapper = new ObjectMapper().findAndRegisterModules();
-        VendaEstornadaOutboxListener realListener = new VendaEstornadaOutboxListener(outboxRepository, realObjectMapper);
+        VendaEstornadaOutboxListener realListener = new VendaEstornadaOutboxListener(outboxRepository, realObjectMapper, clock);
 
         Long vendaId = 42L;
         UUID uuidRef = UUID.nameUUIDFromBytes(("ESTORNO:" + vendaId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -169,7 +181,7 @@ class VendaEstornadaOutboxListenerTest {
         assertThat(outbox.getRoutingKey()).isEqualTo(RabbitMQConfig.ROUTING_KEY_VENDA_ESTORNADA);
         assertThat(outbox.getEventType()).isEqualTo(VendaEstornadaEvent.class.getName());
         assertThat(outbox.getVersion()).isEqualTo(1);
-        assertThat(outbox.getCreatedAt()).isNotNull();
+        assertThat(outbox.getCreatedAt()).isEqualTo(LocalDateTime.now(clock));
 
         // Simula a exata desserialização do OutboxProcessor
         Class<?> clazz = Class.forName(outbox.getEventType());

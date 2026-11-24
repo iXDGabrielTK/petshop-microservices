@@ -18,6 +18,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 @Component
@@ -27,6 +28,7 @@ public class VendaEstornadaOutboxListener {
 
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
     @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
     public void onVendaEstornada(VendaEstornadaEvent event) {
@@ -49,7 +51,7 @@ public class VendaEstornadaOutboxListener {
             outbox.setEventType(event.getClass().getName());
             outbox.setPayload(objectMapper.writeValueAsString(event));
             outbox.setVersion(1);
-            outbox.setCreatedAt(LocalDateTime.now());
+            outbox.setCreatedAt(LocalDateTime.now(clock));
 
             outboxRepository.save(outbox);
             log.debug("✅ Evento VendaEstornada persistido no Outbox com sucesso.");

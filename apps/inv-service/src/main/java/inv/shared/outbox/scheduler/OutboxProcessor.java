@@ -5,6 +5,7 @@
  */
 package inv.shared.outbox.scheduler;
 
+import inv.shared.outbox.metrics.OutboxMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -20,14 +21,17 @@ public class OutboxProcessor {
 
     private final OutboxDeliveryStep deliveryStep;
     private final OutboxFailureRecorder failureRecorder;
+    private final OutboxMetrics outboxMetrics;
     private final Clock clock;
 
     OutboxProcessor(
             OutboxDeliveryStep deliveryStep,
             OutboxFailureRecorder failureRecorder,
+            OutboxMetrics outboxMetrics,
             Clock clock) {
         this.deliveryStep = deliveryStep;
         this.failureRecorder = failureRecorder;
+        this.outboxMetrics = outboxMetrics;
         this.clock = clock;
     }
 
@@ -37,7 +41,22 @@ public class OutboxProcessor {
 
         try {
             boolean delivered = deliveryStep.deliverNext(agora, attemptRef);
-            return delivered ? OutboxStepResult.DELIVERED : OutboxStepResult.EMPTY;
+            if (delivered) {
+                OutboxAttemptSnapshot completed = attemptRef.get();
+                if (completed != null && completed.replayCount() > 0) {
+                    outboxMetrics.recordReplayCompleted();
+                    log.info(
+                            "event=outbox_replay_completed outboxId={} eventType={} version={} replayCount={} messageId={} correlationId={}",
+                            completed.id(),
+                            completed.eventType(),
+                            completed.version(),
+                            completed.replayCount(),
+                            completed.messageId(),
+                            completed.correlationId());
+                }
+                return OutboxStepResult.DELIVERED;
+            }
+            return OutboxStepResult.EMPTY;
         } catch (OutboxPublishException e) {
             OutboxAttemptSnapshot snapshot = e.getSnapshot() != null ? e.getSnapshot() : attemptRef.get();
             log.error(

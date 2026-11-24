@@ -123,8 +123,19 @@ O payload do Access Token carrega os dados de identidade para que os Resource Se
 | :--- | :--- | :--- |
 | `/vendas/**` (`POST /vendas`, `GET /vendas/{id}/status`, `GET /vendas/aberta`, `POST /vendas/{id}/cancelar`) | `.anyRequest().authenticated()` + `@PreAuthorize("hasRole('ADMIN')")` na classe `VendaController` | `ROLE_ADMIN` autorizado; `ROLE_USER` recebe HTTP 403 (`ProblemDetail`); ausente/inválido recebe HTTP 401. |
 | `POST /produtos` | `.anyRequest().authenticated()` + `@PreAuthorize("hasRole('ADMIN')")` no método `ProdutoController.criar` | `ROLE_ADMIN` autorizado; `ROLE_USER` recebe HTTP 403 (`ProblemDetail`); ausente/inválido recebe HTTP 401. |
+| `GET /admin/outbox/quarantined`, `GET /admin/outbox/{id}`, `POST /admin/outbox/{id}/replay` | `.anyRequest().authenticated()` + `@PreAuthorize("hasRole('ADMIN')")` em `OutboxAdminController` | JWT Bearer com `ROLE_ADMIN` autorizado. JWT válido sem a autoridade exigida recebe HTTP 403. Token ausente ou inválido recebe HTTP 401. |
 | `GET /produtos*`, `GET /movimentacoes`, `GET /dashboard/stats`, `POST /pagamentos/intencao/{vendaId}`, `GET /pagamentos/{id}/status` | `.anyRequest().authenticated()` | Qualquer JWT válido (`ROLE_ADMIN` ou `ROLE_USER`) autenticado; ausente/inválido recebe HTTP 401. |
 | `/pagamentos/webhook/**`, `/actuator/**`, `/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html` | `.permitAll()` | Acesso público sem Bearer token (webhooks isentos de rate limit no Gateway). |
+
+#### Operações administrativas da Outbox
+
+| Operação | Resposta com `ROLE_ADMIN` |
+| :--- | :--- |
+| `GET /admin/outbox/quarantined` | HTTP 200. `page` começa em 0 e valores negativos são normalizados para 0. `size` tem padrão 20, volta a 20 quando menor que 1 e tem teto 100. |
+| `GET /admin/outbox/{id}` | HTTP 200 com os dados do registro, incluindo o payload, ou HTTP 404 quando o ID não existe. |
+| `POST /admin/outbox/{id}/replay` | HTTP 200 ao recolocar um registro em quarentena no estado `PENDING` para publicação assíncrona, HTTP 404 para ID inexistente ou HTTP 409 para registro fora da quarentena. |
+
+O `api-gateway` não tem rota para `/admin/outbox/**`. As operações chegam diretamente ao `inv-service`, cuja porta o Compose publica no host como `8083:8083`. Onde essa porta estiver acessível na rede, o JWT e a exigência de `ROLE_ADMIN` continuam sendo aplicados pelo próprio serviço, sem passar pelo controle de tráfego do Gateway.
 
 ### C. Cobertura da Cadeia Real de Filtros (`springSecurityFilterChain`)
 

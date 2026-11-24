@@ -1,6 +1,6 @@
 # 🏛️ Arquitetura do Sistema & Visão Geral (System Overview)
 
-Este documento fornece a visão arquitetural consolidada do ecossistema **Pet Shop Microservices**, cobrindo o modelo C4 de containers, a arquitetura interna do monólito modular (`inv-service`), a hierarquia global de locks anti-deadlock, a matriz de comunicação, os esquemas físicos de banco de dados (Flyway `V1`–`V9`) e o contrato transversal de erros RFC 7807.
+Esta visão consolida o modelo C4 de containers, as fronteiras e a hierarquia de locks do `inv-service`, os fluxos de comunicação e recuperação da outbox, os esquemas físicos (Flyway `V1`–`V11` no inventário) e os contratos transversais de testes, erros HTTP e observabilidade.
 
 ---
 
@@ -42,7 +42,9 @@ graph TD
     subgraph PersistenceLayer [Persistência e Mensageria]
         AuthDB[("PostgreSQL: Auth DB")]:::database
         InvDB[("PostgreSQL: Core & Ledger DB")]:::database
-        RabbitMQ["RabbitMQ: Topic Exchanges & DLQs"]:::broker
+        RabbitMQ["RabbitMQ: Auth, Inventory e PDV"]:::broker
+        DLQ["DLQs: reset de senha, pagamento confirmado e estorno"]:::broker
+        Legacy["Fila legada de estoque baixo + DLQ (opcional, sem consumidor)"]:::broker
     end
 
 %% --- Conexões Síncronas (HTTP) ---
@@ -59,10 +61,12 @@ graph TD
 %% --- Conexões Assíncronas (AMQP) ---
     Auth -.->|"Publica: auth.v1.events (auth.password.reset)"| RabbitMQ
     Inv -.->|"Outbox: inventory.v1.events (inventory.stock.low)"| RabbitMQ
-    Inv <-->|"Outbox & Consumer: pdv.exchange (pagamento.confirmado / venda.estornada)"| RabbitMQ
+    Inv <-->|"Outbox e consumidores: pdv.exchange (venda.pagamento.confirmado / venda.estornada)"| RabbitMQ
 
-    RabbitMQ -.->|"Consome com Idempotência (processed_events)"| Mail
-    RabbitMQ -.->|"DLQ Retries"| RabbitMQ
+    RabbitMQ -.->|"auth.v1.password-reset.send-email"| Mail
+    RabbitMQ -.->|"inventory.v1.low-stock.send-email"| Mail
+    RabbitMQ -.->|"Dead-letter de filas com DLX"| DLQ
+    RabbitMQ -.->|"Binding opcional: inventory.v1.stock-low.notify"| Legacy
 ```
 
 ---
@@ -113,7 +117,7 @@ flowchart LR
     end
 
     subgraph SH["inv.shared (OPEN)"]
-        OBX["Outbox + OutboxProcessor (SKIP LOCKED)"]
+        OBX["Outbox + OutboxScheduler + OutboxProcessor (SKIP LOCKED)"]
         RMQ["RabbitMQ (pdv.exchange & inventory.v1.events)"]
     end
 
@@ -126,7 +130,8 @@ flowchart LR
     VS -.->|"VendaEstornadaEvent (BEFORE_COMMIT)"| OBX
     PS -.->|"PagamentoConfirmadoEvent (BEFORE_COMMIT)"| OBX
     ES -.->|"EstoqueAtingiuMinimoEvent (BEFORE_COMMIT)"| OBX
-    OBX --> RMQ
+    OBX -->|"JSON persistente + mandatory"| RMQ
+    RMQ -.->|"Confirm correlacionado / return"| OBX
     RMQ -.->|"venda.pagamento.confirmado"| VEH
     RMQ -.->|"venda.estornada"| VEL
 ```
@@ -142,12 +147,14 @@ Todas as fronteiras arquiteturais são verificadas de forma contínua sem exceç
   - `R9`, `R10`, `R14`: pureza das APIs (`interface`, `record`, `enum`), classes `infrastructure.query` e implementações de `*.api` com visibilidade `package-private`.
   - `R11`–`R12`: clientes Redis/AMQP restritos à infraestrutura/config/outbox e `inv.shared` agnóstico aos contextos de negócio.
   - `R13`: whitelist estrita garantindo que `inv.checkout` dependa de `inv.inventory` exclusivamente via `inv.inventory.api`.
-  - `R15` (`escritasEmVendaDevemUsarFindByIdWithLock`): garante que toda mutação em `Venda` existente adquira antes `VendaRepository.findByIdWithLock` (sem carregar `Pagamento`/`getPagamentos()` antes do lock).
+  - `R15` (`escritasEmVendaDevemUsarFindByIdWithLock`) verifica no bytecode do Checkout que o lock pessimista em `VendaRepository.findByIdWithLock` precede a primeira mutação ou escrita direta no repositório em fluxos de venda existente e verifica acessos a pagamentos antes do lock nesses fluxos. A heurística compara números de linha no mesmo método e não rastreia o ID travado nem segue chamadas auxiliares. `ArquiteturaR15Test` usa `ClassFileImporter` e fixtures sem Docker para testar a ordem das chamadas, inclusive `saveAndFlush` anterior ao lock mesmo quando o mutador do agregado vem depois dele.
 * **[`ModulithTest`](../../apps/inv-service/src/test/java/inv/architect/ModulithTest.java):** executa `ApplicationModules.of(InvServiceApplication.class).verify()` e gera diagramas C4/PlantUML e Module Canvases via `Documenter`.
 
 ```bash
-mvn test -pl apps/inv-service -am -Dtest=ArquiteturaTest,ModulithTest
+mvn -pl apps/inv-service -am test -Dtest=ArquiteturaTest,ArquiteturaR15Test,ModulithTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
+
+No CI, `mvn clean verify` executa os testes unitários e arquiteturais pelo Surefire na fase `test` e os testes `*IT` e `*IntegrationTest` pelo Failsafe nas fases `integration-test` e `verify`. O job usa Docker para Testcontainers e valida os relatórios XML por módulo e fase, incluindo ausência de omissões, duplicidade, erros, falhas e testes ignorados. [ADR-0013](../adr/0013-surefire-failsafe-test-lifecycle.md) · [Pipeline de CI](../../.github/workflows/ci-cd.yml) · [Verificador de relatórios](../../.github/scripts/check-test-reports.py).
 
 ### C. Hierarquia Global de Locks Anti-Deadlock (`SQLState 40P01`)
 
@@ -178,10 +185,31 @@ flowchart LR
 | **Inv Service (`inv.checkout`)** | **Inv Service (`inv.inventory.api`)** | Em Memória | Open Host Service Síncrono (`Propagation.MANDATORY`) | Leitura de catálogo (`CatalogoQueryService.buscarParaCheckout`) e comandos em lote ordenado por `produtoId ASC` via `EstoqueCommandService` (`reservar`, `confirmarBaixa`, `estornarReserva`, `devolverEstoque`) ([ADR-0011](../adr/0011-synchronous-open-host-service-checkout-inventory.md)). |
 | **Inv Service (`inv.dashboard`)** | **Inv Service (`*.api`)** | Em Memória | Open Host Service / CQRS Read | Composição read-only consumindo exclusivamente `VendaQueryService`, `ReceitaQueryService` e `EstoqueQueryService` ([ADR-0010](../adr/0010-dashboard-read-only-composition-module.md)). |
 | **Inv Service (`inv.checkout`)** | **Inv Service (`inv.finance`)** | Em Memória | Spring Event (`VendaPagaEvent`) | Publicação de `VendaPagaEvent` consumida por `VendaPagaEventListener` na mesma transação (`INSERT ... ON CONFLICT DO NOTHING RETURNING id`). |
-| **Inv Service (`OutboxProcessor`)** | **RabbitMQ (`pdv.exchange`)** | AMQP 0-9-1 | Polling Transacional (`SKIP LOCKED`) | Despacho de `PagamentoConfirmadoEvent` (`venda.pagamento.confirmado` → `pdv.venda.pagamento.confirmado.queue`) e `VendaEstornadaEvent` (`venda.estornada` → `pdv.venda.estornada.queue`), ambos com DLQs em `pdv.exchange.dlx`. |
-| **Inv Service (`OutboxProcessor`)** | **RabbitMQ (`inventory.v1.events`)** | AMQP 0-9-1 | Polling Transacional (`SKIP LOCKED`) | Despacho de alertas de estoque mínimo (`inventory.stock.low` → `inventory.v1.stock-low.notify`, DLQ em `inventory.v1.events.dlx`). |
+| **Inv Service (`OutboxProcessor`)** | **RabbitMQ (`pdv.exchange`)** | AMQP 0-9-1 | Outbox com confirmação | `venda.pagamento.confirmado` → `pdv.venda.pagamento.confirmado.queue` e `venda.estornada` → `pdv.venda.estornada.queue`. Os listeners do Inv têm até três tentativas configuradas e rejeição sem requeue após esgotamento. Cada fila tem sua DLQ de sufixo `.dlq` em `pdv.exchange.dlx`. |
+| **Inv Service (`OutboxProcessor`)** | **RabbitMQ (`inventory.v1.events`)** | AMQP 0-9-1 | Outbox com confirmação | `inventory.stock.low` → fila `inventory.v1.low-stock.send-email` do Mail. O Inv só declara a fila legada `inventory.v1.stock-low.notify` (sem consumidor) e sua DLQ `inventory.v1.stock-low.notify.dlq` em `inventory.v1.events.dlx` se `inv.rabbitmq.legacy-low-stock-queue.enabled=true` (padrão `false`). Um binding legado existente pode satisfazer o roteamento mesmo se a fila do Mail estiver ausente. |
 | **Auth Service** | **RabbitMQ (`auth.v1.events`)** | AMQP 0-9-1 | Push Assíncrono | Publicação de recuperação de senha (`auth.password.reset` → `auth.v1.password-reset.send-email`). |
-| **RabbitMQ** | **Mail Service** | AMQP 0-9-1 | Idempotent Consumer | Consumo de `auth.v1.password-reset.send-email` e `inventory.v1.stock-low.notify` com deduplicação em `processed_events`. |
+| **RabbitMQ** | **Mail Service** | AMQP 0-9-1 | Deduplicação por `eventId` | `auth.v1.password-reset.send-email` tem DLQ `auth.v1.password-reset.send-email.dlq` em `auth.v1.events.dlx`. `inventory.v1.low-stock.send-email` não tem DLQ. O Mail não configura retry limitado do listener e uma falha não fatal pode ser reenfileirada pelo container. |
+
+### A. Entrega e recuperação da outbox
+
+1. `PagamentoListener`, `VendaEstornadaOutboxListener` e `RabbitMQProducerListener` persistem os eventos na transação de negócio em `BEFORE_COMMIT`, com `createdAt` vindo do `Clock`. O processamento automático requer `inv.scheduling.enabled` e `outbox.scheduler.enabled` (ambos `true` por padrão). O `OutboxScheduler` usa `outbox.scheduler.initial-delay-ms` (1 s) antes do primeiro ciclo e `outbox.scheduler.fixed-delay-ms` (2 s) após o fim de cada ciclo.
+2. `OutboxDeliveryStep` abre uma transação `REQUIRES_NEW` e trava uma linha por vez com `FOR UPDATE SKIP LOCKED`. São elegíveis registros `PENDING` com `next_attempt_at` nulo ou vencido, em ordem de `created_at` e `id`. O passo valida o JSON contra o tipo armazenado no produtor e envia o corpo persistido em UTF-8 com `application/json`, sem `__TypeId__`. Os consumidores de pagamento e estorno fazem conversão explícita em seus handlers e o Mail infere o DTO local pelo parâmetro tipado do listener. [ADR-0008](../adr/0008-distributed-idempotent-consumer-and-schema-evolution.md).
+3. O `RabbitTemplate` usa publisher confirms correlacionados, publisher returns e `mandatory=true`. A linha só é excluída após ACK sem return e o sucesso depende do commit da exclusão. `NO_ROUTE` pode acompanhar um ACK e, como destino inexistente (`404`), é tratado como falha de roteamento. O timeout padrão do confirm é 3 s. O ACK confirma aceitação pelo broker e a ausência de return indica roteamento para pelo menos uma fila.
+4. Após rollback do passo de entrega, `OutboxFailureRecorder` atualiza o diagnóstico em outra transação `REQUIRES_NEW`, com atualização condicional enquanto o registro permanece `PENDING`. Payload inválido vai direto para `QUARANTINED`. Falhas de rota, indisponibilidade do broker e falhas de persistência pós-confirmação usam backoff exponencial (base de 2 s, teto de 60 s, quarentena na quinta falha por padrão). Payload inválido e erro de rota liberam o próximo registro no ciclo. Falha de broker, de persistência pós-confirmação ou de gravação do diagnóstico pausa o ciclo. A quarentena retém a linha e o diagnóstico no PostgreSQL. A DLQ pertence ao RabbitMQ e recebe rejeições de filas com dead-letter configurado.
+
+A publicação tem semântica **at-least-once**. Uma mensagem em quarentena depende de replay para voltar ao fluxo. Quando o broker aceita a mensagem e o commit da exclusão falha, uma nova tentativa pode publicá-la novamente. No Checkout, `VendaEventHandler` verifica sob lock os estados contabilizado, excedente ou estornado. Em Finance, `VendaEstornadaEventListener` insere o estorno por `uuidReferenciaEstorno` determinística e `ON CONFLICT (referencia) DO NOTHING`. `OutboxEstornoRecuperacaoIT` cobre a reentrega após falha pós-confirmação com um único lançamento de estorno. No Mail, `EmailConsumer` consulta `processed_events` por `eventId`, envia o SMTP e só então grava o processamento. Falha depois do SMTP ou processamento concorrente pode duplicar o e-mail. [ADR-0004](../adr/0004-transactional-outbox-with-skip-locked.md).
+
+### B. Inspeção e replay administrativo
+
+A API pertence ao `inv-service` e exige JWT válido com autoridade `ROLE_ADMIN` no claim `roles`. Sem credencial válida retorna `401`, e sem a autoridade exigida retorna `403`. O Gateway não declara rota para `/admin/outbox/**`. O Compose publica `8083:8083`, o que permite acesso direto ao serviço, inclusive à API administrativa, conforme o alcance de rede do host.
+
+| Operação | Resultado |
+| :--- | :--- |
+| `GET /admin/outbox/quarantined` | `200` com página de registros em quarentena, ordenados por `quarantined_at DESC, id DESC` (padrão `page=0`, `size=20`, máximo 100 por página). |
+| `GET /admin/outbox/{id}` | `200` com registro, payload e diagnóstico, ou `404` se ausente. |
+| `POST /admin/outbox/{id}/replay` | `200` com ID, novo status, data e contagem de replay após reagendamento. Retorna `404` se ausente e `409` se existe fora da quarentena. |
+
+O replay atualiza atomicamente o registro `QUARANTINED` para `PENDING`, zera `attempts`, fixa `next_attempt_at` no instante atual e atualiza `replayed_at` e `replay_count`. Conserva o payload e o histórico de diagnóstico. O `200` confirma o reagendamento. A publicação ocorre em um ciclo posterior do worker.
 
 ---
 
@@ -255,8 +283,19 @@ classDiagram
         +bigint id PK
         +varchar exchange
         +varchar routing_key
+        +varchar event_type
+        +integer version
         +text payload
         +timestamp created_at
+        +varchar status
+        +integer attempts
+        +timestamp next_attempt_at
+        +timestamp last_attempt_at
+        +varchar last_error_type
+        +text last_error
+        +timestamp quarantined_at
+        +timestamp replayed_at
+        +integer replay_count
     }
 
     class FechamentoCaixaDiario {
@@ -276,13 +315,14 @@ classDiagram
     Vendas "1" -- "*" LancamentosFinanceiros : "fk_lancamento_venda"
 ```
 
-### A. Esquema do `inv-service` (Migrations Flyway `V1` a `V9`)
+### A. Esquema do `inv-service` (Migrations Flyway `V1` a `V11`)
 
 * [`V1__Schema_Inicial.sql`](../../apps/inv-service/src/main/resources/db/migration/V1__Schema_Inicial.sql) e [`V2__ajusta_schema_produtos_vendas_pagamentos.sql`](../../apps/inv-service/src/main/resources/db/migration/V2__ajusta_schema_produtos_vendas_pagamentos.sql)
 * [`V3__financial_projection_checkpoint_v2.sql`](../../apps/inv-service/src/main/resources/db/migration/V3__financial_projection_checkpoint_v2.sql) e [`V4__projecao_receita_diaria.sql`](../../apps/inv-service/src/main/resources/db/migration/V4__projecao_receita_diaria.sql)
 * [`V5__indices_dashboard.sql`](../../apps/inv-service/src/main/resources/db/migration/V5__indices_dashboard.sql) e [`V6__comentarios_fk_fronteira_modular.sql`](../../apps/inv-service/src/main/resources/db/migration/V6__comentarios_fk_fronteira_modular.sql)
 * [`V7__pagamento_contabilizado.sql`](../../apps/inv-service/src/main/resources/db/migration/V7__pagamento_contabilizado.sql) e [`V8__indice_movimentacoes_estoque_devolucao.sql`](../../apps/inv-service/src/main/resources/db/migration/V8__indice_movimentacoes_estoque_devolucao.sql)
 * [`V9__indice_movimentacoes_estoque_saida.sql`](../../apps/inv-service/src/main/resources/db/migration/V9__indice_movimentacoes_estoque_saida.sql)
+* [`V10__outbox_resiliencia_entrega.sql`](../../apps/inv-service/src/main/resources/db/migration/V10__outbox_resiliencia_entrega.sql) e [`V11__indice_outbox_elegibilidade.sql`](../../apps/inv-service/src/main/resources/db/migration/V11__indice_outbox_elegibilidade.sql)
 
 | Artefato / Tabela | Migration | Bounded Context | Finalidade Arquitetural |
 | :--- | :---: | :--- | :--- |
@@ -291,7 +331,8 @@ classDiagram
 | `vendas` | `V1`, `V2` | **Checkout** | Agregado raiz de transação comercial e máquina de estados (`ABERTA`, `AGUARDANDO_PAGAMENTO`, `CONCLUIDA`, `CANCELADA`). |
 | `itens_venda` | `V1` | **Checkout** | Snapshots imutáveis de preço e nome do produto no momento da compra (`produto_id` escalar). |
 | `pagamentos` | `V2`, `V7` | **Checkout** | Intenções e confirmações de pagamento com `uuid_referencia` único, `nsu_transacao`, `excedente` e coluna `contabilizado` (`BOOLEAN DEFAULT FALSE` + backfill). |
-| `outbox` | `V1` | **Shared** | Fila física de transações distribuídas para despacho AMQP sem 2PC (`SKIP LOCKED`). |
+| `outbox` (`Outbox`) | `V1`, `V10` | **Shared** | Estado e diagnóstico de entrega, com `CHECK` para `PENDING` e `QUARANTINED`. A migração deixa linhas existentes elegíveis com `PENDING`, zero tentativas e `next_attempt_at` nulo. |
+| `idx_outbox_pending_created_at`, `idx_outbox_quarantined_at` | `V11` | **Shared** | Índices parciais para seleção de pendentes e listagem de quarentena, criados concorrentemente fora da transação de migração. O índice de pendentes inclui `next_attempt_at`. |
 | `lancamentos_financeiros` | `V1` | **Finance** | **Ledger Contábil Append-Only**; registros imutáveis com `referencia` UUID única (`CREDITO`, `DEBITO`, `ESTORNO`). |
 | `financial_projection_venda` | `V1` | **Finance** | Tabela de leitura CQRS contendo saldos consolidados por venda. |
 | `financial_projection_checkpoint` | `V1` | **Finance** | Tabela legada de checkpoint da projeção de vendas (substituída pela `v2` na `V3`). |
@@ -349,7 +390,7 @@ O tratamento de exceções HTTP é centralizado no [`GlobalExceptionHandler`](..
 
 ## 6. Rastreabilidade e Observabilidade Distribuída
 
-* **Distributed Tracing:** Toda mensagem originada no sistema carrega um cabeçalho `eventId` / `correlationId` para rastreamento ponta a ponta no Grafana Loki.
+* **Identificadores da outbox:** `messageId` é estável (`outbox-<id>`) e `correlationId` muda a cada envio. Os headers `x-outbox-id` e `x-event-version` identificam a linha e a versão. O `eventId` usado na deduplicação do Mail pertence ao JSON dos eventos que ele consome.
 * **Métricas em Tempo Real (Prometheus):** Endpoints `/actuator/prometheus` expostos e configurados para coleta periódica em `infra/prometheus/prometheus.yml`:
   - `api-gateway`: Scrape em `api-gateway:8080` (métricas de rotas reativas, rate limiting e tráfego de borda).
   - `inv-service`: Scrape em `inv-service:8083` (métricas de concorrência, locks pessimistas, execução de jobs, throughput de webhooks, latência e falhas por card do dashboard `dashboard.card.latency{card}` / `dashboard.card.failure{card}`, e contador de pagamentos tardios `pagamento.excedente.total`).
@@ -359,3 +400,15 @@ O tratamento de exceções HTTP é centralizado no [`GlobalExceptionHandler`](..
 * **Telemetria de Borda Desacoplada & Proteção contra Log Storms:** O API Gateway coleta atividade via `ActivityFilter` com fallback não-bloqueante (`onErrorResume`) e supressão de warnings (máximo de 1 log a cada 10s sob falha de conexão com o Redis). A limpeza de registros com mais de 1 hora no Redis é executada assincronamente pelo `ActivityPurgeScheduler` a cada 5 minutos.
 * **Logs Não-Bloqueantes:** Utilização de `Logstash Async Appender` para evitar overhead de I/O de disco em threads HTTP de requisição.
 * **Consistência de Variáveis de Ambiente e Kill Switch:** Normalização estrita de variáveis de ambiente no `docker-compose.yml` (como `JWT_PUBLIC_KEY` em maiúsculas e `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` com padrão `false`), garantindo paridade total com o `.env.example`, validação stateless de tokens RSA entre serviços e controle operacional seguro do cancelamento pós-faturamento.
+
+### A. Métricas e log da outbox
+
+| Nome Micrometer | Tipo | Tag específica | Sinal |
+| :--- | :--- | :--- | :--- |
+| `outbox.oldest.eligible.age.seconds` | Gauge | — | Idade do pendente elegível mais antigo, em segundos desde `created_at`. Vale zero sem elegíveis. |
+| `outbox.quarantined.count` | Gauge | — | Número de registros atualmente em quarentena. |
+| `outbox.quarantined.total` | Counter | `error_type` | Incrementado após a atualização da linha para `QUARANTINED`, antes do commit do diagnóstico. |
+| `outbox.replay.requested.total` | Counter | — | Incrementado após a atualização e a leitura da linha reagendada, antes do commit do replay administrativo. |
+| `outbox.replay.completed.total` | Counter | — | Incrementado após o retorno bem-sucedido da transação de entrega que exclui a linha reprocessada. |
+
+Em falha transitória de leitura no banco, os gauges mantêm a última leitura bem-sucedida, ou `NaN` se ainda não houve uma. Após concluir o replay, `OutboxProcessor` registra `event=outbox_replay_completed` com `outboxId`, `eventType`, `version`, `replayCount`, `messageId` e `correlationId`.

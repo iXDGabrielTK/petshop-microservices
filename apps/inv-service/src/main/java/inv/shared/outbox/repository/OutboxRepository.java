@@ -14,6 +14,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -66,4 +67,14 @@ public interface OutboxRepository extends JpaRepository<Outbox, Long> {
     int replayQuarantined(@Param("id") Long id, @Param("agora") LocalDateTime agora);
 
     Page<Outbox> findByStatusOrderByQuarantinedAtDescIdDesc(String status, Pageable pageable);
+
+    @Query(value = """
+        SELECT GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (CAST(:agora AS TIMESTAMP) - MIN(created_at))), 0))
+          FROM outbox
+         WHERE status = 'PENDING'
+           AND (next_attempt_at IS NULL OR next_attempt_at <= CAST(:agora AS TIMESTAMP))
+        """, nativeQuery = true)
+    BigDecimal findOldestEligibleAgeSeconds(@Param("agora") LocalDateTime agora);
+
+    long countByStatus(String status);
 }
