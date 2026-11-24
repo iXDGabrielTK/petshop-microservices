@@ -8,11 +8,11 @@ package inv.checkout.infrastructure.messaging;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import common.exception.BusinessException;
-import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.StatusPagamento;
 import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.domain.model.Venda;
+import inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent;
 import inv.checkout.infrastructure.messaging.event.VendaAtualizadaEvent;
 import inv.checkout.infrastructure.persistence.PagamentoRepository;
 import inv.checkout.infrastructure.persistence.VendaRepository;
@@ -29,11 +29,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -517,6 +522,146 @@ class VendaEventHandlerTest {
                 .hasRootCauseMessage("Conexão com PostgreSQL recusada");
 
         verifyNoInteractions(pagamentoRepository, estoqueCommandService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("Compatibilidade — DEVE aceitar PagamentoConfirmadoEvent tipado diretamente")
+    void deveAceitarPagamentoConfirmadoEventTipado() {
+        Long vendaId = 10L;
+        Long pagamentoId = 50L;
+        Venda venda = criarVendaConcluidaComUmItem(vendaId, 100L, new BigDecimal("1.000"));
+        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
+        pagamento.marcarComoContabilizado();
+
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+        handler.handlePagamentoConfirmado(new PagamentoConfirmadoEvent(vendaId, pagamentoId));
+
+        verify(vendaRepository).findByIdWithLock(vendaId);
+        verify(pagamentoRepository).findById(pagamentoId);
+    }
+
+    @Test
+    @DisplayName("Compatibilidade — DEVE aceitar Message AMQP JSON UTF-8 sem __TypeId__")
+    void deveAceitarMessageJsonUtf8SemTypeId() {
+        Long vendaId = 10L;
+        Long pagamentoId = 50L;
+        Venda venda = criarVendaConcluidaComUmItem(vendaId, 100L, new BigDecimal("1.000"));
+        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
+        pagamento.marcarComoContabilizado();
+
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+        MessageProperties props = new MessageProperties();
+        props.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        Message amqpMessage = new Message("{\"vendaId\":10,\"pagamentoId\":50}".getBytes(StandardCharsets.UTF_8), props);
+
+        handler.handlePagamentoConfirmado(amqpMessage);
+
+        verify(vendaRepository).findByIdWithLock(vendaId);
+        verify(pagamentoRepository).findById(pagamentoId);
+    }
+
+    @Test
+    @DisplayName("Compatibilidade — DEVE aceitar byte[] JSON UTF-8")
+    void deveAceitarBytesJsonUtf8() {
+        Long vendaId = 10L;
+        Long pagamentoId = 50L;
+        Venda venda = criarVendaConcluidaComUmItem(vendaId, 100L, new BigDecimal("1.000"));
+        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
+        pagamento.marcarComoContabilizado();
+
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+        handler.handlePagamentoConfirmado("{\"vendaId\":10,\"pagamentoId\":50}".getBytes(StandardCharsets.UTF_8));
+
+        verify(vendaRepository).findByIdWithLock(vendaId);
+        verify(pagamentoRepository).findById(pagamentoId);
+    }
+
+    @Test
+    @DisplayName("Compatibilidade — DEVE aceitar Map desserializado sem __TypeId__")
+    void deveAceitarMapDesserializadoSemTypeId() {
+        Long vendaId = 10L;
+        Long pagamentoId = 50L;
+        Venda venda = criarVendaConcluidaComUmItem(vendaId, 100L, new BigDecimal("1.000"));
+        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
+        pagamento.marcarComoContabilizado();
+
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+        handler.handlePagamentoConfirmado(Map.of("vendaId", 10, "pagamentoId", 50));
+
+        verify(vendaRepository).findByIdWithLock(vendaId);
+        verify(pagamentoRepository).findById(pagamentoId);
+    }
+
+    @Test
+    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException quando conversão de Map falhar com IllegalArgumentException")
+    void deveRejeitarSemRequeueQuandoConversaoDeMapFalhar() {
+        Map<String, Object> invalido = Map.of("vendaId", "nao-numerico", "pagamentoId", 50);
+
+        assertThatThrownBy(() -> handler.handlePagamentoConfirmado(invalido))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(vendaRepository, pagamentoRepository, estoqueCommandService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException quando mensagem recebida for nula")
+    void deveRejeitarSemRequeueQuandoMensagemNula() {
+        assertThatThrownBy(() -> handler.handlePagamentoConfirmado(null))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasCauseInstanceOf(BusinessException.class);
+
+        verifyNoInteractions(vendaRepository, pagamentoRepository, estoqueCommandService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("Compatibilidade — DEVE aceitar Message com JSON serializado como string textual")
+    void deveAceitarMessageComJsonSerializadoComoString() {
+        Long vendaId = 10L;
+        Long pagamentoId = 50L;
+        Venda venda = criarVendaConcluidaComUmItem(vendaId, 100L, new BigDecimal("1.000"));
+        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+        ReflectionTestUtils.setField(pagamento, "id", pagamentoId);
+        pagamento.marcarComoContabilizado();
+
+        when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+        MessageProperties props = new MessageProperties();
+        props.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        Message amqpMessage = new Message(
+                "\"{\\\"vendaId\\\":10,\\\"pagamentoId\\\":50}\"".getBytes(StandardCharsets.UTF_8), props);
+
+        handler.handlePagamentoConfirmado(amqpMessage);
+
+        verify(vendaRepository).findByIdWithLock(vendaId);
+        verify(pagamentoRepository).findById(pagamentoId);
+    }
+
+    @Test
+    @DisplayName("DLQ — DEVE lançar AmqpRejectAndDontRequeueException quando Message tiver string JSON inválida")
+    void deveRejeitarSemRequeueQuandoMessageComStringJsonInvalida() {
+        MessageProperties props = new MessageProperties();
+        props.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        Message amqpMessage = new Message("\"json-invalido\"".getBytes(StandardCharsets.UTF_8), props);
+
+        assertThatThrownBy(() -> handler.handlePagamentoConfirmado(amqpMessage))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                .hasCauseInstanceOf(JsonProcessingException.class);
+
+        verifyNoInteractions(vendaRepository, pagamentoRepository, estoqueCommandService, eventPublisher);
     }
 
     private static Venda criarVendaAguardandoPagamento(
