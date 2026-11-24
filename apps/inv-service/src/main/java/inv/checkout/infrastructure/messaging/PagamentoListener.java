@@ -37,6 +37,7 @@ public class PagamentoListener {
             outbox.setRoutingKey(RabbitMQConfig.PDV_ROUTING_KEY);
             outbox.setEventType(event.getClass().getName());
             outbox.setPayload(objectMapper.writeValueAsString(event));
+            outbox.setVersion(1);
             outbox.setCreatedAt(LocalDateTime.now());
 
             outboxRepository.save(outbox);
