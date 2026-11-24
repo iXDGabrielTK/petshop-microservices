@@ -24,7 +24,7 @@
 | PR | Etapa | Runbook | Resultado Demonstrável Isoladamente | Status |
 | :---: | :---: | :--- | :--- | :---: |
 | **1** | **E1** | [E1.md](./E1.md) | `OutboxProcessor` só exclui após `Confirm(ack=true)` sem `ReturnedMessage` (`NO_ROUTE`); `NO_ROUTE`/`NACK`/`404`/timeout preservam a linha; `Pagamento -> VendaEventHandler` e rota de estoque sem `__TypeId__` validados com RabbitMQ real (`F1`–`F4`, `Q1`–`Q5`) | `[x]` Concluída |
-| **2** | **E2** | [E2.md](./E2.md) | `@EnableScheduling` ativo e isolável em testes; `V10`/`V11` aplicadas; falha de payload vai para `QUARANTINED` sem travar evento válido seguinte; backoff com `Clock` e retomada após reinício; replay por ID idempotente sob concorrência (`F4`–`F7`, `Q5`–`Q9`) | `[ ]` Planejada |
+| **2** | **E2** | [E2.md](./E2.md) | `@EnableScheduling` ativo e isolável em testes; `V10`/`V11` aplicadas; falha de payload vai para `QUARANTINED` sem travar evento válido seguinte; backoff com `Clock` e retomada após reinício; replay por ID idempotente sob concorrência (`F4`–`F7`, `Q5`–`Q9`) | `[x]` Concluída |
 | **3** | **E3** | [E3.md](./E3.md) | `OutboxEstornoRecuperacaoIT` prova entrega via broker + rollback pós-confirm AMQP/pré-commit + 2ª entrega com estorno contábil único; `OutboxConcorrenciaIntegrationTest` preservado; métricas/logs das 3 perguntas operacionais e `ADR-0004` atualizada (`F8`, `F9`, `Q10`, `Q11`) | `[ ]` Planejada |
 
 ```mermaid
@@ -102,6 +102,6 @@ flowchart LR
 
 ### Definition of Done (DoD) Global
 - [x] **PR 1 (`E1`):** `Confirm(ack=true)` + `mandatory=true` validados contra RabbitMQ real (`NO_ROUTE`, `NACK`, `404 NOT_FOUND`, timeout, conexão), caminho saudável das 3 rotas validado sem `__TypeId__` (record espelho no `inv-service` + `mail-service`) e com `version = 0`/`1`, fila órfã condicionada por flag.
-- [ ] **PR 2 (`E2`):** `inv.scheduling.enabled=false` aplicado sistematicamente nos `@SpringBootTest` sem agendamento (inclusive `OutboxConcorrenciaIntegrationTest`), `V10`/`V11` validadas com `ddl-auto=validate`, isolamento de payload inválido sem bloquear evento válido, falha pós-confirm tratada como transitória, retomada após reinício e replay administrativo atômico sob concorrência.
+- [x] **PR 2 (`E2`):** `inv.scheduling.enabled=false` aplicado sistematicamente nos `@SpringBootTest` sem agendamento (inclusive `OutboxConcorrenciaIntegrationTest`), `V10`/`V11` validadas com `ddl-auto=validate`, isolamento de payload inválido sem bloquear evento válido, falha pós-confirm tratada como transitória, retomada após reinício e replay administrativo atômico sob concorrência.
 - [ ] **PR 3 (`E3`):** `OutboxEstornoRecuperacaoIT` comprova entrega única contábil após falha pós-confirmação AMQP/pré-commit; `OutboxConcorrenciaIntegrationTest` preservado com 100 mensagens; 3 perguntas operacionais respondidas (`Clock` nos produtores, gauge não negativo resiliente) e `ADR-0004` atualizada.
 - [ ] **Gates Transversais:** `mvn spotless:check`, `mvn clean verify`, `python3 .github/scripts/check-test-reports.py`, `ArquiteturaTest`, `ArquiteturaR15Test` e `ModulithTest` verdes sem novas dependências Maven.
