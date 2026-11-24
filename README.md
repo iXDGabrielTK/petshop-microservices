@@ -37,7 +37,7 @@ Toda a arquitetura, regras de negócio e decisões de engenharia estão cataloga
 | **[ADR-0001](docs/adr/0001-modular-monolith-bounded-contexts.md)** | Monólito Modular com Bounded Contexts | `Aceito` | Core / Inv-Service | Eliminação de nano-serviços e redução de latência no PDV. |
 | **[ADR-0002](docs/adr/0002-atomic-sql-inventory-and-hybrid-locking.md)** | Controle Híbrido de Concorrência & Estoque Atômico | `Aceito` | Inventory, Checkout | `UPDATE ... RETURNING`, `@Retryable` e Lock Pessimista na Liquidação. |
 | **[ADR-0003](docs/adr/0003-async-long-polling-pos-deferred-result.md)** | Long Polling Não-Bloqueante com `DeferredResult` | `Aceito` | Checkout | *Request Parking* assíncrono para PDV aguardando Webhooks. |
-| **[ADR-0004](docs/adr/0004-transactional-outbox-with-skip-locked.md)** | Transactional Outbox com `FOR UPDATE SKIP LOCKED` | `Aceito` | Shared, Checkout | Despacho AMQP sem 2PC e sem colisões entre réplicas. |
+| **[ADR-0004](docs/adr/0004-transactional-outbox-with-skip-locked.md)** | Transactional Outbox com `FOR UPDATE SKIP LOCKED` | `Aceito` | Shared, Checkout, Finance, Inventory | Workers concorrentes com lock por registro e entrega AMQP *at-least-once*. |
 | **[ADR-0005](docs/adr/0005-append-only-financial-ledger-and-idempotency.md)** | Ledger Financeiro Imutável com UUID | `Aceito` | Finance | Journaling contábil imutável e eliminação de saldo mutável. |
 | **[ADR-0006](docs/adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)** | Projeções CQRS Assíncronas e Auto-Cura | `Aceito` | Finance | Projeção pós-commit com fila de retry e scheduler auto-curável. |
 | **[ADR-0007](docs/adr/0007-d0-daily-cash-closing-and-high-watermark.md)** | Fechamento D+0 com High Watermark | `Aceito` | Finance | Processamento incremental $O(\Delta)$ e reconciliação de divergências. |
@@ -45,6 +45,8 @@ Toda a arquitetura, regras de negócio e decisões de engenharia estão cataloga
 | **[ADR-0009](docs/adr/0009-centralized-oauth2-oidc-and-stateless-resource-servers.md)** | Spring Auth Server OIDC e RSA 2048-bit | `Aceito` | Auth, Gateway | Resource Servers stateless validados localmente em memória. |
 | **[ADR-0010](docs/adr/0010-dashboard-read-only-composition-module.md)** | Dashboard como Módulo de Composição de Leitura | `Aceito` | Dashboard, Core | BFF interno read-only consumindo contratos `*.api` e CQRS diário. |
 | **[ADR-0011](docs/adr/0011-synchronous-open-host-service-checkout-inventory.md)** | Open Host Service Síncrono de Comandos (Checkout → Inventory) | `Aceito` | Checkout, Inventory | Lote ordenado (`produtoId ASC`), `Propagation.MANDATORY` e `ItemVenda.produtoId`. |
+| **[ADR-0012](docs/adr/0012-idempotent-payment-pipeline-and-single-phase-sale-reversal.md)** | Pipeline Idempotente de Pagamento e Cancelamento em Fase Única de Venda Concluída | `Aceito` | Checkout, Finance, Inventory, Shared | Reentregas idempotentes de pagamento e devolução de estoque no cancelamento. |
+| **[ADR-0013](docs/adr/0013-surefire-failsafe-test-lifecycle.md)** | Testes Unitários no Surefire e Integrações no Failsafe | `Aceito` | Transversal | Integrações `*IT` e `*IntegrationTest` no Failsafe e conciliação dos relatórios no CI. |
 
 ---
 
@@ -115,7 +117,7 @@ petshop-microservices/
 ├── docs/                               # Hub de Governança & Arquitetura
 │   ├── architecture/                   # System Overview e Observabilidade
 │   ├── domains/                        # Deep Dives dos Bounded Contexts
-│   └── adr/                            # 11 Architecture Decision Records (MADR 3.0)
+│   └── adr/                            # 13 Architecture Decision Records (MADR 3.0)
 │
 ├── apps/
 │   ├── api-gateway/                    # Spring Cloud Gateway + Redis Token Bucket
@@ -173,15 +175,17 @@ docker-compose up --build
 Os testes de estresse validam os pontos críticos de concorrência com containers reais PostgreSQL e RabbitMQ:
 
 1. **Race Conditions de Estoque ([ADR-0002](docs/adr/0002-atomic-sql-inventory-and-hybrid-locking.md)):** 50 threads concorrentes disputando as últimas 5 unidades de produto.
-2. **Workers Paralelos de Outbox ([ADR-0004](docs/adr/0004-transactional-outbox-with-skip-locked.md)):** Múltiplas instâncias executando `SELECT ... FOR UPDATE SKIP LOCKED` simultaneamente sem duplicações ou deadlocks.
-3. **Auto-Cura CQRS ([ADR-0006](docs/adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)):** Injeção de falha na projeção assíncrona e reprocessamento com consistência garantida.
-4. **Idempotência de Entrega ([ADR-0008](docs/adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)):** Rajada de 10 mensagens duplicadas no broker garantindo disparo único de notificação.
+2. **Workers Paralelos de Outbox ([ADR-0004](docs/adr/0004-transactional-outbox-with-skip-locked.md)):** 10 workers drenam 100 mensagens distintas com `FOR UPDATE SKIP LOCKED` no cenário sem falha injetada. Outro cenário valida a republicação após falha de persistência posterior ao ACK e a idempotência do estorno no Finance.
+3. **Auto-Cura CQRS ([ADR-0006](docs/adr/0006-cqrs-asynchronous-projections-and-self-healing-retry.md)):** Injeção de falha na projeção assíncrona e validação da recomposição idempotente da projeção.
+4. **Deduplicação de E-mail ([ADR-0008](docs/adr/0008-distributed-idempotent-consumer-and-schema-evolution.md)):** 10 mensagens com o mesmo `eventId` resultam em uma chamada ao remetente SMTP simulado e um registro em `processed_events` no cenário testado. Uma falha após o envio e antes de gravar o registro pode duplicar o e-mail.
+
+Execute os comandos na raiz do projeto. O Surefire executa os testes unitários e de arquitetura na fase `test`. O Failsafe executa as classes `*IT` e `*IntegrationTest` na fase `integration-test` e verifica seus resultados na fase `verify`. O CI usa `mvn clean verify` e confere os relatórios por módulo antes do build das imagens. Consulte a [ADR-0013](docs/adr/0013-surefire-failsafe-test-lifecycle.md).
 
 ```bash
-# Executar os testes unitários
+# Executar os testes do Surefire (sem Docker)
 mvn test
 
-# Executar os testes unitários e de integração (requer Docker ativo)
+# Executar o ciclo completo, incluindo as integrações (requer Docker ativo)
 mvn verify
 ```
 
