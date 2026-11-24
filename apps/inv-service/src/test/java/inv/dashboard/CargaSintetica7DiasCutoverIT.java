@@ -94,7 +94,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * - Endpoint HTTP /dashboard/stats (Caffeine cache ativo, p95 < 100ms, 0% 5xx).
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 @AutoConfigureMockMvc(addFilters = false)
 class CargaSintetica7DiasCutoverIT {
 

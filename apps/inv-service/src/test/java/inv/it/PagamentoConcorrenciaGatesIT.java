@@ -95,7 +95,7 @@ import static org.mockito.Mockito.doAnswer;
  */
 @RecordApplicationEvents
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class PagamentoConcorrenciaGatesIT {
 
     @Container

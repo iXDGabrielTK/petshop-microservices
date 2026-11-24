@@ -7,11 +7,42 @@ package inv.shared.outbox.scheduler;
 
 class OutboxPublishException extends RuntimeException {
 
-    OutboxPublishException(String message) {
+    private final OutboxAttemptSnapshot snapshot;
+    private final OutboxFailureCategory category;
+    private final String errorType;
+
+    OutboxPublishException(
+            OutboxAttemptSnapshot snapshot,
+            OutboxFailureCategory category,
+            String errorType,
+            String message) {
         super(message);
+        this.snapshot = snapshot;
+        this.category = category;
+        this.errorType = errorType;
     }
 
-    OutboxPublishException(String message, Throwable cause) {
+    OutboxPublishException(
+            OutboxAttemptSnapshot snapshot,
+            OutboxFailureCategory category,
+            String errorType,
+            String message,
+            Throwable cause) {
         super(message, cause);
+        this.snapshot = snapshot;
+        this.category = category;
+        this.errorType = errorType;
+    }
+
+    OutboxAttemptSnapshot getSnapshot() {
+        return snapshot;
+    }
+
+    OutboxFailureCategory getCategory() {
+        return category;
+    }
+
+    String getErrorType() {
+        return errorType;
     }
 }

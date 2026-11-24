@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Valida a prevenção de overselling via SQL atômico e ausência de deadlocks sob alta concorrência.
  */
 @Testcontainers
-@SpringBootTest
+@SpringBootTest(properties = "inv.scheduling.enabled=false")
 class EstoqueConcorrenciaIntegrationTest {
 
     @Container

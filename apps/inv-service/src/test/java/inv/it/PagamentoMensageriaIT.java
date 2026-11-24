@@ -64,7 +64,7 @@ import static org.mockito.Mockito.verify;
 
 /** Valida a política efetiva de retry e DLQ de application.properties com broker real. */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class PagamentoMensageriaIT {
     @Container
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");

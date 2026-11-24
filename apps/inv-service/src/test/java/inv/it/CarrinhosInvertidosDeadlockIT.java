@@ -50,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Prova da ordenação determinística Q3/F5 em lote (produtoId ASC) e controle negativo de detecção de deadlock 40P01.
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class CarrinhosInvertidosDeadlockIT {
 
     @Container

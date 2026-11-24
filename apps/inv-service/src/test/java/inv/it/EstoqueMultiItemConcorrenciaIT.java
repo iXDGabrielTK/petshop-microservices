@@ -51,7 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Alterna entre [A, B] e [B, A], provando ausência de deadlock (40P01) e rollback atômico integral do lote.
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class EstoqueMultiItemConcorrenciaIT {
 
     @Container

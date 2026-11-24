@@ -67,7 +67,7 @@ import static org.mockito.Mockito.doAnswer;
  * Valida Q2 a Q5, F6 e a ausência física de deadlocks (40P01) no PostgreSQL sob alta concorrência.
  */
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class DevolucaoConcorrenciaDeadlockIT {
 
     @Container

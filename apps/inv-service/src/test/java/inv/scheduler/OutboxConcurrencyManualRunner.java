@@ -45,7 +45,8 @@ import java.util.concurrent.atomic.AtomicInteger;
         "spring.datasource.password=senha",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect",
-        "logging.level.root=INFO"
+        "logging.level.root=INFO",
+        "inv.scheduling.enabled=false"
 })
 @EnabledIfEnvironmentVariable(named = "DOCKER_READY", matches = "true")
 class OutboxConcurrencyManualRunner {
