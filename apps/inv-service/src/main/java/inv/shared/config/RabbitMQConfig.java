@@ -5,14 +5,20 @@
  */
 package inv.shared.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.boot.autoconfigure.amqp.RabbitTemplateCustomizer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class RabbitMQConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(RabbitMQConfig.class);
 
     public static final String EXCHANGE_NAME = "inventory.v1.events";
     public static final String ROUTING_KEY_LOW_STOCK = "inventory.stock.low";
@@ -47,6 +53,10 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(
+            name = "inv.rabbitmq.legacy-low-stock-queue.enabled",
+            havingValue = "true",
+            matchIfMissing = false)
     public TopicExchange dlqExchangeInventory() {
         return new TopicExchange(DLQ_EXCHANGE_INVENTORY);
     }
@@ -58,6 +68,10 @@ public class RabbitMQConfig {
 
 
     @Bean
+    @ConditionalOnProperty(
+            name = "inv.rabbitmq.legacy-low-stock-queue.enabled",
+            havingValue = "true",
+            matchIfMissing = false)
     public Queue lowStockQueue() {
         return QueueBuilder.durable(QUEUE_LOW_STOCK)
                 .withArgument("x-dead-letter-exchange", DLQ_EXCHANGE_INVENTORY)
@@ -74,6 +88,10 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(
+            name = "inv.rabbitmq.legacy-low-stock-queue.enabled",
+            havingValue = "true",
+            matchIfMissing = false)
     public Queue dlqQueueLowStock() {
         return QueueBuilder.durable(DLQ_QUEUE_LOW_STOCK).build();
     }
@@ -97,6 +115,10 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(
+            name = "inv.rabbitmq.legacy-low-stock-queue.enabled",
+            havingValue = "true",
+            matchIfMissing = false)
     public Binding bindingLowStock() {
         return BindingBuilder.bind(lowStockQueue()).to(inventoryExchange()).with(ROUTING_KEY_LOW_STOCK);
     }
@@ -112,6 +134,10 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(
+            name = "inv.rabbitmq.legacy-low-stock-queue.enabled",
+            havingValue = "true",
+            matchIfMissing = false)
     public Binding dlqBindingLowStock() {
         return BindingBuilder.bind(dlqQueueLowStock()).to(dlqExchangeInventory()).with(DLQ_ROUTING_KEY_LOW_STOCK);
     }
@@ -129,5 +155,24 @@ public class RabbitMQConfig {
     @Bean
     public MessageConverter jsonMessageConverter() {
         return new Jackson2JsonMessageConverter();
+    }
+
+    @Bean
+    public RabbitTemplateCustomizer outboxReturnsCallbackCustomizer() {
+        return rabbitTemplate -> rabbitTemplate.setReturnsCallback(returned -> {
+            MessageProperties props = returned.getMessage() != null
+                    ? returned.getMessage().getMessageProperties()
+                    : null;
+            String messageId = props != null ? props.getMessageId() : null;
+            Object outboxId = props != null ? props.getHeader("x-outbox-id") : null;
+            log.warn(
+                    "Mensagem retornada pelo broker (NO_ROUTE): replyCode={}, replyText={}, exchange={}, routingKey={}, messageId={}, x-outbox-id={}",
+                    returned.getReplyCode(),
+                    returned.getReplyText(),
+                    returned.getExchange(),
+                    returned.getRoutingKey(),
+                    messageId,
+                    outboxId);
+        });
     }
 }

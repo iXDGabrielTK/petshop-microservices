@@ -10,8 +10,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.boot.autoconfigure.amqp.RabbitTemplateCustomizer;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RabbitMQConfigTest {
 
     private final RabbitMQConfig rabbitMQConfig = new RabbitMQConfig();
+    private final ApplicationContextRunner contextRunner =
+            new ApplicationContextRunner().withUserConfiguration(RabbitMQConfig.class);
 
     @Test
     @DisplayName("DEVE configurar fila durável de venda estornada com DLX e routing key de DLQ")
@@ -128,5 +133,66 @@ class RabbitMQConfigTest {
     void deveFornecerJackson2JsonMessageConverter() {
         MessageConverter converter = rabbitMQConfig.jsonMessageConverter();
         assertThat(converter).isNotNull().isInstanceOf(Jackson2JsonMessageConverter.class);
+    }
+
+    @Test
+    @DisplayName("DEVE omitir beans da fila órfã de estoque baixo quando propriedade estiver ausente (padrão false)")
+    void deveOmitirFilaOrfaDeEstoqueBaixoPorPadrao() {
+        contextRunner.run(context -> {
+            assertThat(context).hasBean("inventoryExchange");
+            assertThat(context).hasBean("pdvExchange");
+            assertThat(context).hasBean("dlqExchangePdv");
+            assertThat(context).hasBean("pagamentoConfirmadoQueue");
+            assertThat(context).hasBean("vendaEstornadaQueue");
+            assertThat(context).hasBean("jsonMessageConverter");
+            assertThat(context).hasBean("outboxReturnsCallbackCustomizer");
+
+            assertThat(context).doesNotHaveBean("lowStockQueue");
+            assertThat(context).doesNotHaveBean("dlqQueueLowStock");
+            assertThat(context).doesNotHaveBean("bindingLowStock");
+            assertThat(context).doesNotHaveBean("dlqBindingLowStock");
+            assertThat(context).doesNotHaveBean("dlqExchangeInventory");
+        });
+    }
+
+    @Test
+    @DisplayName("DEVE omitir beans da fila órfã de estoque baixo quando propriedade for explicitamente false")
+    void deveOmitirFilaOrfaDeEstoqueBaixoQuandoPropriedadeFalse() {
+        contextRunner
+                .withPropertyValues("inv.rabbitmq.legacy-low-stock-queue.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasBean("inventoryExchange");
+                    assertThat(context).doesNotHaveBean("lowStockQueue");
+                    assertThat(context).doesNotHaveBean("dlqQueueLowStock");
+                    assertThat(context).doesNotHaveBean("bindingLowStock");
+                    assertThat(context).doesNotHaveBean("dlqBindingLowStock");
+                    assertThat(context).doesNotHaveBean("dlqExchangeInventory");
+                });
+    }
+
+    @Test
+    @DisplayName("DEVE registrar beans da fila legada de estoque baixo quando propriedade for true")
+    void deveRegistrarFilaLegadaDeEstoqueBaixoQuandoPropriedadeTrue() {
+        contextRunner
+                .withPropertyValues("inv.rabbitmq.legacy-low-stock-queue.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasBean("inventoryExchange");
+                    assertThat(context).hasBean("lowStockQueue");
+                    assertThat(context).hasBean("dlqQueueLowStock");
+                    assertThat(context).hasBean("bindingLowStock");
+                    assertThat(context).hasBean("dlqBindingLowStock");
+                    assertThat(context).hasBean("dlqExchangeInventory");
+                });
+    }
+
+    @Test
+    @DisplayName("DEVE configurar ReturnsCallback no RabbitTemplate via RabbitTemplateCustomizer")
+    void deveConfigurarReturnsCallbackNoRabbitTemplate() {
+        RabbitTemplateCustomizer customizer = rabbitMQConfig.outboxReturnsCallbackCustomizer();
+        RabbitTemplate template = new RabbitTemplate();
+
+        customizer.customize(template);
+
+        assertThat(template).isNotNull();
     }
 }

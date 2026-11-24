@@ -34,7 +34,7 @@ public class Outbox {
     private String eventType;
 
     @Column(nullable = false, columnDefinition = "INT DEFAULT 1")
-    private int version;
+    private int version = 1;
 
     @Column(nullable = false)
     private LocalDateTime createdAt;

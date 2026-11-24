@@ -5,6 +5,7 @@
  */
 package inv.it;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import inv.InvServiceApplication;
 import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.infrastructure.messaging.VendaEventHandler;
@@ -56,6 +57,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -100,6 +102,7 @@ class PagamentoMensageriaIT {
     private Long pagamentoId;
     private Long produtoId;
     private String payload;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void preparar() {
@@ -126,7 +129,8 @@ class PagamentoMensageriaIT {
         enviar(payload);
         aguardarConclusao();
         enviar(payload);
-        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> verify(handler, times(2)).handlePagamentoConfirmado(payload));
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() ->
+                verify(handler, times(2)).handlePagamentoConfirmado(argThat(msg -> correspondeAoPayload(msg, payload))));
         pararEConferirFilasVazias();
         verificarContabilizacaoUnica();
     }
@@ -146,7 +150,7 @@ class PagamentoMensageriaIT {
         enviar(payload);
         aguardarConclusao();
         pararEConferirFilasVazias();
-        verify(handler, times(2)).handlePagamentoConfirmado(payload);
+        verify(handler, times(2)).handlePagamentoConfirmado(argThat(msg -> correspondeAoPayload(msg, payload)));
         assertThat(tentativas.get()).isEqualTo(2);
         verificarContabilizacaoUnica();
     }
@@ -157,7 +161,7 @@ class PagamentoMensageriaIT {
         enviar(invalido);
         verificarDlq(invalido);
         // O interceptor configurado tenta inclusive AmqpRejectAndDontRequeueException três vezes.
-        verify(handler, times(3)).handlePagamentoConfirmado(invalido);
+        verify(handler, times(3)).handlePagamentoConfirmado(argThat(msg -> correspondeAoPayload(msg, invalido)));
         verificarSemContabilizacao();
     }
 
@@ -171,8 +175,26 @@ class PagamentoMensageriaIT {
 
         enviar(payload);
         verificarDlq(payload);
-        verify(handler, times(3)).handlePagamentoConfirmado(payload);
+        verify(handler, times(3)).handlePagamentoConfirmado(argThat(msg -> correspondeAoPayload(msg, payload)));
         verificarSemContabilizacao();
+    }
+
+    private boolean correspondeAoPayload(Object recebido, String esperado) {
+        if (esperado.equals(recebido)) {
+            return true;
+        }
+        if (recebido instanceof Message msg) {
+            String corpo = new String(msg.getBody(), StandardCharsets.UTF_8);
+            if (esperado.equals(corpo)) {
+                return true;
+            }
+            try {
+                return esperado.equals(objectMapper.readValue(corpo, String.class));
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        return false;
     }
 
     private void enviar(String mensagem) {

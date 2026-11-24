@@ -5,7 +5,7 @@
  */
 package inv.checkout.infrastructure.messaging;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import common.exception.BusinessException;
 import inv.checkout.domain.model.Pagamento;
@@ -26,11 +26,13 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 
 @Slf4j
@@ -49,9 +51,9 @@ public class VendaEventHandler {
 
     @RabbitListener(queues = RabbitMQConfig.QUEUE_PAGAMENTO_CONFIRMADO)
     @Transactional
-    public void handlePagamentoConfirmado(String payload) {
+    public void handlePagamentoConfirmado(Object message) {
         try {
-            PagamentoConfirmadoEvent event = objectMapper.readValue(payload, PagamentoConfirmadoEvent.class);
+            PagamentoConfirmadoEvent event = deserializarEvento(message);
 
             Venda venda = vendaRepository.findByIdWithLock(event.vendaId())
                     .orElseThrow(() -> new BusinessException("Venda não encontrada"));
@@ -115,12 +117,51 @@ public class VendaEventHandler {
             // Condição 4: Demais estados incompatíveis com pagamento
             throw new BusinessException("Venda em status inválido para confirmação de pagamento: " + venda.getStatus());
 
-        } catch (JsonProcessingException | BusinessException e) {
+        } catch (IOException | IllegalArgumentException | BusinessException e) {
             log.error("Erro não-retentável ao processar evento de confirmação de pagamento. Mensagem enviada para DLQ.", e);
             throw new AmqpRejectAndDontRequeueException(e);
         } catch (Exception e) {
             log.error("Erro ao processar evento. Voltará para a fila.", e);
             throw new RuntimeException(e);
         }
+    }
+
+    private PagamentoConfirmadoEvent deserializarEvento(Object message) throws IOException {
+        if (message == null) {
+            throw new BusinessException("Payload de pagamento confirmado nulo.");
+        }
+
+        PagamentoConfirmadoEvent event;
+        if (message instanceof PagamentoConfirmadoEvent e) {
+            event = e;
+        } else if (message instanceof Message m) {
+            event = deserializarBytes(m.getBody());
+        } else if (message instanceof String s) {
+            event = objectMapper.readValue(s, PagamentoConfirmadoEvent.class);
+        } else if (message instanceof byte[] b) {
+            event = deserializarBytes(b);
+        } else {
+            event = objectMapper.convertValue(message, PagamentoConfirmadoEvent.class);
+        }
+
+        if (event == null || event.vendaId() == null || event.pagamentoId() == null) {
+            throw new BusinessException(
+                    "Evento de pagamento confirmado inválido: vendaId e pagamentoId são obrigatórios.");
+        }
+        return event;
+    }
+
+    private PagamentoConfirmadoEvent deserializarBytes(byte[] body) throws IOException {
+        if (body == null || body.length == 0) {
+            throw new BusinessException("Payload de pagamento confirmado vazio.");
+        }
+        JsonNode root = objectMapper.readTree(body);
+        if (root == null || root.isNull()) {
+            throw new BusinessException("Payload de pagamento confirmado nulo.");
+        }
+        if (root.isTextual()) {
+            return objectMapper.readValue(root.asText(), PagamentoConfirmadoEvent.class);
+        }
+        return objectMapper.treeToValue(root, PagamentoConfirmadoEvent.class);
     }
 }
