@@ -6,7 +6,10 @@
 package inv.shared.outbox.model;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -14,8 +17,10 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @NoArgsConstructor
-@AllArgsConstructor
 public class Outbox {
+
+    public static final String STATUS_PENDING = "PENDING";
+    public static final String STATUS_QUARANTINED = "QUARANTINED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -38,4 +43,42 @@ public class Outbox {
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "status", nullable = false, length = 20)
+    private String status = STATUS_PENDING;
+
+    @Column(name = "attempts", nullable = false)
+    private int attempts = 0;
+
+    @Column(name = "next_attempt_at")
+    private LocalDateTime nextAttemptAt;
+
+    @Column(name = "last_attempt_at")
+    private LocalDateTime lastAttemptAt;
+
+    @Column(name = "last_error_type", length = 64)
+    private String lastErrorType;
+
+    @Column(name = "last_error", columnDefinition = "TEXT")
+    private String lastError;
+
+    @Column(name = "quarantined_at")
+    private LocalDateTime quarantinedAt;
+
+    @Column(name = "replayed_at")
+    private LocalDateTime replayedAt;
+
+    @Column(name = "replay_count", nullable = false)
+    private int replayCount = 0;
+
+    public void setStatus(String status) {
+        this.status = (status == null || status.isBlank()) ? STATUS_PENDING : status;
+    }
+
+    @PrePersist
+    void garantirPadroes() {
+        if (this.status == null || this.status.isBlank()) {
+            this.status = STATUS_PENDING;
+        }
+    }
 }
