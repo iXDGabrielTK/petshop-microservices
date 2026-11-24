@@ -164,7 +164,7 @@ services:
       dockerfile: ./apps/inv-service/Dockerfile
     container_name: inv-service
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
     depends_on:
       postgres-inv:
         condition: service_healthy

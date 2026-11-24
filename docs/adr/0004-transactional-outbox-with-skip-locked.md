@@ -133,7 +133,7 @@ A semântica *at-least-once* admite múltiplas publicações da mesma linha. Com
 
 O replay reabilita uma linha em quarentena, zera as tentativas, torna a linha elegível imediatamente e atualiza `replayed_at` e `replay_count`. Exchange, rota, payload, versão e diagnóstico da falha são preservados. O sucesso do POST confirma a reativação da linha. A publicação ocorre no processamento posterior da outbox e pode repetir uma entrega já aceita pelo broker.
 
-O endpoint é acessado diretamente no `inv-service`, sem rota dedicada no `api-gateway`. O [Compose](../../docker-compose.yml) publica `8083:8083`, portanto a ausência de rota no gateway não restringe o acesso à rede interna. Em redes que alcançam a porta publicada, o endpoint fica acessível fora dos controles do gateway e depende da validação do JWT e de `ROLE_ADMIN` pelo próprio serviço.
+O endpoint é acessado diretamente no `inv-service`, sem rota dedicada no `api-gateway`. O [Compose](../../docker-compose.yml) publica `127.0.0.1:8083:8083`, portanto, no host do Compose, o acesso direto fica restrito ao loopback. Em outros ambientes de implantação, a ausência de rota no gateway não restringe por si só o acesso: onde a porta do serviço for alcançável, o endpoint fica fora dos controles do gateway e depende da validação do JWT e de `ROLE_ADMIN` pelo próprio serviço.
 
 ---
 

@@ -201,7 +201,7 @@ A publicação tem semântica **at-least-once**. Uma mensagem em quarentena depe
 
 ### B. Inspeção e replay administrativo
 
-A API pertence ao `inv-service` e exige JWT válido com autoridade `ROLE_ADMIN` no claim `roles`. Sem credencial válida retorna `401`, e sem a autoridade exigida retorna `403`. O Gateway não declara rota para `/admin/outbox/**`. O Compose publica `8083:8083`, o que permite acesso direto ao serviço, inclusive à API administrativa, conforme o alcance de rede do host.
+A API pertence ao `inv-service` e exige JWT válido com autoridade `ROLE_ADMIN` no claim `roles`. Sem credencial válida retorna `401`, e sem a autoridade exigida retorna `403`. O Gateway não declara rota para `/admin/outbox/**`. O Compose publica `127.0.0.1:8083:8083`, restringindo o acesso direto ao serviço, inclusive à API administrativa, ao loopback do host. Os demais serviços da rede do Compose continuam alcançando `inv-service:8083`. Em outros ambientes de implantação, o alcance dessa porta deve ser restrito de forma equivalente.
 
 | Operação | Resultado |
 | :--- | :--- |

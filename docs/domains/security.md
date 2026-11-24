@@ -135,7 +135,7 @@ O payload do Access Token carrega os dados de identidade para que os Resource Se
 | `GET /admin/outbox/{id}` | HTTP 200 com os dados do registro, incluindo o payload, ou HTTP 404 quando o ID não existe. |
 | `POST /admin/outbox/{id}/replay` | HTTP 200 ao recolocar um registro em quarentena no estado `PENDING` para publicação assíncrona, HTTP 404 para ID inexistente ou HTTP 409 para registro fora da quarentena. |
 
-O `api-gateway` não tem rota para `/admin/outbox/**`. As operações chegam diretamente ao `inv-service`, cuja porta o Compose publica no host como `8083:8083`. Onde essa porta estiver acessível na rede, o JWT e a exigência de `ROLE_ADMIN` continuam sendo aplicados pelo próprio serviço, sem passar pelo controle de tráfego do Gateway.
+O `api-gateway` não tem rota para `/admin/outbox/**`. As operações chegam diretamente ao `inv-service`, cuja porta o Compose publica no host somente em loopback (`127.0.0.1:8083:8083`). Em outros ambientes, onde essa porta estiver acessível na rede, o JWT e a exigência de `ROLE_ADMIN` continuam sendo aplicados pelo próprio serviço, sem passar pelo controle de tráfego do Gateway.
 
 ### C. Cobertura da Cadeia Real de Filtros (`springSecurityFilterChain`)
 
