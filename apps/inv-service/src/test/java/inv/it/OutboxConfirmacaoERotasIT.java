@@ -24,6 +24,7 @@ import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
 import inv.shared.outbox.scheduler.OutboxProcessor;
 import inv.shared.outbox.scheduler.OutboxScheduler;
+import inv.shared.outbox.scheduler.OutboxStepResult;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -58,6 +59,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -68,7 +70,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 @Testcontainers
-@SpringBootTest(classes = InvServiceApplication.class)
+@SpringBootTest(classes = InvServiceApplication.class, properties = "inv.scheduling.enabled=false")
 class OutboxConfirmacaoERotasIT {
 
     public record EstoqueBaixoEspelho(
@@ -114,6 +116,9 @@ class OutboxConfirmacaoERotasIT {
 
     @Autowired
     private OutboxProcessor outboxProcessor;
+
+    @Autowired
+    private Clock clock;
 
     @Autowired
     private RabbitTemplate rabbitTemplate;
@@ -197,9 +202,12 @@ class OutboxConfirmacaoERotasIT {
         Outbox salvo = outboxRepository.saveAndFlush(outbox);
         Long outboxId = salvo.getId();
 
-        Boolean primeiraTentativa = executarProcessNextObservable();
-        assertThat(primeiraTentativa).isNotEqualTo(Boolean.TRUE);
-        assertThat(outboxRepository.findById(outboxId)).isPresent();
+        OutboxStepResult primeiraTentativa = outboxProcessor.processNextStep();
+        assertThat(primeiraTentativa).isEqualTo(OutboxStepResult.FAILED_CONTINUE);
+        Outbox aposFalha = outboxRepository.findById(outboxId).orElseThrow();
+        assertThat(aposFalha.getStatus()).isEqualTo(Outbox.STATUS_PENDING);
+        assertThat(aposFalha.getAttempts()).isEqualTo(1);
+        assertThat(aposFalha.getNextAttemptAt()).isNotNull();
         assertThat(lockLiberadoParaProximaTransacao(outboxId)).isTrue();
 
         String filaTemporaria = "e1.temp.queue." + UUID.randomUUID();
@@ -210,6 +218,7 @@ class OutboxConfirmacaoERotasIT {
                     .to(new TopicExchange(RabbitMQConfig.PDV_EXCHANGE))
                     .with(routingKeySemFila));
 
+            jdbcTemplate.update("UPDATE outbox SET next_attempt_at = NULL WHERE id = ?", outboxId);
             boolean segundaTentativa = outboxProcessor.processNext();
             assertThat(segundaTentativa).isTrue();
             assertThat(outboxRepository.findById(outboxId)).isEmpty();
@@ -242,10 +251,13 @@ class OutboxConfirmacaoERotasIT {
         outbox.setCreatedAt(LocalDateTime.now());
         Long outboxId = outboxRepository.saveAndFlush(outbox).getId();
 
-        Boolean resultado = executarProcessNextObservable();
+        OutboxStepResult resultado = outboxProcessor.processNextStep();
 
-        assertThat(resultado).isNotEqualTo(Boolean.TRUE);
-        assertThat(outboxRepository.findById(outboxId)).isPresent();
+        assertThat(resultado).isEqualTo(OutboxStepResult.FAILED_CONTINUE);
+        Outbox aposFalha = outboxRepository.findById(outboxId).orElseThrow();
+        assertThat(aposFalha.getStatus()).isEqualTo(Outbox.STATUS_PENDING);
+        assertThat(aposFalha.getAttempts()).isEqualTo(1);
+        assertThat(aposFalha.getNextAttemptAt()).isNotNull();
         assertThat(lockLiberadoParaProximaTransacao(outboxId)).isTrue();
     }
 
@@ -344,9 +356,11 @@ class OutboxConfirmacaoERotasIT {
         assertThat(outbox.getVersion()).isEqualTo(1);
 
         // Sem a fila do mail-service e com fila órfã desabilitada, broker deve sinalizar NO_ROUTE e preservar outbox
-        Boolean tentativaSemConsumidor = executarProcessNextObservable();
-        assertThat(tentativaSemConsumidor).isNotEqualTo(Boolean.TRUE);
-        assertThat(outboxRepository.findById(outboxId)).isPresent();
+        OutboxStepResult tentativaSemConsumidor = outboxProcessor.processNextStep();
+        assertThat(tentativaSemConsumidor).isEqualTo(OutboxStepResult.FAILED_CONTINUE);
+        Outbox aposFalha = outboxRepository.findById(outboxId).orElseThrow();
+        assertThat(aposFalha.getStatus()).isEqualTo(Outbox.STATUS_PENDING);
+        assertThat(aposFalha.getAttempts()).isEqualTo(1);
 
         try {
             Queue mailQueue = new Queue(filaMailService, true, false, false);
@@ -356,6 +370,7 @@ class OutboxConfirmacaoERotasIT {
                     .to(new TopicExchange(RabbitMQConfig.EXCHANGE_NAME))
                     .with(RabbitMQConfig.ROUTING_KEY_LOW_STOCK));
 
+            jdbcTemplate.update("UPDATE outbox SET next_attempt_at = NULL WHERE id = ?", outboxId);
             boolean processado = outboxProcessor.processNext();
             assertThat(processado).isTrue();
             assertThat(outboxRepository.findById(outboxId)).isEmpty();
@@ -385,18 +400,11 @@ class OutboxConfirmacaoERotasIT {
         }
     }
 
-    private Boolean executarProcessNextObservable() {
-        try {
-            return outboxProcessor.processNext();
-        } catch (RuntimeException ignored) {
-            return null;
-        }
-    }
-
     private boolean lockLiberadoParaProximaTransacao(Long esperadoId) {
         TransactionTemplate requiresNew = new TransactionTemplate(transactionManager);
         requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        Optional<Outbox> encontrado = requiresNew.execute(status -> outboxRepository.findNextMessageToProcess());
+        LocalDateTime janelaFutura = LocalDateTime.now(clock).plusMinutes(5);
+        Optional<Outbox> encontrado = requiresNew.execute(status -> outboxRepository.findNextMessageToProcess(janelaFutura));
         return encontrado != null && encontrado.isPresent() && esperadoId.equals(encontrado.get().getId());
     }
 }
