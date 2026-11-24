@@ -3,7 +3,7 @@
 * **Status:** Aceito
 * **Data:** 2026-08-28
 * **Autores:** Equipe de Engenharia
-* **Bounded Contexts Afetados:** Shared, Checkout, Inventory
+* **Bounded Contexts Afetados:** Shared, Checkout, Finance, Inventory
 * **Serviços:** `apps/inv-service`
 
 ---
@@ -43,82 +43,118 @@ O problema clássico ao integrar Banco de Dados Relacional e Message Broker é o
 
 ## 4. Decisão Tomada e Justificativa (Decision Outcome)
 
-Decidimos adotar a **Opção 3: Transactional Outbox com `SKIP LOCKED`**.
+Decidimos adotar a **Opção 3: Transactional Outbox com `SKIP LOCKED`**, endurecida com confirmação obrigatória de publicação/roteamento AMQP, backoff e quarentena de falhas, agendamento ativo com isolamento de testes e observabilidade operacional.
 
-### A. Tabela Outbox no Schema ([`V1__Schema_Inicial.sql`](../../apps/inv-service/src/main/resources/db/migration/V1__Schema_Inicial.sql#L47-L56))
+### A. Tabela Outbox e Migrations Aditivas ([`V1__Schema_Inicial.sql`](../../apps/inv-service/src/main/resources/db/migration/V1__Schema_Inicial.sql#L47-L56), [`V10__outbox_resiliencia_entrega.sql`](../../apps/inv-service/src/main/resources/db/migration/V10__outbox_resiliencia_entrega.sql), [`V11__indice_outbox_elegibilidade.sql`](../../apps/inv-service/src/main/resources/db/migration/V11__indice_outbox_elegibilidade.sql))
+* A tabela base criada na `V1` (`id`, `exchange`, `routing_key`, `payload`, `event_type`, `version`, `created_at`) recebeu as colunas aditivas da `V10`:
+  * `status VARCHAR(20) NOT NULL DEFAULT 'PENDING'` com `CHECK (status IN ('PENDING', 'QUARANTINED'))`
+  * `attempts INTEGER NOT NULL DEFAULT 0`, `next_attempt_at TIMESTAMP`, `last_attempt_at TIMESTAMP`
+  * `last_error_type VARCHAR(64)`, `last_error TEXT`, `quarantined_at TIMESTAMP`
+  * `replayed_at TIMESTAMP`, `replay_count INTEGER NOT NULL DEFAULT 0`
+* A migration [`V11__indice_outbox_elegibilidade.sql`](../../apps/inv-service/src/main/resources/db/migration/V11__indice_outbox_elegibilidade.sql) (executada fora de bloco transacional via [`V11__indice_outbox_elegibilidade.sql.conf`](../../apps/inv-service/src/main/resources/db/migration/V11__indice_outbox_elegibilidade.sql.conf) com `executeInTransaction=false`) cria os índices parciais `idx_outbox_pending_created_at` (`ON outbox (created_at ASC, id ASC) INCLUDE (next_attempt_at) WHERE status = 'PENDING'`) e `idx_outbox_quarantined_at` (`ON outbox (quarantined_at DESC, id DESC) WHERE status = 'QUARANTINED'`).
+* A entidade [`Outbox`](../../apps/inv-service/src/main/java/inv/shared/outbox/model/Outbox.java) inicializa `version = 1` e `status = "PENDING"`, enquanto o processamento e o replay preservam compatibilidade com registros legados `version = 0` e `version = 1`.
+
+### B. Busca Sem Bloqueio Concorrente ([`OutboxRepository.java`](../../apps/inv-service/src/main/java/inv/shared/outbox/repository/OutboxRepository.java))
 ```sql
-CREATE TABLE outbox (
-    id BIGSERIAL PRIMARY KEY,
-    exchange VARCHAR(255) NOT NULL,
-    routing_key VARCHAR(255) NOT NULL,
-    payload TEXT NOT NULL,
-    event_type VARCHAR(255) NOT NULL,
-    version INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMP NOT NULL
-);
+SELECT * FROM outbox
+ WHERE status = 'PENDING'
+   AND (next_attempt_at IS NULL OR next_attempt_at <= CAST(:agora AS TIMESTAMP))
+ ORDER BY created_at ASC, id ASC
+ LIMIT 1
+ FOR UPDATE SKIP LOCKED;
 ```
+* **O que faz o `SKIP LOCKED`:** Se a Instância A travar o registro elegível mais antigo, a Instância B que executar a query no mesmo instante **pula** o registro bloqueado e trava o próximo item elegível, sem espera e sem contenção.
+* O instante `:agora` e os timestamps de `created_at`, backoff, quarentena e replay utilizam o bean `Clock` configurado em [`DateTimeConfig`](../../apps/inv-service/src/main/java/inv/shared/config/DateTimeConfig.java) (`America/Sao_Paulo`), injetado também nos três produtores `BEFORE_COMMIT` ([`PagamentoListener`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/PagamentoListener.java), [`VendaEstornadaOutboxListener`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEstornadaOutboxListener.java) e [`RabbitMQProducerListener`](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/messaging/RabbitMQProducerListener.java)).
 
-### B. Busca Sem Bloqueio Concorrente ([`OutboxRepository.java`](../../apps/inv-service/src/main/java/inv/shared/outbox/repository/OutboxRepository.java#L13-L20))
-```sql
-SELECT * FROM outbox 
-ORDER BY created_at ASC 
-LIMIT 1 
-FOR UPDATE SKIP LOCKED;
-```
-* **O que faz o `SKIP LOCKED`:** Se a Instância A travar o registro de ID 10 para processamento, a Instância B que executar a query no mesmo milissegundo irá **pular** o ID 10 automaticamente e travar o ID 11, sem esperar e sem gerar contenção.
+### C. Confirmação AMQP, Roteamento e Publicação Sem `__TypeId__` ([`OutboxDeliveryStep`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxDeliveryStep.java), [`RabbitMQConfig`](../../apps/inv-service/src/main/java/inv/shared/config/RabbitMQConfig.java))
+* `application.properties` habilita `spring.rabbitmq.publisher-confirm-type=correlated`, `spring.rabbitmq.publisher-returns=true` e `spring.rabbitmq.template.mandatory=true`, com prazo máximo de confirmação `outbox.publisher.confirm-timeout-ms=3000`.
+* `OutboxDeliveryStep` valida `version`, `eventType` e JSON contra a classe de evento e publica `Message` JSON UTF-8 persistente com `messageId = outbox-<id>`, `correlationId` único por tentativa (`outbox-<id>-<uuid>`), headers `x-outbox-id` e `x-event-version` e **sem header `__TypeId__`**, desacoplando contratos entre serviços e aceitando `version = 0` e `1`.
+* A linha só é excluída (`delete` + `flush` em `Propagation.REQUIRES_NEW`) após `Confirm(ack=true)` e `CorrelationData.getReturned() == null`. Em `NO_ROUTE`, `NACK`, fechamento `404 NOT_FOUND`, timeout ou falha de conexão, a transação sofre rollback e o registro permanece preservado.
+* A fila órfã `inventory.v1.stock-low.notify` (e sua DLX/DLQ) fica condicionada por `inv.rabbitmq.legacy-low-stock-queue.enabled=false`, evitando que mensagens de estoque baixo sejam absorvidas sem consumidor ativo quando o `mail-service` não declarou `inventory.v1.low-stock.send-email`.
 
-### C. Processador Transacional Isolado ([`OutboxProcessor.java`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxProcessor.java#L32-L67))
-* Executa em transação própria com `Propagation.REQUIRES_NEW`.
-* Deserializa o payload baseado em `eventType`.
-* Envia via `RabbitTemplate.convertAndSend()`.
-* Executa `outboxRepository.delete(message)` e comita a transação.
-* Em caso de falha de rede com o RabbitMQ, a transação sofre rollback e o evento permanece salvo para novas tentativas.
+### D. Agendamento, Isolamento de Falhas, Replay Admin e Observabilidade
+* **Scheduling isolável:** [`SchedulingConfig`](../../apps/inv-service/src/main/java/inv/shared/config/SchedulingConfig.java) ativa `@EnableScheduling` sob `inv.scheduling.enabled=true` (falso nos testes `@SpringBootTest` que não exercitam agendamento) e [`OutboxScheduler`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxScheduler.java) obedece a `outbox.scheduler.enabled=true`.
+* **Separação pós-rollback:** [`OutboxProcessor`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxProcessor.java) (não transacional) coordena `OutboxDeliveryStep` (`REQUIRES_NEW`) e aciona [`OutboxFailureRecorder`](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxFailureRecorder.java) (`REQUIRES_NEW` via `UPDATE` condicional `WHERE id = :id AND status = 'PENDING'`) quando ocorre rollback:
+  * *Poison pills* (`ClassNotFoundException`, JSON inválido, versão negativa): movidos imediatamente para `QUARANTINED` e o ciclo segue (`FAILED_CONTINUE`).
+  * Falhas de roteamento (`NO_ROUTE`, `404 NOT_FOUND`): agendados com backoff exponencial via `Clock` até `outbox.retry.max-attempts` (quando passam a `QUARANTINED`) e o ciclo segue (`FAILED_CONTINUE`).
+  * Broker indisponível (`AmqpConnectException`, timeout, `basic.nack` genérico) ou erro de persistência pós-confirmação AMQP: agendados com backoff transitório e pausam o ciclo (`FAILED_PAUSE`), nunca indo direto para quarentena em erro pós-confirm.
+* **Inspeção e replay administrativo:** [`OutboxAdminController`](../../apps/inv-service/src/main/java/inv/shared/outbox/web/OutboxAdminController.java) e [`OutboxReplayService`](../../apps/inv-service/src/main/java/inv/shared/outbox/service/OutboxReplayService.java) expõem `/admin/outbox/quarantined` (teto `size <= 100`), `/admin/outbox/{id}` e `POST /admin/outbox/{id}/replay` atômico (`WHERE id = :id AND status = 'QUARANTINED'`, `409`/`404` em RFC 7807), restritos a `ROLE_ADMIN` na rede interna (`server.port=8083`, sem rota no `api-gateway`).
+* **Métricas e log operacional ([`OutboxMetrics`](../../apps/inv-service/src/main/java/inv/shared/outbox/metrics/OutboxMetrics.java)):** expõe via Micrometer/Prometheus os gauges `outbox.oldest.eligible.age.seconds` (`GREATEST(0, ...)` via `Clock`, tolerante a erro transitório de banco sem degradar `/actuator/prometheus`) e `outbox.quarantined.count`, os counters `outbox.quarantined.total` (tag `error_type`), `outbox.replay.requested.total` e `outbox.replay.completed.total`, além do log estruturado `event=outbox_replay_completed` ao concluir entrega com `replay_count > 0`.
 
 ---
 
-## 5. Prós e Contras das Opções Analisadas
+## 5. Prós, Contras e Semântica de Entrega por Consumidor
 
 | Padrão | Garantia de Entrega | Suporte Multi-Instância | Sobrecarga de Infra | Complexidade |
 | :--- | :--- | :--- | :--- | :--- |
 | **Envio Síncrono Direto** | Fraca (Risco de perda) | N/A | Zero | Baixíssima |
 | **CDC (Debezium + Kafka)** | Altíssima | Altíssima | Altíssima (Kafka Connect) | Muito Alta |
-| **Outbox com SKIP LOCKED** | **Altíssima (Pelo menos 1x)** | **Nativa (Zero locks)** | **Mínima (Apenas Postgres)** | **Média** |
+| **Outbox com SKIP LOCKED** | **Altíssima (*at-least-once* — pelo menos 1x)** | **Nativa (Zero locks)** | **Mínima (Apenas Postgres)** | **Média** |
+
+### Garantia Real de Entrega (*At-Least-Once*) e Limites por Consumidor
+O publicador da outbox garante entrega **pelo menos uma vez (*at-least-once*)** após `Confirm(ack=true)` sem `NO_ROUTE`. Como a exclusão da linha na tabela `outbox` ocorre em transação local do PostgreSQL **após** a confirmação do broker (não existe 2PC entre PostgreSQL e RabbitMQ), uma falha de persistência ou queda nessa janela pós-confirmação / pré-commit mantém o registro `PENDING` e gera **reentrega segura** na tentativa seguinte. Por isso, a garantia ponta a ponta depende da semântica de cada consumidor:
+
+| Consumidor | Rota / Fila | Garantia Efetiva | Mecanismo e Limite Conhecido |
+| :--- | :--- | :--- | :--- |
+| **Checkout** ([`VendaEventHandler`](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEventHandler.java)) | `pdv.venda.pagamento.confirmado.queue` (+ `.dlq`) | **Idempotente** | Lock pessimista `findByIdWithLock` em `Venda` e verificação de flags `contabilizado`, `excedente` e status `ESTORNADO` antes de mutar ou publicar eventos. |
+| **Finance** ([`VendaEstornadaEventListener`](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaEstornadaEventListener.java)) | `pdv.venda.estornada.queue` (+ `.dlq`) | **Efeito contábil exatamente único** | Chave determinística `uuidReferenciaEstorno` (`UUID.nameUUIDFromBytes("ESTORNO:" + vendaId)`) aliada a `INSERT ... ON CONFLICT DO NOTHING RETURNING id`, garantindo 1 único lançamento `ESTORNO` e atualização única de projeções mesmo sob reentrega real. |
+| **Mail** ([`EmailConsumer`](../../apps/mail-service/src/main/java/mail/service/EmailConsumer.java)) | `inventory.v1.low-stock.send-email` (sem DLQ/retry) | **Melhor esforço deduplicado (sujeito ao limite físico SMTP)** | Deduplicação via `processed_events(eventId)`, porém sem 2PC com SMTP: `existsByEventId` (sem lock) executa antes de `mailSender.send` e `processedEventRepository.save` ocorre depois, permitindo reenvio em falha pós-SMTP ou entrega concorrente. Além disso, [`mail.config.RabbitMQConfig`](../../apps/mail-service/src/main/java/mail/config/RabbitMQConfig.java) declara `inventory.v1.low-stock.send-email` sem DLX/DLQ e sem política de retry. |
 
 ---
 
-## 6. Estratégia de Validação & Testes de Carga/Concorrência (Verification & Testing)
+## 6. Estratégia de Validação & Testes (Verification & Testing)
 
 > [!IMPORTANT]
-> Este teste está implementado na suíte de testes de integração e é executado contra contêineres reais do PostgreSQL 15 e RabbitMQ 3 via Testcontainers.
-> Classe de teste oficial (CI): [`OutboxConcorrenciaIntegrationTest`](../../apps/inv-service/src/test/java/inv/shared/outbox/OutboxConcorrenciaIntegrationTest.java)
-> Runner manual local (dev): [`OutboxConcurrencyManualRunner`](../../apps/inv-service/src/test/java/inv/scheduler/OutboxConcurrencyManualRunner.java)
-> Comando de execução:
+> As suítes de integração da outbox executam contra contêineres reais do PostgreSQL 15 e RabbitMQ 3 via Testcontainers (Failsafe).
+> Comando portável de execução da regressão concorrente e prova E2E de recuperação:
 > ```bash
-> mvn test -pl apps/inv-service -Dtest=OutboxConcorrenciaIntegrationTest
+> mvn verify -pl apps/inv-service -am '-Dtest=!*' "-Dsurefire.failIfNoSpecifiedTests=false" "-Dit.test=OutboxConcorrenciaIntegrationTest,OutboxEstornoRecuperacaoIT" "-Dfailsafe.failIfNoSpecifiedTests=false"
 > ```
 
-### Cenário de Teste Automatizado: *Stress Test de Workers Paralelos de Outbox*
-* **Classe:** `inv.shared.outbox.OutboxConcorrenciaIntegrationTest`
-* **Configuração:** Testcontainers com PostgreSQL 15 (`postgres:15-alpine`) e RabbitMQ 3 (`rabbitmq:3-management`).
-* **Massa de Teste:**
-  * Inserção prévia de **100 mensagens** na tabela `outbox`.
-  * Simulação de **10 instâncias/threads simultâneas de workers** executando `OutboxProcessor.processNext()` em loop contínuo até que a fila esteja vazia.
-* **Mecanismo de Sincronismo:**
-  * `ExecutorService` com thread pool de 10 threads.
-  * Start gate via `CountDownLatch(1)` e end gate via `CountDownLatch(10)`.
-  * Fila temporária de teste dedicada no RabbitMQ para validação de entrega real sem mock.
+### A. Stress Test de Workers Paralelos ([`OutboxConcorrenciaIntegrationTest`](../../apps/inv-service/src/test/java/inv/shared/outbox/OutboxConcorrenciaIntegrationTest.java))
+* **Configuração:** `inv.scheduling.enabled=false`, Testcontainers PostgreSQL 15 (`postgres:15-alpine`) e RabbitMQ 3 (`rabbitmq:3-management`).
+* **Massa e Sincronismo:** **100 mensagens** (`eventType = "java.util.HashMap"`, `version = 1`) na tabela `outbox` e **10 workers concorrentes** (`ExecutorService` + `CountDownLatch(1)` / `CountDownLatch(10)`) chamando `OutboxProcessor.processNext()` em `adr0004.outbox.queue`.
+* **Critérios Validados:** exatamente **100 mensagens únicas** entregues no RabbitMQ, **0 linhas** restantes na `outbox` e zero deadlocks (`PSQLException`) ou exceções.
 
-### Critérios de Aceite Obrigatórios (Asserts Validados)
-1. **Contagem de Mensagens Publicadas:** Exatamente **100 mensagens** chegam à fila do RabbitMQ.
-2. **Zero Duplicidades de Despacho:** Nenhuma mensagem com o mesmo payload/id de outbox é postada mais de uma vez (100 IDs distintos coletados).
-3. **Drenagem Completa da Tabela:** A tabela `outbox` termina com **exatamente 0 linhas**.
-4. **Ausência de Conflitos Transacionais:** Zero ocorrências de `PSQLException: deadlock detected` ou `CannotAcquireLockException`.
+### B. Prova Ponta a Ponta de Recuperação e Operação ([`OutboxEstornoRecuperacaoIT`](../../apps/inv-service/src/test/java/inv/it/OutboxEstornoRecuperacaoIT.java))
+* **Ciclo Completo Real:** `POST /vendas/{id}/cancelar` → `VendaEstornadaOutboxListener` (`BEFORE_COMMIT`) → `outbox` → `OutboxProcessor` → RabbitMQ real → `VendaEstornadaEventListener` → `lancamentos_financeiros` + projeções `financial_projection_venda` e `financial_projection_diaria`.
+* **Janela Pós-Confirm / Pré-Commit:** falha determinística em `outboxRepository.delete(...)` após `Confirm(ack=true)` comprova que a 1ª entrega real chega ao consumidor enquanto o rollback mantém a linha `PENDING` (`attempts = 1`), e a 2ª entrega via broker real resulta em exatamente **1 lançamento `ESTORNO` (`-100.00`)** e projeções conciliadas (em contraste com falha pré-envio, que produz `0` entregas antes da retomada).
+* **Observabilidade Operacional:** comprova `/actuator/prometheus` (`outbox_oldest_eligible_age_seconds` não negativo e resiliente a erro transitório de banco, `outbox_quarantined_count`, `outbox_quarantined_total`, `outbox_replay_requested_total`, `outbox_replay_completed_total`), listagem/replay em `/admin/outbox/**` (`404` pós-drenagem) e log `event=outbox_replay_completed`.
+
+### C. Suítes Complementares de Confirmação, Resiliência e Agendamento
+* [`OutboxConfirmacaoERotasIT`](../../apps/inv-service/src/test/java/inv/it/OutboxConfirmacaoERotasIT.java): `NO_ROUTE`, `404 NOT_FOUND`, compatibilidade `version = 0`/`1` sem `__TypeId__` e isolamento da fila órfã de estoque.
+* [`OutboxResilienciaEReplayIT`](../../apps/inv-service/src/test/java/inv/it/OutboxResilienciaEReplayIT.java): quarentena sem bloqueio de cabeça de fila (*head-of-line*), backoff determinístico com `Clock`, replay concorrente (`200`/`409`), segurança `ROLE_ADMIN` e índices `V11`.
+* [`OutboxSchedulingRetomadaIT`](../../apps/inv-service/src/test/java/inv/it/OutboxSchedulingRetomadaIT.java): `@EnableScheduling` ativo, drenagem automática e retomada de linhas vencidas após reinício do contexto.
+* Utilitário manual local (dev): [`OutboxConcurrencyManualRunner`](../../apps/inv-service/src/test/java/inv/scheduler/OutboxConcurrencyManualRunner.java).
 
 ---
 
 ## 7. Referências e Links Relevantes
 
-* [OutboxProcessor](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxProcessor.java)
-* [OutboxRepository](../../apps/inv-service/src/main/java/inv/shared/outbox/repository/OutboxRepository.java)
-* [OutboxScheduler](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxScheduler.java)
-* [Microservices.io - Transactional Outbox Pattern](https://microservices.io/patterns/data/transactional-outbox.html)
+* **Núcleo da Outbox (`inv.shared.outbox`):**
+  * [Outbox](../../apps/inv-service/src/main/java/inv/shared/outbox/model/Outbox.java)
+  * [OutboxRepository](../../apps/inv-service/src/main/java/inv/shared/outbox/repository/OutboxRepository.java)
+  * [OutboxProcessor](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxProcessor.java)
+  * [OutboxDeliveryStep](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxDeliveryStep.java)
+  * [OutboxFailureRecorder](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxFailureRecorder.java)
+  * [OutboxScheduler](../../apps/inv-service/src/main/java/inv/shared/outbox/scheduler/OutboxScheduler.java)
+  * [OutboxReplayService](../../apps/inv-service/src/main/java/inv/shared/outbox/service/OutboxReplayService.java)
+  * [OutboxAdminController](../../apps/inv-service/src/main/java/inv/shared/outbox/web/OutboxAdminController.java)
+  * [OutboxMetrics](../../apps/inv-service/src/main/java/inv/shared/outbox/metrics/OutboxMetrics.java)
+* **Configuração e Migrations:**
+  * [RabbitMQConfig (`inv-service`)](../../apps/inv-service/src/main/java/inv/shared/config/RabbitMQConfig.java)
+  * [SchedulingConfig](../../apps/inv-service/src/main/java/inv/shared/config/SchedulingConfig.java)
+  * [DateTimeConfig](../../apps/inv-service/src/main/java/inv/shared/config/DateTimeConfig.java)
+  * [V1__Schema_Inicial.sql](../../apps/inv-service/src/main/resources/db/migration/V1__Schema_Inicial.sql)
+  * [V10__outbox_resiliencia_entrega.sql](../../apps/inv-service/src/main/resources/db/migration/V10__outbox_resiliencia_entrega.sql)
+  * [V11__indice_outbox_elegibilidade.sql](../../apps/inv-service/src/main/resources/db/migration/V11__indice_outbox_elegibilidade.sql)
+* **Produtores, Consumidores e Documentação:**
+  * [PagamentoListener](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/PagamentoListener.java)
+  * [VendaEstornadaOutboxListener](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEstornadaOutboxListener.java)
+  * [RabbitMQProducerListener](../../apps/inv-service/src/main/java/inv/inventory/infrastructure/messaging/RabbitMQProducerListener.java)
+  * [VendaEventHandler](../../apps/inv-service/src/main/java/inv/checkout/infrastructure/messaging/VendaEventHandler.java)
+  * [VendaEstornadaEventListener](../../apps/inv-service/src/main/java/inv/finance/infrastructure/messaging/VendaEstornadaEventListener.java)
+  * [EmailConsumer (`mail-service`)](../../apps/mail-service/src/main/java/mail/service/EmailConsumer.java)
+  * [RabbitMQConfig (`mail-service`)](../../apps/mail-service/src/main/java/mail/config/RabbitMQConfig.java)
+  * [DEBT-ARCH-006 — Entrega e Recuperação de Eventos da Outbox](../debt/DEBT-ARCH-006/README.md)
+  * [Microservices.io - Transactional Outbox Pattern](https://microservices.io/patterns/data/transactional-outbox.html)
