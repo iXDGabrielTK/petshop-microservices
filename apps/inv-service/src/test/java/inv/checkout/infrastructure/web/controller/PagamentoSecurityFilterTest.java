@@ -14,6 +14,8 @@ import com.nimbusds.jwt.SignedJWT;
 import common.exception.GlobalExceptionHandler;
 import common.security.RsaKeyUtils;
 import inv.checkout.domain.model.StatusPagamento;
+import inv.checkout.infrastructure.web.WebhookHmacFilter;
+import inv.checkout.infrastructure.web.WebhookSecurityConfig;
 import inv.checkout.infrastructure.web.dto.ConfirmarPagamentoWebhookRequest;
 import inv.checkout.infrastructure.web.dto.CriarIntencaoPagamentoRequest;
 import inv.checkout.usecase.PagamentoService;
@@ -41,9 +43,11 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.interfaces.RSAPrivateKey;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
@@ -69,6 +73,7 @@ class PagamentoSecurityFilterTest {
     @EnableWebMvc
     @EnableWebSecurity
     @Import({
+            WebhookSecurityConfig.class,
             SecurityConfig.class,
             PagamentoController.class,
             GlobalExceptionHandler.class
@@ -77,11 +82,14 @@ class PagamentoSecurityFilterTest {
     }
 
     private static final KeyPair KEY_PAIR = RsaKeyUtils.generateKeyPair();
+    private static final String WEBHOOK_HMAC_SECRET = "segredo-webhook-pagamento-teste-onda-2";
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         String pubKey = Base64.getEncoder().encodeToString(KEY_PAIR.getPublic().getEncoded());
         registry.add("jwt.public.key", () -> pubKey);
+        registry.add("pagamento.webhook.hmac-secret", () -> WEBHOOK_HMAC_SECRET);
+        registry.add("pagamento.webhook.max-skew-seconds", () -> "300");
     }
 
     @Autowired
@@ -136,12 +144,12 @@ class PagamentoSecurityFilterTest {
     }
 
     @Nested
-    @DisplayName("1. Endpoints Públicos (Webhooks)")
-    class EndpointsPublicosTests {
+    @DisplayName("1. Webhooks Protegidos por HMAC-SHA256 + Anti-Replay")
+    class EndpointsWebhookHmacTests {
 
         @Test
-        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve passar com sucesso SEM token de autorização")
-        void devePermitirWebhookConfirmarSemToken() throws Exception {
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando faltar header HMAC")
+        void deveRejeitarWebhookConfirmarSemHeadersHmac() throws Exception {
             ConfirmarPagamentoWebhookRequest request = new ConfirmarPagamentoWebhookRequest(
                     new BigDecimal("150.50"),
                     "NSU-123456"
@@ -150,15 +158,112 @@ class PagamentoSecurityFilterTest {
             mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando assinatura HMAC for inválida")
+        void deveRejeitarWebhookConfirmarComAssinaturaInvalida() throws Exception {
+            ConfirmarPagamentoWebhookRequest request = new ConfirmarPagamentoWebhookRequest(
+                    new BigDecimal("150.50"),
+                    "NSU-123456"
+            );
+            byte[] body = objectMapper.writeValueAsBytes(request);
+            long timestamp = Instant.now().getEpochSecond();
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestamp))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, "sha256=" + "a".repeat(64))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando body for adulterado após assinatura")
+        void deveRejeitarWebhookConfirmarComBodyAdulterado() throws Exception {
+            byte[] bodyAssinado = objectMapper.writeValueAsBytes(
+                    new ConfirmarPagamentoWebhookRequest(new BigDecimal("150.50"), "NSU-123456"));
+            byte[] bodyAdulterado = objectMapper.writeValueAsBytes(
+                    new ConfirmarPagamentoWebhookRequest(new BigDecimal("0.01"), "NSU-123456"));
+            long timestamp = Instant.now().getEpochSecond();
+            String signature = WebhookHmacFilter.assinar(
+                    WEBHOOK_HMAC_SECRET, timestamp, "/pagamentos/webhook/confirmar/42", bodyAssinado);
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestamp))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, signature)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(bodyAdulterado))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando timestamp estiver expirado")
+        void deveRejeitarWebhookConfirmarComTimestampExpirado() throws Exception {
+            byte[] body = objectMapper.writeValueAsBytes(
+                    new ConfirmarPagamentoWebhookRequest(new BigDecimal("150.50"), "NSU-123456"));
+            long timestampExpirado = Instant.now().minusSeconds(600).getEpochSecond();
+            String signature = WebhookHmacFilter.assinar(
+                    WEBHOOK_HMAC_SECRET, timestampExpirado, "/pagamentos/webhook/confirmar/42", body);
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestampExpirado))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, signature)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve passar com sucesso com assinatura HMAC válida e preservar @RequestBody")
+        void devePermitirWebhookConfirmarComHmacValido() throws Exception {
+            ConfirmarPagamentoWebhookRequest request = new ConfirmarPagamentoWebhookRequest(
+                    new BigDecimal("150.50"),
+                    "NSU-123456"
+            );
+            byte[] body = objectMapper.writeValueAsString(request).getBytes(StandardCharsets.UTF_8);
+            long timestamp = Instant.now().getEpochSecond();
+            String signature = WebhookHmacFilter.assinar(
+                    WEBHOOK_HMAC_SECRET, timestamp, "/pagamentos/webhook/confirmar/42", body);
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestamp))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, signature)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
                     .andExpect(status().isOk());
 
             verify(pagamentoService).confirmarPagamentoWebhook(42L, new BigDecimal("150.50"), "NSU-123456");
         }
 
         @Test
-        @DisplayName("POST /pagamentos/webhook/falhar/{id} deve passar com sucesso SEM token de autorização")
-        void devePermitirWebhookFalharSemToken() throws Exception {
+        @DisplayName("POST /pagamentos/webhook/falhar/{id} deve retornar 401 sem header HMAC")
+        void deveRejeitarWebhookFalharSemHeadersHmac() throws Exception {
             mockMvc.perform(post("/pagamentos/webhook/falhar/42"))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/falhar/{id} deve passar com sucesso com assinatura HMAC válida e body vazio")
+        void devePermitirWebhookFalharComHmacValido() throws Exception {
+            long timestamp = Instant.now().getEpochSecond();
+            String signature = WebhookHmacFilter.assinar(
+                    WEBHOOK_HMAC_SECRET, timestamp, "/pagamentos/webhook/falhar/42", new byte[0]);
+
+            mockMvc.perform(post("/pagamentos/webhook/falhar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestamp))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, signature))
                     .andExpect(status().isOk());
 
             verify(pagamentoService).falharPagamentoWebhook(42L);
