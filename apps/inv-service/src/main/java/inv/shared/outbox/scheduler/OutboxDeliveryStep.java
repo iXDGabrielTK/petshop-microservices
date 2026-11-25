@@ -77,7 +77,13 @@ class OutboxDeliveryStep {
         if (contributors != null) {
             for (OutboxEventTypeContributor contributor : contributors) {
                 if (contributor != null && contributor.eventTypes() != null) {
-                    map.putAll(contributor.eventTypes());
+                    for (Map.Entry<String, Class<?>> entry : contributor.eventTypes().entrySet()) {
+                        Class<?> anterior = map.putIfAbsent(entry.getKey(), entry.getValue());
+                        if (anterior != null && !anterior.equals(entry.getValue())) {
+                            throw new IllegalStateException(
+                                    "Conflito na allowlist da outbox para eventType: " + entry.getKey());
+                        }
+                    }
                 }
             }
         }

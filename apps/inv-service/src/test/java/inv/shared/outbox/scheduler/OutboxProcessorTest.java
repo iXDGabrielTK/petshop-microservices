@@ -11,6 +11,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import inv.shared.config.DateTimeConfig;
 import inv.shared.event.VendaEstornadaEvent;
+import inv.shared.outbox.OutboxEventTypeContributor;
 import inv.shared.outbox.metrics.OutboxMetrics;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
@@ -40,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -121,6 +123,23 @@ class OutboxProcessorTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 5, 5000L, 1000L))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("DEVE compilar allowlist de múltiplos contributors e rejeitar conflito de classes para mesmo eventType")
+    void deveCompilarAllowlistERejeitarConflitoEntreContributors() {
+        OutboxEventTypeContributor c1 = () -> Map.of(ALLOWED_EVENT_TYPE, VendaEstornadaEvent.class);
+        OutboxEventTypeContributor c2 = () -> Map.of("evento.custom", String.class);
+
+        OutboxDeliveryStep compilado = new OutboxDeliveryStep(
+                outboxRepository, rabbitTemplate, objectMapper, List.of(c1, c2), 3000L);
+        assertThat(compilado).isNotNull();
+
+        OutboxEventTypeContributor conflitante = () -> Map.of(ALLOWED_EVENT_TYPE, String.class);
+        assertThatThrownBy(() -> new OutboxDeliveryStep(
+                outboxRepository, rabbitTemplate, objectMapper, List.of(c1, conflitante), 3000L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(ALLOWED_EVENT_TYPE);
     }
 
     @ParameterizedTest
