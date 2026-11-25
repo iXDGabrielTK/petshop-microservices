@@ -8,6 +8,7 @@ package common.exception;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.*;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -20,36 +21,26 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
-import java.net.URI;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+
+import static common.exception.ErrorProblemDetails.buildProblemDetail;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    private ProblemDetail buildProblemDetail(HttpStatus status, String detail, String title, String typeSuffix) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
-        problem.setTitle(title);
-        if (typeSuffix != null) {
-            problem.setType(URI.create("https://petshop.com/errors/" + typeSuffix));
-        }
-        problem.setProperty("timestamp", Instant.now());
-        return problem;
-    }
-
     // 1. Erro Genérico (500)
     @ExceptionHandler(Exception.class)
     ProblemDetail handleGeneralException(Exception ex) {
-        log.error("Erro interno não tratado capturado pelo GlobalHandler: {}", ex.getMessage());
-        return buildProblemDetail(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                ex.getMessage(),
-                "Erro Interno do Servidor",
-                "internal-server-error"
-        );
+        log.error("Erro interno não tratado capturado pelo GlobalHandler", ex);
+        return ErrorProblemDetails.internalServerError();
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ProblemDetail handleDataIntegrityViolation() {
+        return ErrorProblemDetails.dataIntegrityViolation();
     }
 
     // 2. Recurso não encontrado (404)

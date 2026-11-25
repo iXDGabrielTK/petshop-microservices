@@ -5,9 +5,16 @@
  */
 package common.exception;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.ThrowableProxy;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -15,9 +22,12 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
@@ -25,6 +35,9 @@ import org.springframework.web.context.request.WebRequest;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DisplayName("GlobalExceptionHandler — Testes Unitários de Tratamento Global de Erros")
 class GlobalExceptionHandlerTest {
@@ -32,16 +45,44 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
     @Test
-    @DisplayName("handleGeneralException deve mapear exceção genérica para HTTP 500 com ProblemDetail")
+    @DisplayName("handleGeneralException deve mapear exceção genérica para HTTP 500 com detalhe sanitizado")
     void deveTratarExcecaoGenerica() {
-        Exception ex = new RuntimeException("Erro inesperado");
-        ProblemDetail problem = handler.handleGeneralException(ex);
+        Exception ex = new RuntimeException("Falha no nó de processamento interno");
+        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        ListAppender<ILoggingEvent> events = new ListAppender<>();
+        events.start();
+        logger.addAppender(events);
 
-        assertThat(problem.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR.value());
-        assertThat(problem.getTitle()).isEqualTo("Erro Interno do Servidor");
-        assertThat(problem.getDetail()).isEqualTo("Erro inesperado");
-        assertThat(problem.getType().toString()).contains("internal-server-error");
-        assertThat(problem.getProperties()).containsKey("timestamp");
+        try {
+            ProblemDetail problem = handler.handleGeneralException(ex);
+
+            assertThat(problem.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR.value());
+            assertThat(problem.getTitle()).isEqualTo("Erro Interno do Servidor");
+            assertThat(problem.getDetail()).isEqualTo("Ocorreu um erro interno inesperado.");
+            assertThat(problem.getType().toString()).contains("internal-server-error");
+            assertThat(problem.getProperties()).containsKey("timestamp");
+            assertThat(events.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getThrowableProxy()).isInstanceOfSatisfying(ThrowableProxy.class,
+                        proxy -> assertThat(proxy.getThrowable()).isSameAs(ex));
+            });
+        } finally {
+            logger.detachAppender(events);
+            events.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("Violação de integridade deve retornar HTTP 409 com detalhe sanitizado")
+    void deveTratarViolacaoDeIntegridadeSemExporDetalhesDoBanco() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(new FailingController())
+                .setControllerAdvice(handler)
+                .build();
+
+        mvc.perform(get("/conflito-de-integridade"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("Os dados informados conflitam com os registros existentes."))
+                .andExpect(jsonPath("$.type").value("https://petshop.com/errors/data-integrity-violation"));
     }
 
     @Test
@@ -201,4 +242,13 @@ class GlobalExceptionHandlerTest {
     }
 
     private void dummyMethod(String param) {}
+
+    @RestController
+    static class FailingController {
+
+        @GetMapping("/conflito-de-integridade")
+        void falharComViolacaoDeIntegridade() {
+            throw new DataIntegrityViolationException("INSERT INTO usuarios violou a constraint usuarios_email_key");
+        }
+    }
 }
