@@ -22,6 +22,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class CookieClearingLogoutHandler implements LogoutHandler {
 
+    private static final String BEARER_PREFIX = "Bearer ";
+
     private final OAuth2AuthorizationService authorizationService;
 
     @Value("${auth.cookie.secure}")
@@ -55,20 +57,36 @@ public class CookieClearingLogoutHandler implements LogoutHandler {
     }
 
     private void revogarRefreshTokenSePresente(HttpServletRequest request) {
-        if (request == null || request.getCookies() == null || authorizationService == null) {
+        if (request == null || authorizationService == null) {
             return;
         }
-        for (Cookie cookie : request.getCookies()) {
-            if ("refresh_token".equals(cookie.getName())) {
-                String refreshToken = cookie.getValue();
-                if (refreshToken != null && !refreshToken.isBlank()) {
+        boolean revogado = false;
+        if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if ("refresh_token".equals(cookie.getName())) {
+                    String refreshToken = cookie.getValue();
+                    if (refreshToken != null && !refreshToken.isBlank()) {
+                        OAuth2Authorization authorization = authorizationService.findByToken(
+                                refreshToken, OAuth2TokenType.REFRESH_TOKEN);
+                        if (authorization != null) {
+                            authorizationService.remove(authorization);
+                            revogado = true;
+                        }
+                    }
+                }
+            }
+        }
+        if (!revogado) {
+            String authorizationHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+            if (authorizationHeader != null && authorizationHeader.startsWith(BEARER_PREFIX)) {
+                String accessToken = authorizationHeader.substring(BEARER_PREFIX.length()).trim();
+                if (!accessToken.isBlank()) {
                     OAuth2Authorization authorization = authorizationService.findByToken(
-                            refreshToken, OAuth2TokenType.REFRESH_TOKEN);
+                            accessToken, OAuth2TokenType.ACCESS_TOKEN);
                     if (authorization != null) {
                         authorizationService.remove(authorization);
                     }
                 }
-                return;
             }
         }
     }

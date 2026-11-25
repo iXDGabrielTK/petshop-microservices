@@ -104,4 +104,40 @@ class CookieClearingLogoutHandlerTest {
         verify(authorizationService, never()).remove(org.mockito.ArgumentMatchers.any());
         assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).contains("Max-Age=0");
     }
+
+    @Test
+    @DisplayName("Deve iterar sobre múltiplos cookies refresh_token e revogar o cookie válido mesmo após cookie em branco")
+    void deveRevogarQuandoHouverMultiplosCookiesRefreshToken() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setCookies(
+                new Cookie("refresh_token", "   "),
+                new Cookie("refresh_token", "rt-valido-segundo")
+        );
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        OAuth2Authorization authorization = mock(OAuth2Authorization.class);
+        when(authorizationService.findByToken("rt-valido-segundo", OAuth2TokenType.REFRESH_TOKEN))
+                .thenReturn(authorization);
+
+        logoutHandler.logout(request, response, null);
+
+        verify(authorizationService).findByToken("rt-valido-segundo", OAuth2TokenType.REFRESH_TOKEN);
+        verify(authorizationService).remove(authorization);
+    }
+
+    @Test
+    @DisplayName("Deve revogar autorização via Authorization Bearer quando cookie refresh_token não estiver presente")
+    void deveRevogarAutorizacaoViaBearerQuandoCookieAusente() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer at-ativo-999");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        OAuth2Authorization authorization = mock(OAuth2Authorization.class);
+        when(authorizationService.findByToken("at-ativo-999", OAuth2TokenType.ACCESS_TOKEN))
+                .thenReturn(authorization);
+
+        logoutHandler.logout(request, response, null);
+
+        verify(authorizationService).findByToken("at-ativo-999", OAuth2TokenType.ACCESS_TOKEN);
+        verify(authorizationService).remove(authorization);
+        assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).contains("Max-Age=0");
+    }
 }
