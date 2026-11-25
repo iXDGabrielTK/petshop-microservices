@@ -11,6 +11,7 @@ import mail.model.ProcessedEvent;
 import mail.repository.ProcessedEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
@@ -44,6 +45,7 @@ public class EmailConsumer {
     @Transactional
     @RabbitListener(queues = mail.config.RabbitMQConfig.QUEUE_NAME)
     public void receivePasswordResetMessage(PasswordResetMessage message) {
+        validarResetSenha(message);
         if (isDuplicated(message.getEventId())) return;
 
         logger.info("Recebido pedido v{} de reset para: {}", message.getVersion(), mascararEmail(message.getEmail()));
@@ -73,6 +75,7 @@ public class EmailConsumer {
     @Transactional
     @RabbitListener(queues = mail.config.RabbitMQConfig.LOW_STOCK_QUEUE)
     public void receiveLowStockMessage(EstoqueBaixoMessage message) {
+        validarEstoqueBaixo(message);
         if (isDuplicated(message.eventId())) return;
 
         logger.info("Recebido alerta v{} de estoque: {}", message.version(), sanitizar(message.nomeProduto()));
@@ -96,6 +99,49 @@ public class EmailConsumer {
             logger.error("Falha ao processar v{}: ", message.version(), e);
             throw e;
         }
+    }
+
+    private static void validarResetSenha(PasswordResetMessage message) {
+        if (message == null) {
+            throw new AmqpRejectAndDontRequeueException("Mensagem de reset de senha nula");
+        }
+        if (message.getEventId() == null || message.getEventId().isBlank()) {
+            throw new AmqpRejectAndDontRequeueException("eventId obrigatório na mensagem de reset de senha");
+        }
+        if (!emailValido(message.getEmail())) {
+            throw new AmqpRejectAndDontRequeueException("Destinatário inválido na mensagem de reset de senha");
+        }
+        if (message.getToken() == null || message.getToken().isBlank() || CONTROLES.matcher(message.getToken()).find()) {
+            throw new AmqpRejectAndDontRequeueException("Token inválido na mensagem de reset de senha");
+        }
+    }
+
+    private static void validarEstoqueBaixo(EstoqueBaixoMessage message) {
+        if (message == null) {
+            throw new AmqpRejectAndDontRequeueException("Mensagem de estoque baixo nula");
+        }
+        if (message.eventId() == null || message.eventId().isBlank()) {
+            throw new AmqpRejectAndDontRequeueException("eventId obrigatório na mensagem de estoque baixo");
+        }
+        if (message.nomeProduto() == null || message.nomeProduto().isBlank()) {
+            throw new AmqpRejectAndDontRequeueException("nomeProduto obrigatório na mensagem de estoque baixo");
+        }
+        if (message.estoqueAtual() == null) {
+            throw new AmqpRejectAndDontRequeueException("estoqueAtual obrigatório na mensagem de estoque baixo");
+        }
+    }
+
+    private static boolean emailValido(String email) {
+        if (email == null || email.isBlank() || CONTROLES.matcher(email).find()) {
+            return false;
+        }
+        for (int i = 0; i < email.length(); i++) {
+            if (Character.isWhitespace(email.charAt(i))) {
+                return false;
+            }
+        }
+        int arroba = email.indexOf('@');
+        return arroba > 0 && arroba == email.lastIndexOf('@') && arroba < email.length() - 1;
     }
 
     // --- MÉTODOS AUXILIARES ---

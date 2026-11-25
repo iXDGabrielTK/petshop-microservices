@@ -123,8 +123,8 @@ class OutboxConcorrenciaIntegrationTest {
         List<Outbox> outboxEntries = new ArrayList<>();
         for (int i = 0; i < totalMensagens; i++) {
             Outbox outbox = new Outbox();
-            outbox.setEventType("java.util.HashMap");
-            outbox.setPayload("{\"msgIndex\":" + i + ",\"uuid\":\"" + java.util.UUID.randomUUID() + "\"}");
+            outbox.setEventType(inv.shared.event.VendaEstornadaEvent.class.getName());
+            outbox.setPayload("{\"vendaId\":" + i + ",\"uuidReferenciaEstorno\":\"" + java.util.UUID.randomUUID() + "\",\"valorEstorno\":10.00}");
             outbox.setExchange(TEST_EXCHANGE);
             outbox.setRoutingKey(TEST_ROUTING_KEY);
             outbox.setVersion(1);
@@ -187,10 +187,11 @@ class OutboxConcorrenciaIntegrationTest {
             String jsonBody = new String(message.getBody(), StandardCharsets.UTF_8);
             @SuppressWarnings("unchecked")
             Map<String, Object> map = objectMapper.readValue(jsonBody, Map.class);
-            Integer msgIndex = (Integer) map.get("msgIndex");
-            assertNotNull(msgIndex, "O campo msgIndex não deve ser nulo");
+            Number vendaIdNum = (Number) map.get("vendaId");
+            assertNotNull(vendaIdNum, "O campo vendaId não deve ser nulo");
+            Integer msgIndex = vendaIdNum.intValue();
             boolean inserido = indicesRecebidos.add(msgIndex);
-            assertTrue(inserido, "Mensagem duplicada detectada no RabbitMQ para msgIndex: " + msgIndex);
+            assertTrue(inserido, "Mensagem duplicada detectada no RabbitMQ para vendaId: " + msgIndex);
         }
 
         // 4. Confirmação de fila vazia (sem mensagens extras ou órfãs)

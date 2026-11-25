@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +53,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -496,7 +498,8 @@ class DevolucaoConcorrenciaDeadlockIT {
                 pool.submit(() -> {
                     try {
                         barreira.await(10, TimeUnit.SECONDS);
-                        vendaEventHandler.handlePagamentoConfirmado(payload);
+                        vendaEventHandler.handlePagamentoConfirmado(
+                                new Message(payload.getBytes(StandardCharsets.UTF_8)));
                         sucessos.incrementAndGet();
                     } catch (Throwable t) {
                         erros.add(t);
@@ -560,7 +563,9 @@ class DevolucaoConcorrenciaDeadlockIT {
                 vendaId, MetodoPagamento.DINHEIRO, valorTotal, uuidPag);
         pagamentoService.confirmarPagamentoWebhook(pagId, valorTotal, "NSU-IT-" + vendaId);
 
-        vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pagId + "}");
+        vendaEventHandler.handlePagamentoConfirmado(
+                new Message(("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pagId + "}")
+                        .getBytes(StandardCharsets.UTF_8)));
 
         Venda concluida = vendaRepository.findById(vendaId).orElseThrow();
         assertThat(concluida.getStatus()).isEqualTo(StatusVenda.CONCLUIDA);

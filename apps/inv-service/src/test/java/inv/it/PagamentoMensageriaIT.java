@@ -179,22 +179,19 @@ class PagamentoMensageriaIT {
         verificarSemContabilizacao();
     }
 
-    private boolean correspondeAoPayload(Object recebido, String esperado) {
-        if (esperado.equals(recebido)) {
+    private boolean correspondeAoPayload(Message msg, String esperado) {
+        if (msg == null) {
+            return false;
+        }
+        String corpo = new String(msg.getBody(), StandardCharsets.UTF_8);
+        if (esperado.equals(corpo)) {
             return true;
         }
-        if (recebido instanceof Message msg) {
-            String corpo = new String(msg.getBody(), StandardCharsets.UTF_8);
-            if (esperado.equals(corpo)) {
-                return true;
-            }
-            try {
-                return esperado.equals(objectMapper.readValue(corpo, String.class));
-            } catch (Exception ignored) {
-                return false;
-            }
+        try {
+            return esperado.equals(objectMapper.readValue(corpo, String.class));
+        } catch (Exception ignored) {
+            return false;
         }
-        return false;
     }
 
     private void enviar(String mensagem) {

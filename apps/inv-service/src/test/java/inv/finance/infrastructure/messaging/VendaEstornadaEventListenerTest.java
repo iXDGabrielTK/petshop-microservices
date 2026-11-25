@@ -15,17 +15,18 @@ import inv.shared.event.VendaEstornadaEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.context.ApplicationEventPublisher;
-import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -65,7 +66,8 @@ class VendaEstornadaEventListenerTest {
             int limite = cortaParSurrogado ? 255 : 256;
             String trecho = prefixo + "x".repeat(limite - prefixo.length());
             String payload = trecho + "🐾fim-do-payload";
-            assertThatThrownBy(() -> listener.handleVendaEstornada(payload))
+            Message message = new Message(payload.getBytes(StandardCharsets.UTF_8));
+            assertThatThrownBy(() -> listener.handleVendaEstornada(message))
                     .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                     .hasNoCause()
                     .hasMessageNotContaining("inicio");
@@ -89,7 +91,7 @@ class VendaEstornadaEventListenerTest {
 
     @Test
     @DisplayName("DEVE inserir lançamento a débito/estorno e publicar LancamentoRegistradoEvent quando referência for inédita")
-    void deveInserirLancamentoEstornoEPublicarEventoQuandoReferenciaInedita() {
+    void deveInserirLancamentoEstornoEPublicarEventoQuandoReferenciaInedita() throws Exception {
         Long vendaId = 15L;
         UUID uuidRef = UUID.randomUUID();
         BigDecimal valorEstorno = new BigDecimal("100.00");
@@ -100,7 +102,7 @@ class VendaEstornadaEventListenerTest {
         when(lancamentoRepository.inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo))
                 .thenReturn(Optional.of(99L));
 
-        listener.handleVendaEstornada(event);
+        listener.handleVendaEstornada(msg(event));
 
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo);
@@ -113,7 +115,6 @@ class VendaEstornadaEventListenerTest {
         assertThat(publicado.valorAssinado()).isEqualByComparingTo(valorEstornoNegativo);
         assertThat(publicado.tipo()).isEqualTo(TipoLancamento.ESTORNO);
 
-        // Pendência de projeção persistida na transação do ledger, antes da publicação do evento
         InOrder ordem = inOrder(registroPendencia, eventPublisher);
         ordem.verify(registroPendencia).registrarNaTransacaoDoLedger(publicado);
         ordem.verify(eventPublisher).publishEvent(publicado);
@@ -121,7 +122,7 @@ class VendaEstornadaEventListenerTest {
 
     @Test
     @DisplayName("DEVE garantir valor assinado negativo mesmo quando valorEstorno no evento já for negativo")
-    void deveGarantirValorAssinadoNegativoMesmoSeValorInformadoForNegativo() {
+    void deveGarantirValorAssinadoNegativoMesmoSeValorInformadoForNegativo() throws Exception {
         Long vendaId = 20L;
         UUID uuidRef = UUID.randomUUID();
         BigDecimal valorNegativo = new BigDecimal("-50.25");
@@ -132,7 +133,7 @@ class VendaEstornadaEventListenerTest {
         when(lancamentoRepository.inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEsperado))
                 .thenReturn(Optional.of(101L));
 
-        listener.handleVendaEstornada(event);
+        listener.handleVendaEstornada(msg(event));
 
         verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEsperado);
 
@@ -143,7 +144,7 @@ class VendaEstornadaEventListenerTest {
 
     @Test
     @DisplayName("DEVE ignorar processamento (no-op idempotente) quando existsByReferencia retornar true")
-    void deveIgnorarProcessamentoQuandoReferenciaJaExistirPreviamente() {
+    void deveIgnorarProcessamentoQuandoReferenciaJaExistirPreviamente() throws Exception {
         Long vendaId = 15L;
         UUID uuidRef = UUID.randomUUID();
         BigDecimal valorEstorno = new BigDecimal("100.00");
@@ -151,7 +152,7 @@ class VendaEstornadaEventListenerTest {
 
         when(lancamentoRepository.existsByReferencia(uuidRef)).thenReturn(true);
 
-        listener.handleVendaEstornada(event);
+        listener.handleVendaEstornada(msg(event));
 
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository, never()).inserirIdempotente(any(), any(), any(), any());
@@ -161,7 +162,7 @@ class VendaEstornadaEventListenerTest {
 
     @Test
     @DisplayName("DEVE não publicar evento quando inserção concorrente sofrer ON CONFLICT (retorno Optional vazio)")
-    void deveNaoPublicarEventoQuandoInsercaoConcorrenteRetornarVazio() {
+    void deveNaoPublicarEventoQuandoInsercaoConcorrenteRetornarVazio() throws Exception {
         Long vendaId = 15L;
         UUID uuidRef = UUID.randomUUID();
         BigDecimal valorEstorno = new BigDecimal("100.00");
@@ -172,7 +173,7 @@ class VendaEstornadaEventListenerTest {
         when(lancamentoRepository.inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo))
                 .thenReturn(Optional.empty());
 
-        listener.handleVendaEstornada(event);
+        listener.handleVendaEstornada(msg(event));
 
         verify(lancamentoRepository).existsByReferencia(uuidRef);
         verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo);
@@ -181,77 +182,18 @@ class VendaEstornadaEventListenerTest {
     }
 
     @Test
-    @DisplayName("DEVE desserializar payload JSON em String e processar estorno com sucesso")
-    void deveDesserializarPayloadJsonEmStringEProcessarEstorno() throws Exception {
-        Long vendaId = 30L;
-        UUID uuidRef = UUID.randomUUID();
-        BigDecimal valorEstorno = new BigDecimal("85.50");
-        BigDecimal valorEstornoNegativo = new BigDecimal("-85.50");
-        VendaEstornadaEvent event = new VendaEstornadaEvent(vendaId, uuidRef, valorEstorno);
-        String json = objectMapper.writeValueAsString(event);
-
-        when(lancamentoRepository.existsByReferencia(uuidRef)).thenReturn(false);
-        when(lancamentoRepository.inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo))
-                .thenReturn(Optional.of(202L));
-
-        listener.handleVendaEstornada(json);
-
-        verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo);
-        verify(eventPublisher).publishEvent(any(LancamentoRegistradoEvent.class));
-    }
-
-    @Test
-    @DisplayName("DEVE lançar AmqpRejectAndDontRequeueException quando payload JSON for malformado")
-    void deveLancarAmqpRejectAndDontRequeueExceptionQuandoPayloadJsonForMalformado() {
-        String jsonInvalido = "{vendaId: nao-fechou-aspas";
-
-        assertThatThrownBy(() -> listener.handleVendaEstornada(jsonInvalido))
-                .isInstanceOf(AmqpRejectAndDontRequeueException.class);
-
-        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
-    }
-
-    @Test
-    @DisplayName("DEVE desserializar payload byte[] e processar estorno com sucesso")
-    void deveDesserializarPayloadBytesEProcessarEstorno() throws Exception {
-        Long vendaId = 40L;
-        UUID uuidRef = UUID.randomUUID();
-        BigDecimal valorEstorno = new BigDecimal("45.00");
-        BigDecimal valorEstornoNegativo = new BigDecimal("-45.00");
-        VendaEstornadaEvent event = new VendaEstornadaEvent(vendaId, uuidRef, valorEstorno);
-        byte[] bytes = objectMapper.writeValueAsBytes(event);
-
-        when(lancamentoRepository.existsByReferencia(uuidRef)).thenReturn(false);
-        when(lancamentoRepository.inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo))
-                .thenReturn(Optional.of(303L));
-
-        listener.handleVendaEstornada(bytes);
-
-        verify(lancamentoRepository).inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo);
-        verify(eventPublisher).publishEvent(any(LancamentoRegistradoEvent.class));
-    }
-
-    @Test
-    @DisplayName("DEVE lançar AmqpRejectAndDontRequeueException quando payload byte[] for inválido")
-    void deveLancarAmqpRejectAndDontRequeueExceptionQuandoPayloadBytesForInvalido() {
-        byte[] bytesInvalidos = "dados-corrompidos".getBytes(StandardCharsets.UTF_8);
-
-        assertThatThrownBy(() -> listener.handleVendaEstornada(bytesInvalidos))
-                .isInstanceOf(AmqpRejectAndDontRequeueException.class);
-
-        verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
-    }
-
-    @Test
-    @DisplayName("DEVE desserializar org.springframework.amqp.core.Message e processar estorno com sucesso")
-    void deveDesserializarSpringAmqpMessageEProcessarEstorno() throws Exception {
+    @DisplayName("DEVE desserializar org.springframework.amqp.core.Message ignorando __TypeId__ arbitrário")
+    void deveDesserializarSpringAmqpMessageIgnorandoTypeId() throws Exception {
         Long vendaId = 50L;
         UUID uuidRef = UUID.randomUUID();
         BigDecimal valorEstorno = new BigDecimal("75.00");
         BigDecimal valorEstornoNegativo = new BigDecimal("-75.00");
         VendaEstornadaEvent event = new VendaEstornadaEvent(vendaId, uuidRef, valorEstorno);
         byte[] bytes = objectMapper.writeValueAsBytes(event);
-        Message amqpMessage = new Message(bytes);
+        MessageProperties props = new MessageProperties();
+        props.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        props.setHeader("__TypeId__", "java.lang.ProcessBuilder");
+        Message amqpMessage = new Message(bytes, props);
 
         when(lancamentoRepository.existsByReferencia(uuidRef)).thenReturn(false);
         when(lancamentoRepository.inserirIdempotente(vendaId, uuidRef, TipoLancamento.ESTORNO.name(), valorEstornoNegativo))
@@ -264,11 +206,14 @@ class VendaEstornadaEventListenerTest {
     }
 
     @Test
-    @DisplayName("DEVE lançar AmqpRejectAndDontRequeueException quando org.springframework.amqp.core.Message contiver payload corrompido")
+    @DisplayName("DEVE lançar AmqpRejectAndDontRequeueException quando org.springframework.amqp.core.Message contiver payload corrompido ou vazio")
     void deveLancarAmqpRejectAndDontRequeueExceptionQuandoSpringAmqpMessageForInvalida() {
         Message amqpMessage = new Message("invalido".getBytes(StandardCharsets.UTF_8));
-
         assertThatThrownBy(() -> listener.handleVendaEstornada(amqpMessage))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class);
+
+        Message emptyMessage = new Message(new byte[0]);
+        assertThatThrownBy(() -> listener.handleVendaEstornada(emptyMessage))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class);
 
         verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
@@ -276,12 +221,16 @@ class VendaEstornadaEventListenerTest {
 
     @Test
     @DisplayName("DEVE ignorar com segurança (no-op) quando mensagem ou campos obrigatórios forem nulos")
-    void deveIgnorarQuandoMensagemOuCamposObrigatoriosForemNulos() {
+    void deveIgnorarQuandoMensagemOuCamposObrigatoriosForemNulos() throws Exception {
         listener.handleVendaEstornada(null);
-        listener.handleVendaEstornada(new VendaEstornadaEvent(null, UUID.randomUUID(), new BigDecimal("10.00")));
-        listener.handleVendaEstornada(new VendaEstornadaEvent(10L, null, new BigDecimal("10.00")));
-        listener.handleVendaEstornada(new VendaEstornadaEvent(10L, UUID.randomUUID(), null));
+        listener.handleVendaEstornada(msg(new VendaEstornadaEvent(null, UUID.randomUUID(), new BigDecimal("10.00"))));
+        listener.handleVendaEstornada(msg(new VendaEstornadaEvent(10L, null, new BigDecimal("10.00"))));
+        listener.handleVendaEstornada(msg(new VendaEstornadaEvent(10L, UUID.randomUUID(), null)));
 
         verifyNoInteractions(lancamentoRepository, eventPublisher, registroPendencia);
+    }
+
+    private Message msg(VendaEstornadaEvent event) throws Exception {
+        return new Message(objectMapper.writeValueAsBytes(event));
     }
 }

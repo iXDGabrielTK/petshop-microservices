@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import inv.finance.infrastructure.messaging.LancamentoRegistradoEvent;
 import inv.finance.infrastructure.messaging.VendaPagaEventListener;
 import inv.shared.event.VendaPagaEvent;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -171,7 +172,8 @@ class VendaEventHandlerIT {
                 {"vendaId":%d,"pagamentoId":%d}
                 """.formatted(venda.getId(), pagamentoId);
 
-        assertThatThrownBy(() -> vendaEventHandler.handlePagamentoConfirmado(payload))
+        assertThatThrownBy(() -> vendaEventHandler.handlePagamentoConfirmado(
+                new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
                 .isInstanceOf(RuntimeException.class)
                 .hasCauseInstanceOf(BusinessException.class)
                 .rootCause()
@@ -227,7 +229,8 @@ class VendaEventHandlerIT {
 
         // Ação / Gatilho: Invocar vendaEventHandler.handlePagamentoConfirmado(payload)
         // Asserção: Executa sem lançar DataIntegrityViolationException ou UnexpectedRollbackException
-        vendaEventHandler.handlePagamentoConfirmado(payload);
+        vendaEventHandler.handlePagamentoConfirmado(
+                new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         // Asserção: Transação conclui com sucesso
         // 1. Venda transiciona para CONCLUIDA, valor_pago atualizado

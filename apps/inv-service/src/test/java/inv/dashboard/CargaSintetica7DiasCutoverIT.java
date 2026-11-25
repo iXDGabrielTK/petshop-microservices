@@ -42,6 +42,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -284,9 +285,9 @@ class CargaSintetica7DiasCutoverIT {
         pag4.confirmar(new BigDecimal("100.00"), "NSU-CASH-TROCO");
         pag4 = pagamentoRepository.save(pag4);
 
-        vendaEventHandler.handlePagamentoConfirmado(objectMapper.writeValueAsString(
+        vendaEventHandler.handlePagamentoConfirmado(new Message(objectMapper.writeValueAsString(
                 new PagamentoConfirmadoEvent(v4.getId(), pag4.getId())
-        ));
+        ).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         atualizarHorarioVenda(v4.getId(), d3.atTime(11, 20));
         // Ajusta data do lançamento gerado pelo listener para d3
         jdbcTemplate.update("UPDATE lancamentos_financeiros SET data_hora = ? WHERE venda_id = ?",

@@ -7,6 +7,7 @@ package inv.shared.outbox.scheduler;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import inv.shared.outbox.OutboxEventTypeContributor;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
 import org.springframework.amqp.AmqpConnectException;
@@ -18,6 +19,7 @@ import org.springframework.amqp.core.MessagePropertiesBuilder;
 import org.springframework.amqp.core.ReturnedMessage;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -25,7 +27,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -38,20 +43,45 @@ class OutboxDeliveryStep {
     private final OutboxRepository outboxRepository;
     private final RabbitTemplate rabbitTemplate;
     private final ObjectMapper objectMapper;
+    private final Map<String, Class<?>> allowedEventTypes;
     private final long confirmTimeoutMs;
+
+    @Autowired
+    OutboxDeliveryStep(
+            OutboxRepository outboxRepository,
+            RabbitTemplate rabbitTemplate,
+            ObjectMapper objectMapper,
+            List<OutboxEventTypeContributor> contributors,
+            @Value("${outbox.publisher.confirm-timeout-ms:3000}") long confirmTimeoutMs) {
+        this(outboxRepository, rabbitTemplate, objectMapper, confirmTimeoutMs, compilarAllowlist(contributors));
+    }
 
     OutboxDeliveryStep(
             OutboxRepository outboxRepository,
             RabbitTemplate rabbitTemplate,
             ObjectMapper objectMapper,
-            @Value("${outbox.publisher.confirm-timeout-ms:3000}") long confirmTimeoutMs) {
+            long confirmTimeoutMs,
+            Map<String, Class<?>> allowedEventTypes) {
         if (confirmTimeoutMs <= 0) {
             throw new IllegalArgumentException("outbox.publisher.confirm-timeout-ms deve ser maior que zero.");
         }
         this.outboxRepository = outboxRepository;
         this.rabbitTemplate = rabbitTemplate;
         this.objectMapper = objectMapper;
+        this.allowedEventTypes = allowedEventTypes == null ? Map.of() : Map.copyOf(allowedEventTypes);
         this.confirmTimeoutMs = confirmTimeoutMs;
+    }
+
+    private static Map<String, Class<?>> compilarAllowlist(List<OutboxEventTypeContributor> contributors) {
+        Map<String, Class<?>> map = new HashMap<>();
+        if (contributors != null) {
+            for (OutboxEventTypeContributor contributor : contributors) {
+                if (contributor != null && contributor.eventTypes() != null) {
+                    map.putAll(contributor.eventTypes());
+                }
+            }
+        }
+        return Map.copyOf(map);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -116,23 +146,13 @@ class OutboxDeliveryStep {
                     "Payload nulo na outbox ID " + message.getId());
         }
 
-        Class<?> clazz;
-        try {
-            clazz = Class.forName(message.getEventType());
-        } catch (ClassNotFoundException e) {
+        Class<?> clazz = allowedEventTypes.get(message.getEventType());
+        if (clazz == null) {
             throw new OutboxPublishException(
                     snapshot,
                     OutboxFailureCategory.POISON_PILL,
-                    "CLASS_NOT_FOUND",
-                    "EventType não encontrado (" + message.getEventType() + "): " + e.getMessage(),
-                    e);
-        } catch (LinkageError e) {
-            throw new OutboxPublishException(
-                    snapshot,
-                    OutboxFailureCategory.POISON_PILL,
-                    "CLASS_LOAD_ERROR",
-                    "Erro ao carregar eventType (" + message.getEventType() + "): " + e.getMessage(),
-                    e);
+                    "UNKNOWN_EVENT_TYPE",
+                    "EventType não permitido na outbox (" + message.getEventType() + ")");
         }
 
         try {

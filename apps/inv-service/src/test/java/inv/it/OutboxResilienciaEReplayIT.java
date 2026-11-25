@@ -184,8 +184,8 @@ class OutboxResilienciaEReplayIT {
         Outbox valido = criarOutbox(
                 RabbitMQConfig.PDV_EXCHANGE,
                 rkValida,
-                "java.util.HashMap",
-                "{\"id\":\"valido\"}",
+                inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName(),
+                "{\"vendaId\":1,\"pagamentoId\":1}",
                 1,
                 agora.minusMinutes(1));
         Long poisonId = outboxRepository.saveAndFlush(poison).getId();
@@ -203,7 +203,7 @@ class OutboxResilienciaEReplayIT {
             Outbox poisonAtualizado = outboxRepository.findById(poisonId).orElseThrow();
             assertThat(poisonAtualizado.getStatus()).isEqualTo(Outbox.STATUS_QUARANTINED);
             assertThat(poisonAtualizado.getPayload()).isEqualTo("{\"id\":\"poison\"}");
-            assertThat(poisonAtualizado.getLastErrorType()).isEqualTo("CLASS_NOT_FOUND");
+            assertThat(poisonAtualizado.getLastErrorType()).isEqualTo("UNKNOWN_EVENT_TYPE");
             assertThat(poisonAtualizado.getLastError()).isNotBlank();
             assertThat(poisonAtualizado.getQuarantinedAt()).isEqualTo(agora);
             assertThat(poisonAtualizado.getNextAttemptAt()).isNull();
@@ -211,7 +211,7 @@ class OutboxResilienciaEReplayIT {
             assertThat(outboxRepository.findById(validoId)).isEmpty();
             Message recebida = rabbitTemplate.receive(filaValida, 5000);
             assertThat(recebida).isNotNull();
-            assertThat(new String(recebida.getBody(), StandardCharsets.UTF_8)).isEqualTo("{\"id\":\"valido\"}");
+            assertThat(new String(recebida.getBody(), StandardCharsets.UTF_8)).isEqualTo("{\"vendaId\":1,\"pagamentoId\":1}");
 
             assertThat(outboxProcessor.processNextStep()).isEqualTo(OutboxStepResult.EMPTY);
         } finally {
@@ -226,8 +226,8 @@ class OutboxResilienciaEReplayIT {
         Long idBrokerOff = outboxRepository.saveAndFlush(criarOutbox(
                 RabbitMQConfig.PDV_EXCHANGE,
                 "e2.c2a.offline",
-                "java.util.HashMap",
-                "{\"teste\":\"broker-offline\"}",
+                inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName(),
+                "{\"vendaId\":2,\"pagamentoId\":2}",
                 1,
                 t0.minusSeconds(10))).getId();
 
@@ -276,8 +276,8 @@ class OutboxResilienciaEReplayIT {
         Long idPosConfirm = outboxRepository.saveAndFlush(criarOutbox(
                 RabbitMQConfig.PDV_EXCHANGE,
                 rkPosConfirm,
-                "java.util.HashMap",
-                "{\"teste\":\"pos-confirm\"}",
+                inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName(),
+                "{\"vendaId\":3,\"pagamentoId\":3}",
                 1,
                 t1.minusSeconds(5))).getId();
 
@@ -318,13 +318,13 @@ class OutboxResilienciaEReplayIT {
     void cenario3_inspecaoEReplayConcorrentePreservandoVersaoZero() throws Exception {
         String rk = "e2.c3.replay." + UUID.randomUUID();
         String fila = "e2.c3.queue." + UUID.randomUUID();
-        String payloadOriginal = "{\"vendaId\":77,\"origem\":\"legado-v0\"}";
+        String payloadOriginal = "{\"vendaId\":77,\"pagamentoId\":88}";
         LocalDateTime t0 = LocalDateTime.now(clock);
 
         Long outboxId = outboxRepository.saveAndFlush(criarOutbox(
                 RabbitMQConfig.PDV_EXCHANGE,
                 rk,
-                "java.util.HashMap",
+                inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName(),
                 payloadOriginal,
                 0,
                 t0.minusSeconds(10))).getId();

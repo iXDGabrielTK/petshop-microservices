@@ -190,12 +190,12 @@ class OutboxConfirmacaoERotasIT {
     @DisplayName("Cenário 1 — NO_ROUTE deve preservar linha e liberar lock, e entrega deve ocorrer após restaurar binding")
     void cenario1_noRoutePreservaOutboxELiberaLockEEntregaAposRestaurarBinding() {
         String routingKeySemFila = "e1.no.route." + UUID.randomUUID();
-        String jsonPayload = "{\"origem\":\"cenario-1\"}";
+        String jsonPayload = "{\"vendaId\":1,\"pagamentoId\":1}";
 
         Outbox outbox = new Outbox();
         outbox.setExchange(RabbitMQConfig.PDV_EXCHANGE);
         outbox.setRoutingKey(routingKeySemFila);
-        outbox.setEventType("java.util.HashMap");
+        outbox.setEventType(inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName());
         outbox.setPayload(jsonPayload);
         outbox.setVersion(1);
         outbox.setCreatedAt(LocalDateTime.now());
@@ -245,8 +245,8 @@ class OutboxConfirmacaoERotasIT {
         Outbox outbox = new Outbox();
         outbox.setExchange("e1.exchange.inexistente." + UUID.randomUUID());
         outbox.setRoutingKey("e1.rk.404");
-        outbox.setEventType("java.util.HashMap");
-        outbox.setPayload("{\"origem\":\"cenario-2\"}");
+        outbox.setEventType(inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName());
+        outbox.setPayload("{\"vendaId\":2,\"pagamentoId\":2}");
         outbox.setVersion(1);
         outbox.setCreatedAt(LocalDateTime.now());
         Long outboxId = outboxRepository.saveAndFlush(outbox).getId();

@@ -10,6 +10,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import inv.shared.config.DateTimeConfig;
+import inv.shared.event.VendaEstornadaEvent;
 import inv.shared.outbox.metrics.OutboxMetrics;
 import inv.shared.outbox.model.Outbox;
 import inv.shared.outbox.repository.OutboxRepository;
@@ -39,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -79,13 +81,19 @@ class OutboxProcessorTest {
     private OutboxFailureRecorder failureRecorder;
     private OutboxProcessor outboxProcessor;
 
+    private static final String ALLOWED_EVENT_TYPE = VendaEstornadaEvent.class.getName();
+    private static final String VALID_PAYLOAD =
+            "{\"vendaId\":10,\"uuidReferenciaEstorno\":\"00000000-0000-0000-0000-000000000001\",\"valorEstorno\":10.00}";
+
     @BeforeEach
     void setUp() {
         clock = Clock.fixed(FIXED_INSTANT, DateTimeConfig.ZONE_SAO_PAULO);
         objectMapper = new ObjectMapper();
         meterRegistry = new SimpleMeterRegistry();
         outboxMetrics = new OutboxMetrics(outboxRepository, meterRegistry, clock);
-        deliveryStep = new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 3000L);
+        deliveryStep = new OutboxDeliveryStep(
+                outboxRepository, rabbitTemplate, objectMapper, 3000L,
+                Map.of(ALLOWED_EVENT_TYPE, VendaEstornadaEvent.class));
         failureRecorder = new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 5, 2000L, 60000L);
         outboxProcessor = new OutboxProcessor(deliveryStep, failureRecorder, outboxMetrics, clock);
     }
@@ -105,7 +113,7 @@ class OutboxProcessorTest {
     @Test
     @DisplayName("DEVE validar parâmetros positivos de timeout e retry")
     void deveRejeitarConfiguracoesInvalidas() {
-        assertThatThrownBy(() -> new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 0L))
+        assertThatThrownBy(() -> new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 0L, Map.of()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new OutboxFailureRecorder(outboxRepository, outboxMetrics, clock, 0, 2000L, 60000L))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -120,7 +128,7 @@ class OutboxProcessorTest {
     @DisplayName("DEVE publicar JSON UTF-8 persistente sem __TypeId__ para version 0 e 1 e concluir após Confirm(ack=true)")
     void devePublicarJsonSemTypeIdEConcluirAposConfirmPositivo(int version) {
         Outbox outbox = criarOutbox(42L, "pdv.exchange", "venda.pagamento.confirmado",
-                "java.util.HashMap", "{\"vendaId\":10,\"pagamentoId\":50}", version, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, version, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
 
         doAnswer(invocation -> {
@@ -163,7 +171,7 @@ class OutboxProcessorTest {
     @DisplayName("DEVE manter messageId estável e gerar correlationId distinto entre tentativas")
     void deveManterMessageIdEstavelECorrelationIdUnicoPorTentativa() {
         Outbox outbox = criarOutbox(99L, "pdv.exchange", "venda.estornada",
-                "java.util.HashMap", "{\"vendaId\":10}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
 
         doAnswer(invocation -> {
@@ -190,11 +198,12 @@ class OutboxProcessorTest {
         assertThat(corr2).startsWith("outbox-99-").isNotEqualTo(corr1);
     }
 
-    @Test
-    @DisplayName("Poison pill: ClassNotFoundException DEVE mover imediatamente para QUARANTINED e retornar FAILED_CONTINUE")
-    void deveQuarentenarImediatamenteQuandoClasseNaoExistir() {
+    @ParameterizedTest
+    @ValueSource(strings = {"inv.inexistente.EventoFantasma", "java.util.HashMap"})
+    @DisplayName("Poison pill: eventType fora da allowlist DEVE mover imediatamente para QUARANTINED como UNKNOWN_EVENT_TYPE")
+    void deveQuarentenarImediatamenteQuandoClasseNaoExistir(String eventTypeNaoPermitido) {
         Outbox outbox = criarOutbox(1L, "pdv.exchange", "rk",
-                "inv.inexistente.EventoFantasma", "{}", 1, 0);
+                eventTypeNaoPermitido, "{}", 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
@@ -206,9 +215,9 @@ class OutboxProcessorTest {
         LocalDateTime agora = LocalDateTime.now(clock);
         verify(outboxRepository).recordFailure(
                 eq(1L), eq(Outbox.STATUS_QUARANTINED), eq(1), isNull(), eq(agora),
-                eq("CLASS_NOT_FOUND"), anyString(), eq(agora));
+                eq("UNKNOWN_EVENT_TYPE"), anyString(), eq(agora));
         Counter quarantinedCounter = meterRegistry.find(OutboxMetrics.METRIC_QUARANTINED_TOTAL)
-                .tag("error_type", "CLASS_NOT_FOUND")
+                .tag("error_type", "UNKNOWN_EVENT_TYPE")
                 .counter();
         assertThat(quarantinedCounter).isNotNull();
         assertThat(quarantinedCounter.count()).isEqualTo(1.0d);
@@ -218,9 +227,9 @@ class OutboxProcessorTest {
     @DisplayName("Poison pill: JSON inválido e version negativa DEVEM mover imediatamente para QUARANTINED e continuar ciclo")
     void deveQuarentenarImediatamenteQuandoJsonInvalidoOuVersaoNegativa() {
         Outbox jsonInvalido = criarOutbox(2L, "pdv.exchange", "rk",
-                "java.util.HashMap", "{json-quebrado", 1, 0);
+                ALLOWED_EVENT_TYPE, "{json-quebrado", 1, 0);
         Outbox versaoNegativa = criarOutbox(3L, "pdv.exchange", "rk",
-                "java.util.HashMap", "{}", -1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, -1, 0);
 
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class)))
                 .thenReturn(Optional.of(jsonInvalido), Optional.of(versaoNegativa));
@@ -243,7 +252,7 @@ class OutboxProcessorTest {
     @DisplayName("NO_ROUTE: DEVE agendar backoff via Clock e retornar FAILED_CONTINUE sem deletar")
     void deveRegistrarBackoffEContinuarEmNoRoute() {
         Outbox outbox = criarOutbox(10L, "pdv.exchange", "rota.sem.fila",
-                "java.util.HashMap", "{\"ok\":true}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
@@ -270,7 +279,7 @@ class OutboxProcessorTest {
     @DisplayName("404 NOT_FOUND assíncrono: DEVE classificar como roteamento (FAILED_CONTINUE) com backoff")
     void deveClassificar404ComoRoteamentoEContinuar() {
         Outbox outbox = criarOutbox(12L, "exchange.inexistente", "rk",
-                "java.util.HashMap", "{\"ok\":true}", 1, 1);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 1);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
@@ -296,9 +305,9 @@ class OutboxProcessorTest {
     @DisplayName("basic.nack puro (reason nulo) e shutdown desconhecido DEVEM pausar ciclo (FAILED_PAUSE)")
     void devePausarCicloEmNackPuroOuShutdown() {
         Outbox nackPuro = criarOutbox(11L, "pdv.exchange", "venda.pagamento.confirmado",
-                "java.util.HashMap", "{\"ok\":true}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         Outbox shutdown = criarOutbox(15L, "pdv.exchange", "venda.pagamento.confirmado",
-                "java.util.HashMap", "{\"ok\":true}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class)))
                 .thenReturn(Optional.of(nackPuro), Optional.of(shutdown));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
@@ -327,7 +336,7 @@ class OutboxProcessorTest {
     @DisplayName("Conexão: DEVE registrar backoff, preservar linha e retornar FAILED_PAUSE em AmqpConnectException")
     void devePausarERegistrarBackoffEmFalhaDeConexao() {
         Outbox outbox = criarOutbox(13L, "pdv.exchange", "venda.pagamento.confirmado",
-                "java.util.HashMap", "{\"ok\":true}", 1, 4);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 4);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
@@ -348,10 +357,12 @@ class OutboxProcessorTest {
     @Test
     @DisplayName("Timeout: DEVE respeitar outbox.publisher.confirm-timeout-ms, registrar backoff e pausar")
     void deveRespeitarConfirmTimeoutEPausar() {
-        OutboxDeliveryStep stepCurto = new OutboxDeliveryStep(outboxRepository, rabbitTemplate, objectMapper, 100L);
+        OutboxDeliveryStep stepCurto = new OutboxDeliveryStep(
+                outboxRepository, rabbitTemplate, objectMapper, 100L,
+                Map.of(ALLOWED_EVENT_TYPE, VendaEstornadaEvent.class));
         OutboxProcessor processorCurto = new OutboxProcessor(stepCurto, failureRecorder, outboxMetrics, clock);
         Outbox outbox = criarOutbox(14L, "pdv.exchange", "venda.pagamento.confirmado",
-                "java.util.HashMap", "{\"ok\":true}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
@@ -372,7 +383,7 @@ class OutboxProcessorTest {
     @DisplayName("Persistência pós-confirm em delete/flush DEVE ir para backoff PENDING (nunca quarentena imediata) e pausar")
     void deveTratarFalhaDePersistenciaPosConfirmEmDeleteComoTransitoria() {
         Outbox outbox = criarOutbox(20L, "pdv.exchange", "venda.estornada",
-                "java.util.HashMap", "{\"vendaId\":7}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(outbox));
         when(outboxRepository.recordFailure(anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
@@ -443,7 +454,7 @@ class OutboxProcessorTest {
     @DisplayName("Replay concluído (replayCount > 0) DEVE incrementar outbox.replay.completed.total e emitir log estruturado")
     void deveIncrementarReplayCompletedEEmitirLogEstruturadoQuandoReplayCountPositivo() {
         Outbox replayed = criarOutbox(77L, "pdv.exchange", "venda.estornada",
-                "java.util.HashMap", "{\"vendaId\":10}", 0, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 0, 0);
         replayed.setReplayCount(2);
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class))).thenReturn(Optional.of(replayed));
         doAnswer(invocation -> {
@@ -468,7 +479,7 @@ class OutboxProcessorTest {
                 .anySatisfy(msg -> assertThat(msg)
                         .contains("event=outbox_replay_completed")
                         .contains("outboxId=77")
-                        .contains("eventType=java.util.HashMap")
+                        .contains("eventType=" + ALLOWED_EVENT_TYPE)
                         .contains("version=0")
                         .contains("replayCount=2")
                         .contains("messageId=outbox-77")
@@ -479,9 +490,9 @@ class OutboxProcessorTest {
     @DisplayName("Entrega normal (replayCount = 0) ou rollback pós-confirm NÃO deve registrar outbox_replay_completed")
     void naoDeveRegistrarReplayCompletedEmEntregaNormalOuRollbackPosConfirm() {
         Outbox normal = criarOutbox(78L, "pdv.exchange", "venda.estornada",
-                "java.util.HashMap", "{\"vendaId\":10}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         Outbox replayFalho = criarOutbox(79L, "pdv.exchange", "venda.estornada",
-                "java.util.HashMap", "{\"vendaId\":11}", 1, 0);
+                ALLOWED_EVENT_TYPE, VALID_PAYLOAD, 1, 0);
         replayFalho.setReplayCount(1);
 
         when(outboxRepository.findNextMessageToProcess(any(LocalDateTime.class)))

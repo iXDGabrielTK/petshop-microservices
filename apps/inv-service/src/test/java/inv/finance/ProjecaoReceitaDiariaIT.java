@@ -33,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -474,7 +475,7 @@ class ProjecaoReceitaDiariaIT {
         // 4. Disparar processamento de confirmação via VendaEventHandler
         PagamentoConfirmadoEvent event = new PagamentoConfirmadoEvent(venda.getId(), pagamento.getId());
         String payload = objectMapper.writeValueAsString(event);
-        vendaEventHandler.handlePagamentoConfirmado(payload);
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(StandardCharsets.UTF_8)));
 
         // 5. Validar que na venda o troco foi calculado
         Venda vendaConcluida = vendaRepository.findById(venda.getId()).orElseThrow();
@@ -734,7 +735,7 @@ class ProjecaoReceitaDiariaIT {
         pagCartao = pagamentoRepository.save(pagCartao);
 
         String payload1 = objectMapper.writeValueAsString(new PagamentoConfirmadoEvent(venda.getId(), pagCartao.getId()));
-        vendaEventHandler.handlePagamentoConfirmado(payload1);
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payload1.getBytes(StandardCharsets.UTF_8)));
 
         // Pagamento 2: Dinheiro entregue R$ 120.00 (esperado R$ 100.00, troco R$ 20.00)
         Pagamento pagDinheiro = new Pagamento(venda, MetodoPagamento.DINHEIRO, new BigDecimal("100.00"), UUID.randomUUID());
@@ -742,7 +743,7 @@ class ProjecaoReceitaDiariaIT {
         pagDinheiro = pagamentoRepository.save(pagDinheiro);
 
         String payload2 = objectMapper.writeValueAsString(new PagamentoConfirmadoEvent(venda.getId(), pagDinheiro.getId()));
-        vendaEventHandler.handlePagamentoConfirmado(payload2);
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payload2.getBytes(StandardCharsets.UTF_8)));
 
         // Validação da venda
         Venda vendaConcluida = vendaRepository.findById(venda.getId()).orElseThrow();

@@ -131,4 +131,29 @@ class EmailConsumerEstoqueBaixoSemTypeIdIT {
                     assertThat(processedEventRepository.existsByEventId(eventId)).isTrue();
                 });
     }
+
+    @Test
+    @DisplayName("Mensagem inválida com eventId em branco deve ir para DLQ de estoque baixo sem retry infinito")
+    void deveEnviarMensagemInvalidaParaDlqDeEstoqueBaixo() throws Exception {
+        EstoqueBaixoMessage invalido = new EstoqueBaixoMessage(
+                1,
+                "   ",
+                "Produto Inválido",
+                new BigDecimal("1.000"),
+                new BigDecimal("5.000"));
+        String json = objectMapper.writeValueAsString(invalido);
+
+        MessageProperties props = MessagePropertiesBuilder.newInstance()
+                .setContentType(MessageProperties.CONTENT_TYPE_JSON)
+                .setContentEncoding(StandardCharsets.UTF_8.name())
+                .build();
+        rabbitTemplate.send(RabbitMQConfig.INVENTORY_EXCHANGE, RabbitMQConfig.LOW_STOCK_ROUTING_KEY,
+                new Message(json.getBytes(StandardCharsets.UTF_8), props));
+
+        Message dlqMsg = rabbitTemplate.receive(RabbitMQConfig.LOW_STOCK_DLQ_QUEUE_NAME, 15000);
+        assertThat(dlqMsg).isNotNull();
+        assertThat(dlqMsg.getMessageProperties().getHeaders()).containsKey("x-death");
+        assertThat(processedEventRepository.count()).isZero();
+        Mockito.verifyNoInteractions(mailSender);
+    }
 }

@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 /**
@@ -44,44 +45,29 @@ public class VendaEstornadaEventListener {
 
     @Transactional
     @RabbitListener(queues = RabbitMQConfig.QUEUE_VENDA_ESTORNADA)
-    public void handleVendaEstornada(Object message) {
+    public void handleVendaEstornada(Message message) {
         if (message == null) {
             log.warn("Mensagem nula recebida na fila de estorno. Ignorando.");
             return;
         }
 
+        byte[] body = message.getBody();
+        if (body == null || body.length == 0) {
+            log.error("Payload vazio recebido para VendaEstornadaEvent. Mensagem enviada para DLQ.");
+            throw new AmqpRejectAndDontRequeueException("Payload inválido para VendaEstornadaEvent (vazio)");
+        }
+
         VendaEstornadaEvent event;
-        if (message instanceof VendaEstornadaEvent e) {
-            event = e;
-        } else if (message instanceof Message m) {
-            try {
-                event = objectMapper.readValue(m.getBody(), VendaEstornadaEvent.class);
-            } catch (Exception e) {
-                log.error("Erro ao desserializar Message para VendaEstornadaEvent ({}). Mensagem enviada para DLQ.", e.getClass().getSimpleName());
-                throw rejeicaoDePayload(e);
-            }
-        } else if (message instanceof String s) {
-            try {
-                event = objectMapper.readValue(s, VendaEstornadaEvent.class);
-            } catch (JsonProcessingException e) {
-                log.error("Erro ao desserializar JSON de VendaEstornadaEvent ({}): {}. Mensagem enviada para DLQ.",
-                        e.getClass().getSimpleName(), trechoParaLog(s));
-                throw rejeicaoDePayload(e);
-            }
-        } else if (message instanceof byte[] b) {
-            try {
-                event = objectMapper.readValue(b, VendaEstornadaEvent.class);
-            } catch (Exception e) {
-                log.error("Erro ao desserializar bytes de VendaEstornadaEvent ({}). Mensagem enviada para DLQ.", e.getClass().getSimpleName());
-                throw rejeicaoDePayload(e);
-            }
-        } else {
-            try {
-                event = objectMapper.convertValue(message, VendaEstornadaEvent.class);
-            } catch (Exception e) {
-                log.error("Tipo de mensagem não suportado para VendaEstornadaEvent: {}. Mensagem enviada para DLQ.", message.getClass().getName());
-                throw rejeicaoDePayload(e);
-            }
+        try {
+            event = objectMapper.readValue(body, VendaEstornadaEvent.class);
+        } catch (JsonProcessingException e) {
+            log.error("Erro ao desserializar JSON de VendaEstornadaEvent ({}): {}. Mensagem enviada para DLQ.",
+                    e.getClass().getSimpleName(), trechoParaLog(new String(body, StandardCharsets.UTF_8)));
+            throw rejeicaoDePayload(e);
+        } catch (Exception e) {
+            log.error("Erro ao desserializar Message para VendaEstornadaEvent ({}). Mensagem enviada para DLQ.",
+                    e.getClass().getSimpleName());
+            throw rejeicaoDePayload(e);
         }
 
         processar(event);

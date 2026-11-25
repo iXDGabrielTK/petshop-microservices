@@ -10,10 +10,12 @@ import inv.finance.infrastructure.messaging.LancamentoRegistradoEvent;
 import inv.shared.event.VendaEstornadaEvent;
 import inv.shared.event.VendaPagaEvent;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -84,7 +86,9 @@ class ProjecaoDuravelIT extends ProjecaoDuravelSupport {
         assertThatThrownBy(() -> creditoListener.onVendaPaga(
                 new VendaPagaEvent(vendaId, UUID.randomUUID(), BigDecimal.TEN))).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> estornoListener.handleVendaEstornada(
-                new VendaEstornadaEvent(vendaId, UUID.randomUUID(), BigDecimal.TEN))).isInstanceOf(IllegalStateException.class);
+                new Message(("{\"vendaId\":" + vendaId + ",\"uuidReferenciaEstorno\":\"" + UUID.randomUUID()
+                        + "\",\"valorEstorno\":10}").getBytes(StandardCharsets.UTF_8))))
+                .isInstanceOf(IllegalStateException.class);
 
         assertThat(contar("lancamentos_financeiros")).isZero();
         assertThat(contar("projection_retry_queue")).isZero();

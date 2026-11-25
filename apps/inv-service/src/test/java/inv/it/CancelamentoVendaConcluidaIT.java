@@ -39,6 +39,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -205,7 +206,8 @@ class CancelamentoVendaConcluidaIT {
         String payloadConfirmacao = """
                 {"vendaId":%d,"pagamentoId":%d}
                 """.formatted(vendaId, pagamentoId);
-        vendaEventHandler.handlePagamentoConfirmado(payloadConfirmacao);
+        vendaEventHandler.handlePagamentoConfirmado(
+                new Message(payloadConfirmacao.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         // Verificações da venda concluída
         Venda vendaConcluida = vendaRepository.findById(vendaId).orElseThrow();
@@ -269,7 +271,8 @@ class CancelamentoVendaConcluidaIT {
         assertThat(outboxMsg.getExchange()).isEqualTo(RabbitMQConfig.PDV_EXCHANGE);
 
         // 6. Consumo no VendaEstornadaEventListener
-        vendaEstornadaEventListener.handleVendaEstornada(outboxMsg.getPayload());
+        vendaEstornadaEventListener.handleVendaEstornada(
+                new Message(outboxMsg.getPayload().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         // Lançamento contábil de estorno no Finance
         List<LancamentoFinanceiro> lancamentosEstorno = lancamentoRepository.findAll().stream()
@@ -309,7 +312,8 @@ class CancelamentoVendaConcluidaIT {
         });
 
         // 7. Reentrega do evento no listener: valida idempotência estrita sem duplicar lançamento nem projeção
-        vendaEstornadaEventListener.handleVendaEstornada(outboxMsg.getPayload());
+        vendaEstornadaEventListener.handleVendaEstornada(
+                new Message(outboxMsg.getPayload().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         List<LancamentoFinanceiro> lancamentosAposReentrega = lancamentoRepository.findAll().stream()
                 .filter(l -> l.getVendaId().equals(vendaId) && l.getTipo() == TipoLancamento.ESTORNO)
@@ -350,9 +354,9 @@ class CancelamentoVendaConcluidaIT {
         Long pagamentoId = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("10.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("10.00"), "NSU-IT-002");
-        vendaEventHandler.handlePagamentoConfirmado("""
+        vendaEventHandler.handlePagamentoConfirmado(new Message("""
                 {"vendaId":%d,"pagamentoId":%d}
-                """.formatted(vendaId, pagamentoId));
+                """.formatted(vendaId, pagamentoId).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         // Desabilita a feature flag
         vendaService.setCancelamentoConcluidoHabilitado(false);
@@ -384,9 +388,9 @@ class CancelamentoVendaConcluidaIT {
         Long pagamentoId = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.PIX, new BigDecimal("15.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("15.00"), "NSU-IT-003");
-        vendaEventHandler.handlePagamentoConfirmado("""
+        vendaEventHandler.handlePagamentoConfirmado(new Message("""
                 {"vendaId":%d,"pagamentoId":%d}
-                """.formatted(vendaId, pagamentoId));
+                """.formatted(vendaId, pagamentoId).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         outboxRepository.deleteAll();
 
@@ -431,9 +435,9 @@ class CancelamentoVendaConcluidaIT {
         Long pagamentoId = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.PIX, new BigDecimal("30.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("30.00"), "NSU-IT-004");
-        vendaEventHandler.handlePagamentoConfirmado("""
+        vendaEventHandler.handlePagamentoConfirmado(new Message("""
                 {"vendaId":%d,"pagamentoId":%d}
-                """.formatted(vendaId, pagamentoId));
+                """.formatted(vendaId, pagamentoId).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         outboxRepository.deleteAll();
 

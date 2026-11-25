@@ -25,6 +25,7 @@ import inv.shared.domain.MetodoPagamento;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +42,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Queue;
@@ -181,7 +183,8 @@ class HandlerExpiracaoMesmaVendaIT {
                 pool.submit(() -> {
                     try {
                         barreira.await(5, TimeUnit.SECONDS);
-                        vendaEventHandler.handlePagamentoConfirmado(payload);
+                        vendaEventHandler.handlePagamentoConfirmado(
+                                new Message(payload.getBytes(StandardCharsets.UTF_8)));
                     } catch (Throwable t) {
                         if (isDeadlock(t)) {
                             deadlocks.add(t);
@@ -327,7 +330,8 @@ class HandlerExpiracaoMesmaVendaIT {
                 pool.submit(() -> {
                     try {
                         barreira.await(5, TimeUnit.SECONDS);
-                        vendaEventHandler.handlePagamentoConfirmado(payloadVenda1);
+                        vendaEventHandler.handlePagamentoConfirmado(
+                                new Message(payloadVenda1.getBytes(StandardCharsets.UTF_8)));
                         concluidasCount.incrementAndGet();
                     } catch (Throwable t) {
                         if (isDeadlock(t)) {

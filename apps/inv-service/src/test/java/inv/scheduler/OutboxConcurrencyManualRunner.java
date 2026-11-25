@@ -77,9 +77,8 @@ class OutboxConcurrencyManualRunner {
 
         for (int i = 0; i < totalMensagens; i++) {
             Outbox outbox = new Outbox();
-            // Usando HashMap pois é uma classe padrão do Java que o ObjectMapper consegue desserializar de "{}"
-            outbox.setEventType("java.util.HashMap");
-            outbox.setPayload("{}");
+            outbox.setEventType(inv.shared.event.VendaEstornadaEvent.class.getName());
+            outbox.setPayload("{\"vendaId\":" + i + ",\"uuidReferenciaEstorno\":\"" + java.util.UUID.randomUUID() + "\",\"valorEstorno\":10.00}");
             outbox.setExchange("ex.teste");
             outbox.setRoutingKey("rk.teste");
             outbox.setCreatedAt(LocalDateTime.now());

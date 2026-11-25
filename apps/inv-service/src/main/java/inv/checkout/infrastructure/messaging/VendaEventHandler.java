@@ -51,7 +51,7 @@ public class VendaEventHandler {
 
     @RabbitListener(queues = RabbitMQConfig.QUEUE_PAGAMENTO_CONFIRMADO)
     @Transactional
-    public void handlePagamentoConfirmado(Object message) {
+    public void handlePagamentoConfirmado(Message message) {
         try {
             PagamentoConfirmadoEvent event = deserializarEvento(message);
 
@@ -126,23 +126,12 @@ public class VendaEventHandler {
         }
     }
 
-    private PagamentoConfirmadoEvent deserializarEvento(Object message) throws IOException {
+    private PagamentoConfirmadoEvent deserializarEvento(Message message) throws IOException {
         if (message == null) {
             throw new BusinessException("Payload de pagamento confirmado nulo.");
         }
 
-        PagamentoConfirmadoEvent event;
-        if (message instanceof PagamentoConfirmadoEvent e) {
-            event = e;
-        } else if (message instanceof Message m) {
-            event = deserializarBytes(m.getBody());
-        } else if (message instanceof String s) {
-            event = objectMapper.readValue(s, PagamentoConfirmadoEvent.class);
-        } else if (message instanceof byte[] b) {
-            event = deserializarBytes(b);
-        } else {
-            event = objectMapper.convertValue(message, PagamentoConfirmadoEvent.class);
-        }
+        PagamentoConfirmadoEvent event = deserializarBytes(message.getBody());
 
         if (event == null || event.vendaId() == null || event.pagamentoId() == null) {
             throw new BusinessException(

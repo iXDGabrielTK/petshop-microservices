@@ -33,6 +33,10 @@ public class RabbitMQConfig {
     public static final String LOW_STOCK_QUEUE = "inventory.v1.low-stock.send-email";
     public static final String LOW_STOCK_ROUTING_KEY = "inventory.stock.low";
 
+    public static final String LOW_STOCK_DLQ_EXCHANGE_NAME = "inventory.v1.events.dlx";
+    public static final String LOW_STOCK_DLQ_QUEUE_NAME = "inventory.v1.low-stock.send-email.dlq";
+    public static final String LOW_STOCK_DLQ_ROUTING_KEY = "inventory.stock.low.dlq";
+
     @Bean
     public Queue dlqQueue() {
         return QueueBuilder.durable(DLQ_QUEUE_NAME).build();
@@ -59,8 +63,26 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    public Queue lowStockDlqQueue() {
+        return QueueBuilder.durable(LOW_STOCK_DLQ_QUEUE_NAME).build();
+    }
+
+    @Bean
+    public TopicExchange lowStockDlqExchange() {
+        return new TopicExchange(LOW_STOCK_DLQ_EXCHANGE_NAME);
+    }
+
+    @Bean
+    public Binding lowStockDlqBinding() {
+        return BindingBuilder.bind(lowStockDlqQueue()).to(lowStockDlqExchange()).with(LOW_STOCK_DLQ_ROUTING_KEY);
+    }
+
+    @Bean
     public Queue lowStockQueue() {
-        return QueueBuilder.durable(LOW_STOCK_QUEUE).build();
+        return QueueBuilder.durable(LOW_STOCK_QUEUE)
+                .withArgument("x-dead-letter-exchange", LOW_STOCK_DLQ_EXCHANGE_NAME)
+                .withArgument("x-dead-letter-routing-key", LOW_STOCK_DLQ_ROUTING_KEY)
+                .build();
     }
 
     @Bean

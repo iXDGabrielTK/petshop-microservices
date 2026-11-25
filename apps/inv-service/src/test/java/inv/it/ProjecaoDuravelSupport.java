@@ -19,6 +19,7 @@ import inv.finance.infrastructure.persistence.ProjectionRetryRepository;
 import inv.shared.event.VendaEstornadaEvent;
 import inv.shared.event.VendaPagaEvent;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +39,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 
@@ -101,7 +103,9 @@ abstract class ProjecaoDuravelSupport {
     void registrarCreditoEEstorno() {
         tx.executeWithoutResult(status -> {
             creditoListener.onVendaPaga(new VendaPagaEvent(vendaId, UUID.randomUUID(), new BigDecimal("100.00")));
-            estornoListener.handleVendaEstornada(new VendaEstornadaEvent(vendaId, UUID.randomUUID(), new BigDecimal("100.00")));
+            estornoListener.handleVendaEstornada(new Message(
+                    ("{\"vendaId\":" + vendaId + ",\"uuidReferenciaEstorno\":\"" + UUID.randomUUID()
+                            + "\",\"valorEstorno\":100.00}").getBytes(StandardCharsets.UTF_8)));
             assertThat(contar("lancamentos_financeiros")).isEqualTo(2);
             assertThat(contar("projection_retry_queue")).isEqualTo(2);
         });

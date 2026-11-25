@@ -27,6 +27,7 @@ import inv.shared.outbox.repository.OutboxRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -149,7 +150,8 @@ class CancelamentoPagamentoRaceIT {
         Long pag2Id = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pag1Id, new BigDecimal("100.00"), "NSU-ORDEM-A-1");
-        vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}");
+        vendaEventHandler.handlePagamentoConfirmado(new Message(
+                ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         // 2. Confirmar segundo pagamento pag2 no webhook sem contabilizar (em trânsito)
         pagamentoService.confirmarPagamentoWebhook(pag2Id, new BigDecimal("100.00"), "NSU-ORDEM-A-2");
@@ -178,8 +180,8 @@ class CancelamentoPagamentoRaceIT {
             pool.submit(() -> {
                 try {
                     assertThat(latchCancelDone.await(5, TimeUnit.SECONDS)).isTrue();
-                    vendaEventHandler.handlePagamentoConfirmado(
-                            "{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag2Id + "}");
+                    vendaEventHandler.handlePagamentoConfirmado(new Message(
+                            ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag2Id + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 } catch (Throwable t) {
                     erros.add(t);
                 }
@@ -248,8 +250,8 @@ class CancelamentoPagamentoRaceIT {
             // Thread 1: Handler de confirmação (adquire lock primeiro, conclui venda)
             pool.submit(() -> {
                 try {
-                    vendaEventHandler.handlePagamentoConfirmado(
-                            "{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pagId + "}");
+                    vendaEventHandler.handlePagamentoConfirmado(new Message(
+                            ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pagId + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 } catch (Throwable t) {
                     erros.add(t);
                 } finally {
@@ -308,7 +310,8 @@ class CancelamentoPagamentoRaceIT {
         Long pag2Id = pagamentoService.criarIntencaoPagamento(
                 vendaId, MetodoPagamento.DINHEIRO, new BigDecimal("50.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pag1Id, new BigDecimal("50.00"), "NSU-ORDEM-B2-1");
-        vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}");
+        vendaEventHandler.handlePagamentoConfirmado(new Message(
+                ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         // 2. Confirmar pag2 no webhook
         pagamentoService.confirmarPagamentoWebhook(pag2Id, new BigDecimal("50.00"), "NSU-ORDEM-B2-2");
@@ -325,8 +328,8 @@ class CancelamentoPagamentoRaceIT {
             // Thread 1: Handler adquire lock primeiro, marca pag2 como excedente
             pool.submit(() -> {
                 try {
-                    vendaEventHandler.handlePagamentoConfirmado(
-                            "{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag2Id + "}");
+                    vendaEventHandler.handlePagamentoConfirmado(new Message(
+                            ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag2Id + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 } catch (Throwable t) {
                     erros.add(t);
                 } finally {
@@ -397,7 +400,8 @@ class CancelamentoPagamentoRaceIT {
             Long pag2Id = pagamentoService.criarIntencaoPagamento(
                     vendaId, MetodoPagamento.DINHEIRO, new BigDecimal("10.00"), UUID.randomUUID());
             pagamentoService.confirmarPagamentoWebhook(pag1Id, new BigDecimal("10.00"), "NSU-LIVRE-1-" + r);
-            vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}");
+            vendaEventHandler.handlePagamentoConfirmado(new Message(
+                ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag1Id + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
             pagamentoService.confirmarPagamentoWebhook(pag2Id, new BigDecimal("10.00"), "NSU-LIVRE-2-" + r);
 
@@ -419,8 +423,8 @@ class CancelamentoPagamentoRaceIT {
                 pool.submit(() -> {
                     try {
                         barreira.await(10, TimeUnit.SECONDS);
-                        vendaEventHandler.handlePagamentoConfirmado(
-                            "{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag2Id + "}");
+                        vendaEventHandler.handlePagamentoConfirmado(new Message(
+                            ("{\"vendaId\":" + vendaId + ",\"pagamentoId\":" + pag2Id + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                     } catch (Throwable t) {
                         erros.add(t);
                     }

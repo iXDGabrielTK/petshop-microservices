@@ -385,8 +385,8 @@ class OutboxEstornoRecuperacaoIT {
         Outbox elegivel = criarOutbox(
                 RabbitMQConfig.PDV_EXCHANGE,
                 "e3.c4.idade." + UUID.randomUUID(),
-                "java.util.HashMap",
-                "{\"origem\":\"idade\"}",
+                inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName(),
+                "{\"vendaId\":1,\"pagamentoId\":1}",
                 t0);
         Long idIdade = outboxRepository.saveAndFlush(elegivel).getId();
 
@@ -425,11 +425,12 @@ class OutboxEstornoRecuperacaoIT {
         double quarentenaInicial = lerCounter(OutboxMetrics.METRIC_QUARANTINED_TOTAL, "NO_ROUTE");
         String rkReplay = "e3.c4.replay." + UUID.randomUUID();
         String filaReplay = "e3.c4.queue." + UUID.randomUUID();
+        String eventTypePermitido = inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent.class.getName();
         Long idQuarentena = outboxRepository.saveAndFlush(criarOutbox(
                 RabbitMQConfig.PDV_EXCHANGE,
                 rkReplay,
-                "java.util.HashMap",
-                "{\"origem\":\"quarentena-e3\"}",
+                eventTypePermitido,
+                "{\"vendaId\":77,\"pagamentoId\":88}",
                 LocalDateTime.now(clock))).getId();
 
         assertThat(outboxProcessor.processNextStep()).isEqualTo(OutboxStepResult.FAILED_CONTINUE);
@@ -486,7 +487,7 @@ class OutboxEstornoRecuperacaoIT {
                     .anySatisfy(msg -> assertThat(msg)
                             .contains("event=outbox_replay_completed")
                             .contains("outboxId=" + idQuarentena)
-                            .contains("eventType=java.util.HashMap")
+                            .contains("eventType=" + eventTypePermitido)
                             .contains("version=1")
                             .contains("replayCount=1")
                             .contains("messageId=outbox-" + idQuarentena)

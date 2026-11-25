@@ -45,6 +45,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -293,7 +294,7 @@ class PagamentoConcorrenciaGatesIT {
                 pool.submit(() -> {
                     try {
                         barreiraHandler.await(10, TimeUnit.SECONDS);
-                        vendaEventHandler.handlePagamentoConfirmado(payload);
+                        vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                     } catch (Throwable t) {
                         errosHandler.add(t);
                     }
@@ -419,7 +420,7 @@ class PagamentoConcorrenciaGatesIT {
                 new BigDecimal("100.00"), UUID.randomUUID());
         pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-ORIGINAL");
         String payload = "{\"vendaId\":" + venda.getId() + ",\"pagamentoId\":" + pagamentoId + "}";
-        vendaEventHandler.handlePagamentoConfirmado(payload);
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         executarComPagamentoRetido(
                 () -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("999.00"), "NSU-IGNORADO"),
@@ -427,7 +428,7 @@ class PagamentoConcorrenciaGatesIT {
 
         assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("999.00"), "NSU-IGNORADO"))
                 .isInstanceOf(BusinessException.class);
-        vendaEventHandler.handlePagamentoConfirmado(payload);
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         Pagamento pagamento = pagamentoRepository.findById(pagamentoId).orElseThrow();
         assertThat(pagamento.getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
         assertThat(pagamento.isContabilizado()).isTrue();
@@ -536,7 +537,7 @@ class PagamentoConcorrenciaGatesIT {
                 pool.submit(() -> {
                     try {
                         assertThat(latchLockAdquirido.await(5, TimeUnit.SECONDS)).isTrue();
-                        vendaEventHandler.handlePagamentoConfirmado(payload);
+                        vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                     } catch (Throwable t) {
                         erroTentativaComTimeout.set(t);
                     } finally {
@@ -568,13 +569,14 @@ class PagamentoConcorrenciaGatesIT {
             assertThat(lancamentoRepository.count()).isZero();
 
             // 3. Após liberação do lock, retry/reentrega processa normalmente e reentrega subsequente é descartada com ACK
-            vendaEventHandler.handlePagamentoConfirmado(payload);
+            vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             assertThat(vendaRepository.findById(vendaId).orElseThrow().getStatus()).isEqualTo(StatusVenda.CONCLUIDA);
-            vendaEventHandler.handlePagamentoConfirmado(payload); // reentrega absorvida na Condição 1 (ACK)
+            vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8))); // reentrega absorvida na Condição 1 (ACK)
             assertThat(lancamentoRepository.count()).isEqualTo(1L);
 
             // 4. Falha não-retentável (violação de integridade/negócio ou JSON inválido) lança AmqpRejectAndDontRequeueException -> contrato para descarte sem requeue
-            assertThatThrownBy(() -> vendaEventHandler.handlePagamentoConfirmado("{\"vendaId\":999999,\"pagamentoId\":" + pagamentoId + "}"))
+            assertThatThrownBy(() -> vendaEventHandler.handlePagamentoConfirmado(new Message(
+                    ("{\"vendaId\":999999,\"pagamentoId\":" + pagamentoId + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8))))
                     .isInstanceOf(AmqpRejectAndDontRequeueException.class)
                     .hasCauseInstanceOf(BusinessException.class);
 
@@ -705,7 +707,7 @@ class PagamentoConcorrenciaGatesIT {
                 try {
                     assertThat(latchT1DetemLock.await(5, TimeUnit.SECONDS)).isTrue();
                     latchWaitersProntos.countDown();
-                    vendaEventHandler.handlePagamentoConfirmado(payload);
+                    vendaEventHandler.handlePagamentoConfirmado(new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 } catch (Throwable t) {
                     erros.add(t);
                 }
@@ -800,8 +802,9 @@ class PagamentoConcorrenciaGatesIT {
         Long pagConcluidaId = pagamentoService.criarIntencaoPagamento(
                 vendaConcluida.getId(), MetodoPagamento.PIX, new BigDecimal("100.00"), uuidConcluida);
         pagamentoService.confirmarPagamentoWebhook(pagConcluidaId, new BigDecimal("100.00"), "NSU-E3-CONC");
-        vendaEventHandler.handlePagamentoConfirmado(
-                "{\"vendaId\":" + vendaConcluida.getId() + ",\"pagamentoId\":" + pagConcluidaId + "}");
+        vendaEventHandler.handlePagamentoConfirmado(new Message(
+                ("{\"vendaId\":" + vendaConcluida.getId() + ",\"pagamentoId\":" + pagConcluidaId + "}")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         assertThat(pagamentoService.criarIntencaoPagamento(
                 vendaConcluida.getId(), MetodoPagamento.PIX, new BigDecimal("100.000"), uuidConcluida))

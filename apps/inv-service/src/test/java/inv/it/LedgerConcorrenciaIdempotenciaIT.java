@@ -18,6 +18,7 @@ import inv.shared.event.VendaPagaEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -191,7 +192,8 @@ class LedgerConcorrenciaIdempotenciaIT {
         // FASE 2: Concorrência em VendaEstornadaEvent (ESTORNO)
         // ==========================================
         UUID refEstorno = UUID.nameUUIDFromBytes(("ESTORNO:" + vendaId).getBytes(StandardCharsets.UTF_8));
-        VendaEstornadaEvent eventEstorno = new VendaEstornadaEvent(vendaId, refEstorno, valor);
+        Message msgEstorno = new Message(("{\"vendaId\":" + vendaId + ",\"uuidReferenciaEstorno\":\"" + refEstorno
+                + "\",\"valorEstorno\":" + valor.toPlainString() + "}").getBytes(StandardCharsets.UTF_8));
 
         CyclicBarrier barreiraEstorno = new CyclicBarrier(totalThreads);
         Queue<Throwable> errosEstorno = new ConcurrentLinkedQueue<>();
@@ -201,7 +203,7 @@ class LedgerConcorrenciaIdempotenciaIT {
                 pool.submit(() -> {
                     try {
                         barreiraEstorno.await(10, TimeUnit.SECONDS);
-                        vendaEstornadaEventListener.handleVendaEstornada(eventEstorno);
+                        vendaEstornadaEventListener.handleVendaEstornada(msgEstorno);
                     } catch (Throwable t) {
                         errosEstorno.add(t);
                     }

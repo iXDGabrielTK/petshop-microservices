@@ -32,6 +32,7 @@ import jakarta.validation.Validator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -199,7 +200,8 @@ class CicloVendaEstoqueCharacterizationIT {
                 {"vendaId":%d,"pagamentoId":%d}
                 """.formatted(venda.getId(), pagamentoId);
 
-        vendaEventHandler.handlePagamentoConfirmado(payload);
+        vendaEventHandler.handlePagamentoConfirmado(
+                new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
         Venda vendaConcluida = vendaRepository.findById(venda.getId()).orElseThrow();
         assertThat(vendaConcluida.getStatus()).isEqualTo(StatusVenda.CONCLUIDA);
@@ -351,8 +353,8 @@ class CicloVendaEstoqueCharacterizationIT {
     }
 
     @Test
-    @DisplayName("8. Item duplicado [A:1, A:2]: gera 2 itens de venda e 2 movimentações sem consolidação")
-    void cenario8_itemDuplicadoNaoEhConsolidado() {
+    @DisplayName("8. Item duplicado [A:1, A:2]: consolida quantidades para o mesmo produto antes de criar item e movimentação")
+    void cenario8_itemDuplicadoEhConsolidado() {
         Produto prodA = salvarProduto("7890001000097", "Sachê Carne 85g",
                 new BigDecimal("5.00"), new BigDecimal("10.000"), new BigDecimal("2.000"));
 
@@ -362,21 +364,22 @@ class CicloVendaEstoqueCharacterizationIT {
         )));
 
         assertThat(venda.getValorTotal()).isEqualByComparingTo("15.00");
-        assertThat(venda.getItens()).hasSize(2);
+        assertThat(venda.getItens()).hasSize(1);
+        assertThat(venda.getItens().get(0).getQuantidade()).isEqualByComparingTo("3.000");
 
         Integer itensNoBanco = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM itens_venda WHERE venda_id = ?", Integer.class, venda.getId());
-        assertThat(itensNoBanco).isEqualTo(2);
+        assertThat(itensNoBanco).isEqualTo(1);
 
         Produto prodAAtualizado = produtoRepository.findById(prodA.getId()).orElseThrow();
         assertThat(prodAAtualizado.getEstoqueDisponivel()).isEqualByComparingTo("7.000");
         assertThat(prodAAtualizado.getEstoqueReservado()).isEqualByComparingTo("3.000");
 
         List<MovimentacaoEstoque> movs = movimentacaoRepository.findAll();
-        assertThat(movs).hasSize(2);
+        assertThat(movs).hasSize(1);
         assertThat(movs).extracting(MovimentacaoEstoque::getQuantidade)
                 .usingComparatorForType(BigDecimal::compareTo, BigDecimal.class)
-                .containsExactly(new BigDecimal("1.000"), new BigDecimal("2.000"));
+                .containsExactly(new BigDecimal("3.000"));
     }
 
     @Test

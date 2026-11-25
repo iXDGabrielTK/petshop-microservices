@@ -6,6 +6,7 @@
 package inv.it;
 
 import inv.InvServiceApplication;
+import inv.checkout.infrastructure.messaging.event.PagamentoConfirmadoEvent;
 import inv.shared.config.DateTimeConfig;
 import inv.shared.config.RabbitMQConfig;
 import inv.shared.outbox.model.Outbox;
@@ -176,8 +177,8 @@ class OutboxSchedulingRetomadaIT {
         Outbox imediato = new Outbox();
         imediato.setExchange(RabbitMQConfig.PDV_EXCHANGE);
         imediato.setRoutingKey(RK_AUTO);
-        imediato.setEventType("java.util.HashMap");
-        imediato.setPayload("{\"origem\":\"scheduler-ativo\"}");
+        imediato.setEventType(PagamentoConfirmadoEvent.class.getName());
+        imediato.setPayload("{\"vendaId\":1,\"pagamentoId\":1}");
         imediato.setVersion(1);
         imediato.setCreatedAt(agora);
         Long imediatoId = outboxRepository.saveAndFlush(imediato).getId();
@@ -187,14 +188,14 @@ class OutboxSchedulingRetomadaIT {
             Message entregue = rabbitTemplate.receive(QUEUE_AUTO, 1000);
             assertThat(entregue).isNotNull();
             assertThat(new String(entregue.getBody(), StandardCharsets.UTF_8))
-                    .isEqualTo("{\"origem\":\"scheduler-ativo\"}");
+                    .isEqualTo("{\"vendaId\":1,\"pagamentoId\":1}");
         });
 
         Outbox futuro = new Outbox();
         futuro.setExchange(RabbitMQConfig.PDV_EXCHANGE);
         futuro.setRoutingKey(RK_RESTART);
-        futuro.setEventType("java.util.HashMap");
-        futuro.setPayload("{\"origem\":\"retomada-pos-reinicio\"}");
+        futuro.setEventType(PagamentoConfirmadoEvent.class.getName());
+        futuro.setPayload("{\"vendaId\":2,\"pagamentoId\":2}");
         futuro.setVersion(1);
         futuro.setCreatedAt(agora);
         futuro.setNextAttemptAt(agora.plusHours(1));
@@ -216,6 +217,6 @@ class OutboxSchedulingRetomadaIT {
         Message recebida = rabbitTemplate.receive(QUEUE_RESTART, 5000);
         assertThat(recebida).isNotNull();
         assertThat(new String(recebida.getBody(), StandardCharsets.UTF_8))
-                .isEqualTo("{\"origem\":\"retomada-pos-reinicio\"}");
+                .isEqualTo("{\"vendaId\":2,\"pagamentoId\":2}");
     }
 }
