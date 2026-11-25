@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.regex.Pattern;
 
 @Service
 public class EmailConsumer {
@@ -29,6 +30,7 @@ public class EmailConsumer {
     @Value("${initial.admin.email}")
     private String adminEmail;
 
+    private static final Pattern CONTROLES = Pattern.compile("[\r\n\\p{Cntrl}]+");
     private final Logger logger = LoggerFactory.getLogger(EmailConsumer.class);
     private final JavaMailSender mailSender;
     private final ProcessedEventRepository processedEventRepository;
@@ -44,7 +46,7 @@ public class EmailConsumer {
     public void receivePasswordResetMessage(PasswordResetMessage message) {
         if (isDuplicated(message.getEventId())) return;
 
-        logger.info("Recebido pedido v{} de reset para: {}", message.getVersion(), message.getEmail());
+        logger.info("Recebido pedido v{} de reset para: {}", message.getVersion(), mascararEmail(message.getEmail()));
 
         try {
             switch (message.getVersion()) {
@@ -73,7 +75,7 @@ public class EmailConsumer {
     public void receiveLowStockMessage(EstoqueBaixoMessage message) {
         if (isDuplicated(message.eventId())) return;
 
-        logger.info("Recebido alerta v{} de estoque: {}", message.version(), message.nomeProduto());
+        logger.info("Recebido alerta v{} de estoque: {}", message.version(), sanitizar(message.nomeProduto()));
 
         try {
             switch (message.version()) {
@@ -98,6 +100,17 @@ public class EmailConsumer {
 
     // --- MÉTODOS AUXILIARES ---
 
+    private static String sanitizar(String nome) {
+        return nome == null ? "" : CONTROLES.matcher(nome).replaceAll(" ");
+    }
+
+    private static String mascararEmail(String email) {
+        if (email == null || CONTROLES.matcher(email).find()) return "***";
+        int separador = email.indexOf('@');
+        if (separador <= 0 || separador != email.lastIndexOf('@') || separador == email.length() - 1) return "***";
+        return email.charAt(0) + "***" + email.substring(separador);
+    }
+
     private boolean isDuplicated(String eventId) {
         if (eventId != null && processedEventRepository.existsByEventId(eventId)) {
             logger.warn("♻️ Evento duplicado ignorado: {}", eventId);
@@ -116,8 +129,9 @@ public class EmailConsumer {
     private void processarEstoqueV1(EstoqueBaixoMessage dados) {
         SimpleMailMessage email = new SimpleMailMessage();
         email.setTo(adminEmail);
-        email.setSubject("[v1] ALERTA: Estoque Baixo - " + dados.nomeProduto());
-        email.setText("Produto: " + dados.nomeProduto() + "\nEstoque Atual: " + dados.estoqueAtual());
+        String nomeProduto = sanitizar(dados.nomeProduto());
+        email.setSubject("[v1] ALERTA: Estoque Baixo - " + nomeProduto);
+        email.setText("Produto: " + nomeProduto + "\nEstoque Atual: " + dados.estoqueAtual());
         mailSender.send(email);
     }
 
@@ -128,7 +142,7 @@ public class EmailConsumer {
 
         String link = frontendBaseUrl + "/redefinir-senha?token=" + dados.getToken();
 
-        email.setText("Olá " + dados.getNomeUsuario() + ",\n\n" +
+        email.setText("Olá " + sanitizar(dados.getNomeUsuario()) + ",\n\n" +
                 "Recebemos um pedido para redefinir sua senha.\n" +
                 "Clique no link abaixo (Válido por 1 hora):\n\n" +
                 link + "\n\n" +
