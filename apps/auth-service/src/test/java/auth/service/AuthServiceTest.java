@@ -27,6 +27,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -57,6 +58,9 @@ class AuthServiceTest {
 
     @Mock
     private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private JdbcTemplate jdbcTemplate;
 
     @InjectMocks
     private AuthService authService;
@@ -293,6 +297,7 @@ class AuthServiceTest {
             assertThat(usuario.getSenha()).isEqualTo("$2a$12$novaSenhaHash");
             verify(usuarioRepository).save(usuario);
             verify(tokenRepository).delete(resetToken);
+            verify(jdbcTemplate).update("DELETE FROM oauth2_authorization WHERE principal_name = ?", "usuario@petshop.com");
         }
 
         @Test
@@ -313,6 +318,7 @@ class AuthServiceTest {
 
             verify(usuarioRepository, never()).save(any());
             verify(tokenRepository, never()).delete(any());
+            verifyNoInteractions(jdbcTemplate);
         }
 
         @Test

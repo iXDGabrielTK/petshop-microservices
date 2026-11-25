@@ -21,6 +21,7 @@ import common.exception.ResourceNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -39,17 +40,20 @@ public class AuthService {
     private final RabbitTemplate rabbitTemplate;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JdbcTemplate jdbcTemplate;
 
     public AuthService(UsuarioRepository usuarioRepository,
                        PasswordResetTokenRepository tokenRepository,
                        RabbitTemplate rabbitTemplate,
                        RoleRepository roleRepository,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       JdbcTemplate jdbcTemplate) {
         this.usuarioRepository = usuarioRepository;
         this.tokenRepository = tokenRepository;
         this.rabbitTemplate = rabbitTemplate;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
@@ -162,5 +166,6 @@ public class AuthService {
         usuarioRepository.save(usuario);
 
         tokenRepository.delete(resetToken);
+        jdbcTemplate.update("DELETE FROM oauth2_authorization WHERE principal_name = ?", usuario.getEmail());
     }
 }

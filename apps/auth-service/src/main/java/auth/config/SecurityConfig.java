@@ -19,6 +19,9 @@ import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import common.security.RsaKeyUtils;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,9 +41,11 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.jackson2.SecurityJackson2Modules;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.authorization.*;
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
@@ -48,6 +53,7 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Toke
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
@@ -57,11 +63,14 @@ import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.OncePerRequestFilter;
 
+import java.io.IOException;
 import java.security.KeyPair;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -156,6 +165,8 @@ public class SecurityConfig {
                                 "/oauth2/**",
                                 "/api/**",
                                 "/actuator/**",
+                                // /logout é acionado pela SPA cross-origin via fetch sem leitura do cookie CSRF;
+                                // a proteção contra CSRF é feita por validação estrita de Origin/Referer antes do LogoutFilter.
                                 "/logout"
                         )
                 )
@@ -171,11 +182,15 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+
                 .formLogin(form -> form
                         .loginPage("/login")
                         .permitAll()
                         .successHandler(customAuthenticationSuccessHandler())
                 )
+
+                .addFilterBefore(logoutOriginValidationFilter(), LogoutFilter.class)
 
                 .logout(logout -> logout
                         .logoutUrl("/logout")
@@ -185,6 +200,33 @@ public class SecurityConfig {
                 );
 
         return http.build();
+    }
+
+    private OncePerRequestFilter logoutOriginValidationFilter() {
+        return new OncePerRequestFilter() {
+            @Override
+            protected void doFilterInternal(
+                    HttpServletRequest request,
+                    HttpServletResponse response,
+                    FilterChain filterChain) throws ServletException, IOException {
+                if ("/logout".equals(request.getRequestURI())) {
+                    String origin = request.getHeader("Origin");
+                    String referer = request.getHeader("Referer");
+                    String selectedHeader = origin == null ? "Referer" : "Origin";
+                    if (Collections.list(request.getHeaders(selectedHeader)).size() > 1
+                            || !FrontendOrigin.acceptsHeader(frontendBaseUrl, origin, referer)) {
+                        response.sendError(HttpServletResponse.SC_FORBIDDEN, "CSRF: Invalid Origin/Referer");
+                        return;
+                    }
+                }
+                filterChain.doFilter(request, response);
+            }
+        };
+    }
+
+    @Bean
+    public JwtDecoder jwtDecoder(JWKSource<SecurityContext> jwkSource) {
+        return OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
     }
 
     // --- BEANS ESSENCIAIS ---

@@ -11,19 +11,30 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
+import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CookieClearingLogoutHandler — Testes Unitários de Expiração de Cookies no Logout")
 class CookieClearingLogoutHandlerTest {
+
+    @Mock
+    private OAuth2AuthorizationService authorizationService;
 
     @InjectMocks
     private CookieClearingLogoutHandler logoutHandler;
@@ -58,5 +69,39 @@ class CookieClearingLogoutHandlerTest {
         assertThat(jsessionCookie).isNotNull();
         assertThat(jsessionCookie.getPath()).isEqualTo("/");
         assertThat(jsessionCookie.getMaxAge()).isEqualTo(0);
+        verifyNoInteractions(authorizationService);
+    }
+
+    @Test
+    @DisplayName("Deve revogar autorização no servidor quando cookie refresh_token estiver presente e existir no OAuth2AuthorizationService")
+    void deveRevogarAutorizacaoQuandoCookieRefreshTokenPresente() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setCookies(new Cookie("refresh_token", "rt-segredo-123"));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        OAuth2Authorization authorization = mock(OAuth2Authorization.class);
+        when(authorizationService.findByToken("rt-segredo-123", OAuth2TokenType.REFRESH_TOKEN))
+                .thenReturn(authorization);
+
+        logoutHandler.logout(request, response, null);
+
+        verify(authorizationService).findByToken("rt-segredo-123", OAuth2TokenType.REFRESH_TOKEN);
+        verify(authorizationService).remove(authorization);
+        assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).contains("Max-Age=0");
+    }
+
+    @Test
+    @DisplayName("Deve limpar cookies sem falhar quando cookie refresh_token não corresponder a autorização ativa")
+    void deveLimparCookiesQuandoRefreshTokenNaoEncontrado() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setCookies(new Cookie("refresh_token", "rt-inexistente"));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(authorizationService.findByToken("rt-inexistente", OAuth2TokenType.REFRESH_TOKEN))
+                .thenReturn(null);
+
+        logoutHandler.logout(request, response, null);
+
+        verify(authorizationService).findByToken("rt-inexistente", OAuth2TokenType.REFRESH_TOKEN);
+        verify(authorizationService, never()).remove(org.mockito.ArgumentMatchers.any());
+        assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).contains("Max-Age=0");
     }
 }
