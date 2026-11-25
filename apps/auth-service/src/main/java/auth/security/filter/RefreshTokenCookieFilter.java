@@ -6,6 +6,7 @@
 package auth.security.filter;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.FilterChain;
@@ -28,6 +29,7 @@ import java.time.Duration;
 public class RefreshTokenCookieFilter extends OncePerRequestFilter {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
+            .enable(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     @Value("${auth.cookie.secure}")
@@ -57,8 +59,12 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
             try {
                 ObjectNode json = MAPPER.readValue(body, ObjectNode.class);
 
-                if (json.has("refresh_token")) {
-                    String refreshToken = json.get("refresh_token").asText();
+                JsonNode token = json.get("refresh_token");
+                if (token != null) {
+                    if (!token.isTextual() || token.textValue().isBlank()) {
+                        throw new IllegalArgumentException("Formato de refresh token inválido");
+                    }
+                    String refreshToken = token.textValue();
 
                     ResponseCookie cookie = ResponseCookie.from("refresh_token", refreshToken)
                             .httpOnly(true)

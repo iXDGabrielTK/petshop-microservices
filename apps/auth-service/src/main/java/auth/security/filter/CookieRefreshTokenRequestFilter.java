@@ -39,7 +39,9 @@ public class CookieRefreshTokenRequestFilter implements Filter {
             String origin = req.getHeader("Origin");
             String referer = req.getHeader("Referer");
 
-            if (!FrontendOrigin.acceptsHeader(frontendUrl, origin, referer)) {
+            String selectedHeader = origin == null ? "Referer" : "Origin";
+            if (Collections.list(req.getHeaders(selectedHeader)).size() > 1
+                    || !FrontendOrigin.acceptsHeader(frontendUrl, origin, referer)) {
                 res.sendError(HttpServletResponse.SC_FORBIDDEN, "CSRF: Invalid Origin/Referer");
                 return;
             }

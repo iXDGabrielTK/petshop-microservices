@@ -218,8 +218,16 @@ class SecurityConfigTest {
     @ParameterizedTest
     @CsvSource({
             "/authorized,/authorized",
+            "/conta?voltar=%2Fpedidos,/conta?voltar=%2Fpedidos",
             "http://LOCALHOST:5173/app,http://LOCALHOST:5173/app",
             "//example.org/app,http://localhost:5173",
+            "/\\example.org,http://localhost:5173",
+            "/%5cexample.org,http://localhost:5173",
+            "/%2fexample.org,http://localhost:5173",
+            "/app%0d%0a,http://localhost:5173",
+            "/app\tperfil,http://localhost:5173",
+            "data:text/plain, http://localhost:5173",
+            "http://usuario@localhost:5173/app,http://localhost:5173",
             "https://localhost:5173/app,http://localhost:5173",
             "http://localhost:5174,http://localhost:5173",
             "https://example.org/,http://localhost:5173"

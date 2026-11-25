@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -107,15 +107,38 @@ class CookieRefreshTokenRequestFilterTest {
             verify(chain, never()).doFilter(any(), any());
         }
 
-        @Test
-        void rejeitaOriginInvalidaMesmoComRefererValido() throws Exception {
+        @ParameterizedTest
+        @ValueSource(strings = {"null", "", "https://[", "https://usuario@shop.example",
+                "https://shop.example:", "https://shop.example:abc", "/app"})
+        void rejeitaCabecalhoInvalidoAntesDeEncaminhar(String invalido) throws Exception {
+            ReflectionTestUtils.setField(filter, "frontendUrl", "https://shop.example");
+            for (String header : new String[]{"Origin", "Referer"}) {
+                MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+                request.setParameter("grant_type", "refresh_token");
+                request.addHeader(header, invalido);
+                if ("Origin".equals(header)) request.addHeader("Referer", "https://shop.example/app");
+                MockHttpServletResponse response = new MockHttpServletResponse();
+                FilterChain chain = mock(FilterChain.class);
+
+                filter.doFilter(request, response, chain);
+
+                assertThat(response.getStatus()).isEqualTo(403);
+                verifyNoInteractions(chain);
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"Origin", "Referer"})
+        void rejeitaCabecalhoAmbiguo(String header) throws Exception {
             MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
             request.setParameter("grant_type", "refresh_token");
-            request.addHeader("Origin", "null");
-            request.addHeader("Referer", FRONTEND_URL + "/app");
+            request.addHeader(header, FRONTEND_URL);
+            request.addHeader(header, "https://outro.example");
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(request, response, new MockFilterChain());
+            FilterChain chain = mock(FilterChain.class);
+            filter.doFilter(request, response, chain);
             assertThat(response.getStatus()).isEqualTo(403);
+            verifyNoInteractions(chain);
         }
 
         @ParameterizedTest
@@ -129,8 +152,23 @@ class CookieRefreshTokenRequestFilterTest {
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Referer", referer);
             MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilter(request, response, new MockFilterChain());
+            FilterChain chain = mock(FilterChain.class);
+            filter.doFilter(request, response, chain);
             assertThat(response.getStatus()).isEqualTo(esperado);
+            verify(chain, times(esperado == 200 ? 1 : 0)).doFilter(request, response);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"http://shop.example:80,http://SHOP.example", "https://shop.example,https://shop.example:443"})
+        void aceitaPortaPadraoEquivalente(String frontend, String origin) throws Exception {
+            ReflectionTestUtils.setField(filter, "frontendUrl", frontend);
+            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            request.setParameter("grant_type", "refresh_token");
+            request.addHeader("Origin", origin);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            FilterChain chain = mock(FilterChain.class);
+            filter.doFilter(request, response, chain);
+            verify(chain).doFilter(request, response);
         }
 
         @Test

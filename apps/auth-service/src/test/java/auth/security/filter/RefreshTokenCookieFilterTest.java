@@ -15,9 +15,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.core.io.support.ResourcePropertySource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -39,6 +45,15 @@ class RefreshTokenCookieFilterTest {
     void setUp() {
         ReflectionTestUtils.setField(filter, "isCookieSecure", true);
         ReflectionTestUtils.setField(filter, "cookieSameSite", "Lax");
+    }
+
+    @Test
+    void habilitaSecurePorPadraoEPermiteHttpNoAmbienteLocal() throws IOException {
+        MockEnvironment environment = new MockEnvironment();
+        environment.getPropertySources().addLast(new ResourcePropertySource("classpath:application.properties"));
+        assertThat(environment.getRequiredProperty("auth.cookie.secure", Boolean.class)).isTrue();
+        environment.setProperty("AUTH_COOKIE_SECURE", "false");
+        assertThat(environment.getRequiredProperty("auth.cookie.secure", Boolean.class)).isFalse();
     }
 
     @Test
@@ -155,13 +170,18 @@ class RefreshTokenCookieFilterTest {
         assertThat(response.getContentAsString(StandardCharsets.UTF_8)).contains("invalid_grant");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"refresh_token\":\"segredo\", ",
+            "{\"refresh_token\":\"segredo\"} {}",
+            "{\"refresh_token\":\"segredo\",\"refresh_token\":null}",
+            "{\"refresh_token\":{\"valor\":\"segredo\"}}"
+    })
+    @ExtendWith(OutputCaptureExtension.class)
     @DisplayName("Deve descartar a resposta OAuth2 inválida antes de responder 500")
-    void deveDescartarBodySeFalharParseJson() throws ServletException, IOException {
+    void deveDescartarBodySeFalharParseJson(String invalidJson, CapturedOutput output) throws ServletException, IOException {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
         MockHttpServletResponse response = new MockHttpServletResponse();
-
-        String invalidJson = "{\"refresh_token\":\"segredo\", ";
 
         FilterChain filterChain = (req, res) -> {
             ContentCachingResponseWrapper wrapper = (ContentCachingResponseWrapper) res;
@@ -174,5 +194,6 @@ class RefreshTokenCookieFilterTest {
         assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).isNull();
         assertThat(response.getStatus()).isEqualTo(500);
         assertThat(response.getContentAsString(StandardCharsets.UTF_8)).isEqualTo("{\"error\":\"server_error\"}");
+        assertThat(output.getAll()).contains("Falha ao processar a resposta OAuth2").doesNotContain("segredo");
     }
 }

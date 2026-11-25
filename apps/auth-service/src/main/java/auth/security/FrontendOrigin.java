@@ -29,8 +29,12 @@ public final class FrontendOrigin {
         if (target == null) return false;
         try {
             URI uri = new URI(target);
+            if (uri.isOpaque() || uri.getPath().indexOf('\\') >= 0
+                    || hasControl(uri.getPath()) || hasControl(uri.getQuery()) || hasControl(uri.getFragment())) {
+                return false;
+            }
             if (target.startsWith("/") && !target.startsWith("//")) {
-                return true;
+                return !uri.getPath().startsWith("//");
             }
             return sameOrigin(uri, new URI(frontendUrl));
         } catch (URISyntaxException e) {
@@ -38,11 +42,16 @@ public final class FrontendOrigin {
         }
     }
 
+    private static boolean hasControl(String component) {
+        return component != null && component.chars().anyMatch(Character::isISOControl);
+    }
+
     private static boolean sameOrigin(URI uri, URI frontend) {
         String scheme = uri.getScheme();
         return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
                 && scheme.equalsIgnoreCase(frontend.getScheme())
                 && uri.getRawUserInfo() == null && uri.getHost() != null
+                && !uri.getRawAuthority().endsWith(":")
                 && uri.getHost().equalsIgnoreCase(frontend.getHost())
                 && effectivePort(uri) == effectivePort(frontend);
     }
