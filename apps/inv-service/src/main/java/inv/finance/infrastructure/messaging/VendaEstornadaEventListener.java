@@ -35,6 +35,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class VendaEstornadaEventListener {
 
+    private static final int MAX_PAYLOAD_LOG = 256;
+
     private final LancamentoFinanceiroRepository lancamentoRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
@@ -55,28 +57,30 @@ public class VendaEstornadaEventListener {
             try {
                 event = objectMapper.readValue(m.getBody(), VendaEstornadaEvent.class);
             } catch (Exception e) {
-                log.error("Erro não-retentável ao desserializar payload de Message para VendaEstornadaEvent. Mensagem enviada para DLQ.", e);
+                log.error("Erro ao desserializar Message para VendaEstornadaEvent ({}). Mensagem enviada para DLQ.", e.getClass().getSimpleName());
                 throw new AmqpRejectAndDontRequeueException(e);
             }
         } else if (message instanceof String s) {
             try {
                 event = objectMapper.readValue(s, VendaEstornadaEvent.class);
             } catch (JsonProcessingException e) {
-                log.error("Erro não-retentável ao desserializar JSON de VendaEstornadaEvent: {}. Mensagem enviada para DLQ.", s, e);
+                String trecho = s.substring(0, Math.min(s.length(), MAX_PAYLOAD_LOG)).replace('\r', ' ').replace('\n', ' ');
+                log.error("Erro ao desserializar JSON de VendaEstornadaEvent ({}): {}. Mensagem enviada para DLQ.",
+                        e.getClass().getSimpleName(), trecho);
                 throw new AmqpRejectAndDontRequeueException(e);
             }
         } else if (message instanceof byte[] b) {
             try {
                 event = objectMapper.readValue(b, VendaEstornadaEvent.class);
             } catch (Exception e) {
-                log.error("Erro não-retentável ao desserializar bytes de VendaEstornadaEvent. Mensagem enviada para DLQ.", e);
+                log.error("Erro ao desserializar bytes de VendaEstornadaEvent ({}). Mensagem enviada para DLQ.", e.getClass().getSimpleName());
                 throw new AmqpRejectAndDontRequeueException(e);
             }
         } else {
             try {
                 event = objectMapper.convertValue(message, VendaEstornadaEvent.class);
             } catch (Exception e) {
-                log.error("Tipo de mensagem não suportado para VendaEstornadaEvent: {}. Mensagem enviada para DLQ.", message.getClass().getName(), e);
+                log.error("Tipo de mensagem não suportado para VendaEstornadaEvent: {}. Mensagem enviada para DLQ.", message.getClass().getName());
                 throw new AmqpRejectAndDontRequeueException(e);
             }
         }

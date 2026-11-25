@@ -172,6 +172,29 @@ class InventarioHttpIT {
         esperarOrdemIds("quantidade,desc", List.of(id4, id2, id1, id3));
     }
 
+    @Test
+    void trataCuringasComoTextoELimitaAmbosOsFiltros() throws Exception {
+        Produto literal = salvarProdutoPadrao();
+        literal.setNome("Ração 100%_\\teste");
+        produtoRepository.saveAndFlush(literal);
+        Produto outro = new Produto();
+        outro.setNome("Ração comum");
+        outro.setUnidadeMedida(UnidadeMedida.UN);
+        outro.setPrecoVenda(BigDecimal.ONE);
+        outro.setEstoqueDisponivel(BigDecimal.TEN);
+        produtoRepository.saveAndFlush(outro);
+
+        for (String filtro : List.of("nome", "busca")) {
+            for (String termo : List.of("%", "_", "\\", "%_\\")) {
+                mvc.perform(get("/produtos").param(filtro, termo))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.totalElements").value(1))
+                        .andExpect(jsonPath("$.content[0].id").value(literal.getId()));
+            }
+            mvc.perform(get("/produtos").param(filtro, "x".repeat(101))).andExpect(status().isBadRequest());
+        }
+    }
+
     private Produto salvarProdutoPadrao() {
         Produto produto = new Produto();
         produto.setCodigoBarras("7891234567890");

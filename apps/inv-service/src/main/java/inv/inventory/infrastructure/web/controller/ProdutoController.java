@@ -11,8 +11,13 @@ import org.springframework.data.domain.Sort;
 import inv.inventory.infrastructure.web.dto.ProdutoResponse;
 import inv.inventory.domain.model.Produto;
 import inv.inventory.usecase.ProdutoService;
+import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -20,6 +25,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+@Validated
 @RestController
 @RequestMapping("/produtos")
 public class ProdutoController {
@@ -49,6 +55,11 @@ public class ProdutoController {
        return ResponseEntity.ok(response);
     }
 
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail parametroInvalido() {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Parâmetro de busca inválido.");
+    }
+
     @GetMapping("/ean/{ean}")
     public ResponseEntity<ProdutoResumoResponse> buscarPorEan(
             @PathVariable
@@ -60,8 +71,8 @@ public class ProdutoController {
 
     @GetMapping
     public ResponseEntity<Page<ProdutoResumoResponse>> listar(
-            @RequestParam(required = false) String nome,
-            @RequestParam(required = false) String busca,
+            @RequestParam(required = false) @Size(max = 100) String nome,
+            @RequestParam(required = false) @Size(max = 100) String busca,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size
     ) {

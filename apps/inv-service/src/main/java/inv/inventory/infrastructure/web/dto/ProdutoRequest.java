@@ -10,13 +10,14 @@ import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 
 public record ProdutoRequest(
+        @Pattern(regexp = "^\\d{8,14}$", message = "O EAN deve conter entre 8 e 14 dígitos numéricos")
         String codigoBarras,
 
         @NotBlank(message = "O nome do produto é obrigatório")
         @Size(max = 255)
         @Pattern(
-                regexp = "^[^<>{}]*$",
-                message = "HTML não é permitido neste campo"
+                regexp = "^[^<>{}\r\n\\p{Cntrl}]*$",
+                message = "O nome não pode conter marcação ou caracteres de controle"
         )
         String nome,
 
@@ -25,9 +26,15 @@ public record ProdutoRequest(
 
         @NotNull
         @PositiveOrZero(message = "O estoque inicial não pode ser negativo")
+        @Digits(integer = 7, fraction = 3)
         BigDecimal quantidadeEstoque,
 
         @NotNull
         @Positive(message = "O preço de venda deve ser maior que zero")
+        @Digits(integer = 8, fraction = 2)
         BigDecimal precoVenda
-) {}
+) {
+    public ProdutoRequest {
+        if (codigoBarras != null && codigoBarras.isBlank()) codigoBarras = null;
+    }
+}

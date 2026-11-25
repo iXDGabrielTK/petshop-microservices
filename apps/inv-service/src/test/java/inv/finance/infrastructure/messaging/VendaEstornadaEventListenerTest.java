@@ -5,6 +5,9 @@
  */
 package inv.finance.infrastructure.messaging;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import inv.finance.domain.model.TipoLancamento;
 import inv.finance.infrastructure.persistence.LancamentoFinanceiroRepository;
@@ -20,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.core.Message;
 import org.springframework.context.ApplicationEventPublisher;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +50,28 @@ class VendaEstornadaEventListenerTest {
     private ObjectMapper objectMapper;
 
     private VendaEstornadaEventListener listener;
+
+    @Test
+    void limitaPayloadNoLogDeErro() {
+        Logger logger = (Logger) LoggerFactory.getLogger(VendaEstornadaEventListener.class);
+        ListAppender<ILoggingEvent> eventos = new ListAppender<>();
+        eventos.start();
+        logger.addAppender(eventos);
+        try {
+            String payload = "inicio\r\nlinha" + "x".repeat(256) + "fim-do-payload";
+            assertThatThrownBy(() -> listener.handleVendaEstornada(payload))
+                    .isInstanceOf(AmqpRejectAndDontRequeueException.class);
+            assertThat(eventos.list).singleElement().satisfies(evento -> {
+                assertThat(evento.getFormattedMessage()).contains("inicio  linha")
+                        .doesNotContain("\r", "\n", "fim-do-payload");
+                assertThat(evento.getArgumentArray()[1]).asString().hasSize(256);
+                assertThat(evento.getThrowableProxy()).isNull();
+            });
+        } finally {
+            logger.detachAppender(eventos);
+            eventos.stop();
+        }
+    }
 
     @BeforeEach
     void setUp() {

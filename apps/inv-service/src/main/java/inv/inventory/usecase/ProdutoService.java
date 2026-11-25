@@ -26,10 +26,8 @@ public class ProdutoService {
 
     @Transactional
     public Produto criarProduto(ProdutoRequest request) {
-        if (request.codigoBarras() != null && !request.codigoBarras().isBlank()) {
-            if (produtoRepository.existsByCodigoBarras(request.codigoBarras())) {
-                throw new BusinessException("Já existe um produto com este código de barras.");
-            }
+        if (request.codigoBarras() != null && produtoRepository.existsByCodigoBarras(request.codigoBarras())) {
+            throw new BusinessException("Já existe um produto com este código de barras.");
         }
 
         Produto produto = new Produto();
@@ -47,6 +45,7 @@ public class ProdutoService {
     }
 
     public Page<Produto> buscarPorNome(String nome, Pageable pageable) {
+        // A consulta derivada Containing aplica o escape de LIKE ao vincular o parâmetro.
         return produtoRepository.findByNomeContainingIgnoreCase(nome, pageable);
     }
 

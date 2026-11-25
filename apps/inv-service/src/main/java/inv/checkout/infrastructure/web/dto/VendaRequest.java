@@ -6,11 +6,13 @@
 package inv.checkout.infrastructure.web.dto;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public record VendaRequest(
-        @NotEmpty(message = "O carrinho não pode estar vazio")
+        @NotNull(message = "O carrinho não pode estar vazio")
+        @Size(min = 1, max = 100, message = "O carrinho deve conter entre 1 e 100 itens")
         @Valid
-        List<ItemVendaRequest> itens
+        List<@NotNull ItemVendaRequest> itens
 ) {}
