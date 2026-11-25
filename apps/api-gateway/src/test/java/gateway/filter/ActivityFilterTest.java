@@ -16,30 +16,45 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.core.Ordered;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
-import org.springframework.data.redis.core.ReactiveZSetOperations;
+import org.springframework.data.redis.core.ReactiveValueOperations;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.util.UUID;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ActivityFilter — Testes Unitários do Filtro Reativo de Telemetria de Atividade")
+@DisplayName("ActivityFilter — Testes Unitários de Telemetria por Buckets por Minuto")
 class ActivityFilterTest {
+
+    private static final Instant FIXED_NOW = Instant.parse("2026-11-25T15:30:15Z");
 
     @Mock
     private ReactiveRedisTemplate<String, String> redisTemplate;
 
     @Mock
-    private ReactiveZSetOperations<String, String> zSetOperations;
+    private ReactiveValueOperations<String, String> valueOperations;
 
     @Mock
     private GatewayFilterChain chain;
@@ -47,101 +62,111 @@ class ActivityFilterTest {
     @Captor
     private ArgumentCaptor<String> keyCaptor;
 
-    @Captor
-    private ArgumentCaptor<String> memberCaptor;
-
-    @Captor
-    private ArgumentCaptor<Double> scoreCaptor;
-
+    private Clock fixedClock;
     private ActivityFilter activityFilter;
     private ServerWebExchange exchange;
 
     @BeforeEach
     void setUp() {
-        lenient().when(redisTemplate.opsForZSet()).thenReturn(zSetOperations);
-        lenient().when(zSetOperations.add(anyString(), anyString(), anyDouble()))
-                .thenReturn(Mono.just(Boolean.TRUE));
-        lenient().when(chain.filter(any()))
-                .thenReturn(Mono.empty());
+        fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
 
-        activityFilter = new ActivityFilter(redisTemplate);
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(valueOperations.increment(anyString())).thenReturn(Mono.just(1L));
+        lenient().when(redisTemplate.expire(anyString(), any(Duration.class))).thenReturn(Mono.just(Boolean.TRUE));
+        lenient().when(chain.filter(any())).thenReturn(Mono.empty());
+
+        activityFilter = new ActivityFilter(redisTemplate, fixedClock);
 
         MockServerHttpRequest request = MockServerHttpRequest.get("/produtos/123").build();
         exchange = MockServerWebExchange.from(request);
     }
 
     @Nested
-    @DisplayName("Execução com Sucesso no Fluxo Reativo")
+    @DisplayName("Execução com Sucesso e Memória O(1) por Minuto")
     class SucessoTests {
 
         @Test
-        @DisplayName("Deve registrar timestamp atual no ZSet e repassar a cadeia sem executar purga na requisição")
-        void deveExecutarFiltroComSucesso() {
-            long before = System.currentTimeMillis();
+        @DisplayName("Deve incrementar o bucket do minuto corrente com TTL de 1 hora sem usar ZSet")
+        void deveIncrementarBucketComTtl() {
+            String expectedKey = TelemetriaKeys.atividadeBucketKey(FIXED_NOW);
 
-            when(zSetOperations.add(anyString(), anyString(), anyDouble()))
-                    .thenReturn(Mono.just(Boolean.TRUE));
-            when(chain.filter(same(exchange)))
-                    .thenReturn(Mono.empty());
-
-            // Execução via StepVerifier reativo
             StepVerifier.create(activityFilter.filter(exchange, chain))
                     .verifyComplete();
 
-            long after = System.currentTimeMillis();
-
-            // 1. Validação da adição ao ZSet (TelemetriaKeys.ATIVIDADE_ZSET)
-            verify(zSetOperations).add(keyCaptor.capture(), memberCaptor.capture(), scoreCaptor.capture());
-            assertThat(keyCaptor.getValue()).isEqualTo(TelemetriaKeys.ATIVIDADE_ZSET);
-
-            // Membro deve ser um UUID válido
-            UUID parsedUuid = UUID.fromString(memberCaptor.getValue());
-            assertThat(parsedUuid).isNotNull();
-
-            // Score deve ser o timestamp atual em milissegundos
-            Double score = scoreCaptor.getValue();
-            assertThat(score).isNotNull();
-            assertThat(score.longValue())
-                    .isGreaterThanOrEqualTo(before)
-                    .isLessThanOrEqualTo(after);
-
-            // 2. Garantir que removeRangeByScore NÃO é chamado no caminho crítico da requisição
-            verify(zSetOperations, never()).removeRangeByScore(anyString(), any());
-
-            // 3. Validação do repasse na cadeia com o mesmo ServerWebExchange
+            verify(valueOperations).increment(expectedKey);
+            verify(redisTemplate).expire(expectedKey, TelemetriaKeys.ATIVIDADE_BUCKET_TTL);
+            verify(redisTemplate, never()).opsForZSet();
             verify(chain).filter(exchange);
+        }
+
+        @Test
+        @DisplayName("Deve agregar múltiplas requisições no mesmo minuto em uma única chave (O(1) por minuto)")
+        void deveAgregarRequisicoesNoMesmoMinutoEmUnicaChave() {
+            for (int i = 0; i < 50; i++) {
+                StepVerifier.create(activityFilter.filter(exchange, chain))
+                        .verifyComplete();
+            }
+
+            verify(valueOperations, times(50)).increment(keyCaptor.capture());
+            Set<String> distinctKeys = new HashSet<>(keyCaptor.getAllValues());
+            assertThat(distinctKeys).containsExactly(TelemetriaKeys.atividadeBucketKey(FIXED_NOW));
+        }
+
+        @Test
+        @DisplayName("Deve usar novo bucket quando avançar para o minuto seguinte")
+        void deveUsarNovoBucketNoMinutoSeguinte() {
+            Instant nextMinute = FIXED_NOW.plusSeconds(60);
+            ActivityFilter nextMinuteFilter = new ActivityFilter(redisTemplate, Clock.fixed(nextMinute, ZoneOffset.UTC));
+
+            StepVerifier.create(activityFilter.filter(exchange, chain)).verifyComplete();
+            StepVerifier.create(nextMinuteFilter.filter(exchange, chain)).verifyComplete();
+
+            verify(valueOperations).increment(TelemetriaKeys.atividadeBucketKey(FIXED_NOW));
+            verify(valueOperations).increment(TelemetriaKeys.atividadeBucketKey(nextMinute));
+        }
+
+        @Test
+        @DisplayName("Deve executar após o RequestRateLimiter e antes do roteamento Netty")
+        void deveExecutarComOrdemAposRateLimiter() {
+            assertThat(activityFilter.getOrder()).isGreaterThan(1);
+            assertThat(activityFilter.getOrder()).isLessThan(Ordered.LOWEST_PRECEDENCE);
         }
     }
 
     @Nested
-    @DisplayName("Propagação de Erros e Resiliência do Pipeline Reativo")
+    @DisplayName("Resiliência do Pipeline Reativo")
     class TratamentoErroTests {
 
         @Test
-        @DisplayName("Deve tolerar falha de conexão do Redis no add sem quebrar o pipeline e prosseguir na cadeia")
-        void deveTolerarFalhaNoAddSemQuebrarPipeline() {
-            RuntimeException redisEx = new RuntimeException("Redis connection refused");
-            when(zSetOperations.add(anyString(), anyString(), anyDouble()))
-                    .thenReturn(Mono.error(redisEx));
-            when(chain.filter(same(exchange)))
-                    .thenReturn(Mono.empty());
+        @DisplayName("Deve tolerar falha no increment do Redis sem quebrar o pipeline")
+        void deveTolerarFalhaNoIncrement() {
+            when(valueOperations.increment(anyString()))
+                    .thenReturn(Mono.error(new RuntimeException("Redis connection refused")));
 
             StepVerifier.create(activityFilter.filter(exchange, chain))
                     .verifyComplete();
 
-            verify(zSetOperations).add(anyString(), anyString(), anyDouble());
+            verify(valueOperations).increment(anyString());
+            verify(chain).filter(exchange);
+        }
+
+        @Test
+        @DisplayName("Deve tolerar falha no expire do Redis sem quebrar o pipeline")
+        void deveTolerarFalhaNoExpire() {
+            when(redisTemplate.expire(anyString(), eq(TelemetriaKeys.ATIVIDADE_BUCKET_TTL)))
+                    .thenReturn(Mono.error(new RuntimeException("Redis timeout")));
+
+            StepVerifier.create(activityFilter.filter(exchange, chain))
+                    .verifyComplete();
+
             verify(chain).filter(exchange);
         }
 
         @Test
         @DisplayName("Deve propagar erro downstream quando o chain subsequente falhar")
         void devePropagarErroQuandoChainFalhar() {
-            when(zSetOperations.add(anyString(), anyString(), anyDouble()))
-                    .thenReturn(Mono.just(Boolean.TRUE));
-
             RuntimeException chainEx = new RuntimeException("Downstream route failure");
-            when(chain.filter(same(exchange)))
-                    .thenReturn(Mono.error(chainEx));
+            when(chain.filter(same(exchange))).thenReturn(Mono.error(chainEx));
 
             StepVerifier.create(activityFilter.filter(exchange, chain))
                     .expectErrorMatches(ex -> ex instanceof RuntimeException && "Downstream route failure".equals(ex.getMessage()))

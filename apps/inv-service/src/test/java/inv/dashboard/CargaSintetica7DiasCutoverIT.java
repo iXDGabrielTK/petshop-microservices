@@ -69,12 +69,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -211,7 +213,10 @@ class CargaSintetica7DiasCutoverIT {
         vendaRepository.deleteAll();
         produtoRepository.deleteAll();
 
-        redisTemplate.delete(TelemetriaKeys.ATIVIDADE_ZSET);
+        Set<String> bucketKeys = redisTemplate.keys(TelemetriaKeys.ATIVIDADE_BUCKET_PREFIX + "*");
+        if (bucketKeys != null && !bucketKeys.isEmpty()) {
+            redisTemplate.delete(bucketKeys);
+        }
 
         Cache cache = cacheManager.getCache(DashboardCacheConfig.CACHE_NAME);
         if (cache != null) {
@@ -339,11 +344,11 @@ class CargaSintetica7DiasCutoverIT {
         criarLancamentoLedger(vHoje2.getId(), TipoLancamento.CREDITO, new BigDecimal("30.00"), d7.atTime(11, 15));
 
         // Telemetria no Redis: 5 acessos na última hora, 1 antigo
-        long agoraMillis = Instant.now().toEpochMilli();
+        Instant agora = Instant.now();
         for (int i = 1; i <= 5; i++) {
-            redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "user-session-" + i, agoraMillis - (i * 60_000));
+            redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agora.minus(Duration.ofMinutes(i))));
         }
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "user-session-old", agoraMillis - (2 * 3600_000));
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agora.minus(Duration.ofHours(2))));
 
         // =========================================================================
         // ETAPA DE PROCESSAMENTO: CATCH-UP / BACKFILL DE TODA A CARGA

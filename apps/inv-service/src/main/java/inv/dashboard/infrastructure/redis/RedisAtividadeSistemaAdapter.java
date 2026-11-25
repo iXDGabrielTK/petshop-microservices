@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
 
@@ -41,11 +43,26 @@ class RedisAtividadeSistemaAdapter implements AtividadeSistemaPort {
         if (janela.isNegative() || janela.isZero()) {
             throw new IllegalArgumentException("A janela de atividade deve ser positiva");
         }
-        long agora = clock.millis();
-        long inicio = agora - janela.toMillis();
+
+        long agoraEpochMinuto = TelemetriaKeys.epochMinute(clock.instant());
+        long quantidadeBuckets = Math.max(1L, Math.ceilDiv(janela.toSeconds(), 60L));
+        List<String> chaves = new ArrayList<>((int) quantidadeBuckets);
+        for (long offset = 0; offset < quantidadeBuckets; offset++) {
+            chaves.add(TelemetriaKeys.atividadeBucketKey(agoraEpochMinuto - offset));
+        }
+
         try {
-            Long count = redis.opsForZSet().count(TelemetriaKeys.ATIVIDADE_ZSET, inicio, agora);
-            return count != null ? OptionalLong.of(count) : OptionalLong.of(0L);
+            List<String> valores = redis.opsForValue().multiGet(chaves);
+            if (valores == null || valores.isEmpty()) {
+                return OptionalLong.of(0L);
+            }
+            long total = 0L;
+            for (String valor : valores) {
+                if (valor != null && !valor.isBlank()) {
+                    total += Long.parseLong(valor.trim());
+                }
+            }
+            return OptionalLong.of(total);
         } catch (DataAccessException e) {
             log.warn("Telemetria de atividade indisponível no Redis: {}", e.getMessage());
             return OptionalLong.empty();

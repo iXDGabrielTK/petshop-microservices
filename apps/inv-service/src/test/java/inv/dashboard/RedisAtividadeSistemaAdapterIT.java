@@ -24,7 +24,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.OptionalLong;
-import java.util.UUID;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,25 +51,27 @@ class RedisAtividadeSistemaAdapterIT {
 
         redisTemplate = new StringRedisTemplate(factory);
         redisTemplate.afterPropertiesSet();
-        redisTemplate.delete(TelemetriaKeys.ATIVIDADE_ZSET);
+        Set<String> existingBuckets = redisTemplate.keys(TelemetriaKeys.ATIVIDADE_BUCKET_PREFIX + "*");
+        if (existingBuckets != null && !existingBuckets.isEmpty()) {
+            redisTemplate.delete(existingBuckets);
+        }
 
         fixedClock = Clock.fixed(NOW, ZoneId.of("America/Sao_Paulo"));
         adapter = new RedisAtividadeSistemaAdapter(redisTemplate, fixedClock);
     }
 
     @Test
-    @DisplayName("Deve contar eventos na janela de 1 hora ignorando eventos expirados fora do intervalo")
+    @DisplayName("Deve somar buckets de atividade na janela de 1 hora ignorando buckets fora do intervalo")
     void deveContarEventosNaJanelaComSucesso() {
-        long agoraMillis = fixedClock.millis();
         Duration janela = Duration.ofHours(1);
 
         // 3 eventos dentro da janela (5 min atrás, 20 min atrás, 55 min atrás)
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, UUID.randomUUID().toString(), agoraMillis - Duration.ofMinutes(5).toMillis());
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, UUID.randomUUID().toString(), agoraMillis - Duration.ofMinutes(20).toMillis());
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, UUID.randomUUID().toString(), agoraMillis - Duration.ofMinutes(55).toMillis());
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(NOW.minus(Duration.ofMinutes(5))));
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(NOW.minus(Duration.ofMinutes(20))));
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(NOW.minus(Duration.ofMinutes(55))));
 
         // 1 evento fora da janela (65 min atrás)
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, UUID.randomUUID().toString(), agoraMillis - Duration.ofMinutes(65).toMillis());
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(NOW.minus(Duration.ofMinutes(65))));
 
         OptionalLong contagem = adapter.contarEventosNaJanela(janela);
 
@@ -78,7 +80,22 @@ class RedisAtividadeSistemaAdapterIT {
     }
 
     @Test
-    @DisplayName("Deve retornar contagem zero quando o ZSET de telemetria estiver vazio")
+    @DisplayName("Deve agregar múltiplos eventos do mesmo minuto em uma única chave Redis (O(1) por minuto)")
+    void deveAgregarMultiplosEventosNoMesmoMinuto() {
+        String key = TelemetriaKeys.atividadeBucketKey(NOW.minus(Duration.ofMinutes(2)));
+        for (int i = 0; i < 15; i++) {
+            redisTemplate.opsForValue().increment(key);
+        }
+
+        OptionalLong contagem = adapter.contarEventosNaJanela(Duration.ofHours(1));
+
+        assertThat(contagem).isPresent();
+        assertThat(contagem.getAsLong()).isEqualTo(15L);
+        assertThat(redisTemplate.keys(TelemetriaKeys.ATIVIDADE_BUCKET_PREFIX + "*")).containsExactly(key);
+    }
+
+    @Test
+    @DisplayName("Deve retornar contagem zero quando não houver buckets de telemetria")
     void deveRetornarZeroQuandoZSetEstiverVazio() {
         OptionalLong contagem = adapter.contarEventosNaJanela(Duration.ofHours(1));
 
@@ -89,7 +106,6 @@ class RedisAtividadeSistemaAdapterIT {
     @Test
     @DisplayName("Deve degradar retornando OptionalLong.empty() sem lançar exceção quando o Redis estiver inacessível")
     void deveDegradarRetornandoEmptyQuandoRedisEstiverInacessivel() {
-        // Factory apontando para porta sem serviço ativo com timeout curto de 200ms
         LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
                 .commandTimeout(Duration.ofMillis(200))
                 .build();
@@ -102,7 +118,6 @@ class RedisAtividadeSistemaAdapterIT {
 
         AtividadeSistemaPort brokenAdapter = new RedisAtividadeSistemaAdapter(brokenTemplate, fixedClock);
 
-        // Deve capturar DataAccessException / RedisConnectionFailureException e retornar OptionalLong.empty()
         OptionalLong resultado = brokenAdapter.contarEventosNaJanela(Duration.ofHours(1));
 
         assertThat(resultado).isEmpty();

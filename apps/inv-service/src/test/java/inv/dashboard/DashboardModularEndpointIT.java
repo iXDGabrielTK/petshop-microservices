@@ -44,9 +44,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -145,7 +147,10 @@ class DashboardModularEndpointIT {
         vendaRepository.deleteAll();
         produtoRepository.deleteAll();
 
-        redisTemplate.delete(TelemetriaKeys.ATIVIDADE_ZSET);
+        Set<String> bucketKeys = redisTemplate.keys(TelemetriaKeys.ATIVIDADE_BUCKET_PREFIX + "*");
+        if (bucketKeys != null && !bucketKeys.isEmpty()) {
+            redisTemplate.delete(bucketKeys);
+        }
     }
 
     @AfterEach
@@ -161,11 +166,11 @@ class DashboardModularEndpointIT {
         Produto p3 = criarProduto("COD-003", "Shampoo Neutro 500ml", new BigDecimal("25.00"), new BigDecimal("50"), new BigDecimal("10"));
         produtoRepository.saveAll(List.of(p1, p2, p3));
 
-        long agora = Instant.now().toEpochMilli();
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-1", agora - 60_000);
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-2", agora - 120_000);
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-3", agora - 180_000);
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "session-user-expired", agora - 4_000_000);
+        Instant agora = Instant.now();
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agora.minus(Duration.ofMinutes(1))));
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agora.minus(Duration.ofMinutes(2))));
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agora.minus(Duration.ofMinutes(3))));
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agora.minus(Duration.ofMinutes(65))));
 
         mockMvc.perform(get("/dashboard/stats")
                         .contentType(MediaType.APPLICATION_JSON))
@@ -215,8 +220,8 @@ class DashboardModularEndpointIT {
                 """, v1.getId(), UUID.randomUUID(), new BigDecimal("229.90"), agora);
         catchUpJob.executarBackfillCompleto();
 
-        long agoraMillis = Instant.now().toEpochMilli();
-        redisTemplate.opsForZSet().add(TelemetriaKeys.ATIVIDADE_ZSET, "user-session-mod", agoraMillis - 10_000);
+        Instant agoraInstant = Instant.now();
+        redisTemplate.opsForValue().increment(TelemetriaKeys.atividadeBucketKey(agoraInstant.minusSeconds(10)));
 
         MvcResult result = mockMvc.perform(get("/dashboard/stats")
                         .contentType(MediaType.APPLICATION_JSON))
