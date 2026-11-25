@@ -108,12 +108,13 @@ public class EmailConsumer {
         if (email == null || CONTROLES.matcher(email).find()) return "***";
         int separador = email.indexOf('@');
         if (separador <= 0 || separador != email.lastIndexOf('@') || separador == email.length() - 1) return "***";
-        return email.charAt(0) + "***" + email.substring(separador);
+        String prefixo = separador == 1 ? "" : email.substring(0, 1);
+        return prefixo + "***" + email.substring(separador);
     }
 
     private boolean isDuplicated(String eventId) {
         if (eventId != null && processedEventRepository.existsByEventId(eventId)) {
-            logger.warn("♻️ Evento duplicado ignorado: {}", eventId);
+            logger.warn("♻️ Evento duplicado ignorado: {}", sanitizar(eventId));
             return true;
         }
         return false;
@@ -122,7 +123,7 @@ public class EmailConsumer {
     private void markAsProcessed(String eventId, String type) {
         if (eventId != null) {
             processedEventRepository.save(new ProcessedEvent(eventId, LocalDateTime.now(), type));
-            logger.info("✅ Evento {} processado e salvo.", eventId);
+            logger.info("✅ Evento {} processado e salvo.", sanitizar(eventId));
         }
     }
 
