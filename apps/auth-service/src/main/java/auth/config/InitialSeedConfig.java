@@ -23,6 +23,7 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 
 import java.time.Duration;
+import java.util.Set;
 import java.util.UUID;
 
 @Configuration
@@ -34,6 +35,9 @@ public class InitialSeedConfig {
     @Value("${initial.admin.password}")
     private String initialAdminPassword;
 
+    @Value("${auth.oauth2.client.redirect-uris}")
+    private Set<String> redirectUris;
+
     @Bean
     public CommandLineRunner run(RegisteredClientRepository clientRepository,
                                  UsuarioRepository usuarioRepository,
@@ -41,15 +45,15 @@ public class InitialSeedConfig {
                                  PasswordEncoder passwordEncoder) {
         return args -> {
 
-            if (clientRepository.findByClientId("petshop-client") == null) {
+            RegisteredClient existing = clientRepository.findByClientId("petshop-client");
+            if (existing == null) {
                 RegisteredClient oidcClient = RegisteredClient.withId(UUID.randomUUID().toString())
                         .clientId("petshop-client")
                         .clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
                         .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                         .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
 
-                        .redirectUri("https://oauth.pstmn.io/v1/callback")
-                        .redirectUri("http://localhost:5173/authorized")
+                        .redirectUris(uris -> uris.addAll(redirectUris))
 
                         .scope(OidcScopes.OPENID)
                         .scope(OidcScopes.PROFILE)
@@ -70,6 +74,11 @@ public class InitialSeedConfig {
 
                 clientRepository.save(oidcClient);
                 System.out.println("✅ Cliente OAuth2 'petshop-client' Público criado.");
+            } else if (!existing.getRedirectUris().equals(redirectUris)) {
+                clientRepository.save(RegisteredClient.from(existing).redirectUris(uris -> {
+                    uris.clear();
+                    uris.addAll(redirectUris);
+                }).build());
             }
 
             if (usuarioRepository.findByEmail(initialAdminEmail).isEmpty()) {

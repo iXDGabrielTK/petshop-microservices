@@ -5,6 +5,7 @@
  */
 package auth.security.filter;
 
+import auth.security.FrontendOrigin;
 import jakarta.servlet.*;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,10 +39,7 @@ public class CookieRefreshTokenRequestFilter implements Filter {
             String origin = req.getHeader("Origin");
             String referer = req.getHeader("Referer");
 
-            boolean isValidOrigin = origin != null && (origin.equals(frontendUrl) || origin.equals(frontendUrl + "/"));
-            boolean isValidReferer = referer != null && referer.startsWith(frontendUrl);
-
-            if (!isValidOrigin && !isValidReferer) {
+            if (!FrontendOrigin.acceptsHeader(frontendUrl, origin, referer)) {
                 res.sendError(HttpServletResponse.SC_FORBIDDEN, "CSRF: Invalid Origin/Referer");
                 return;
             }

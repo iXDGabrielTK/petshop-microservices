@@ -13,12 +13,15 @@ import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import common.security.RsaKeyUtils;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
@@ -31,7 +34,7 @@ import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.security.web.savedrequest.DefaultSavedRequest;
+import org.springframework.security.web.savedrequest.SavedRequest;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.cors.CorsConfiguration;
@@ -41,6 +44,7 @@ import java.security.KeyPair;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -188,6 +192,7 @@ class SecurityConfigTest {
             AuthenticationSuccessHandler handler = securityConfig.customAuthenticationSuccessHandler();
 
             MockHttpServletRequest request = new MockHttpServletRequest("GET", "/oauth2/authorize");
+            request.setServerPort(5173);
             request.setQueryString("client_id=petshop-client");
             MockHttpSession session = new MockHttpSession();
             request.setSession(session);
@@ -210,6 +215,28 @@ class SecurityConfigTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "/authorized,/authorized",
+            "http://LOCALHOST:5173/app,http://LOCALHOST:5173/app",
+            "//example.org/app,http://localhost:5173",
+            "https://localhost:5173/app,http://localhost:5173",
+            "http://localhost:5174,http://localhost:5173",
+            "https://example.org/,http://localhost:5173"
+    })
+    void restringeRedirectSalvo(String target, String expected) throws Exception {
+        SavedRequest saved = mock(SavedRequest.class);
+        when(saved.getRedirectUrl()).thenReturn(target);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession().setAttribute("SPRING_SECURITY_SAVED_REQUEST", saved);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        securityConfig.customAuthenticationSuccessHandler().onAuthenticationSuccess(request, response, null);
+
+        assertThat(response.getRedirectedUrl()).isEqualTo(expected);
+        assertThat(request.getSession().getAttribute("SPRING_SECURITY_SAVED_REQUEST")).isNull();
+    }
+
     @Nested
     @DisplayName("jwkSource()")
     class JwkSourceTests {
@@ -217,8 +244,18 @@ class SecurityConfigTest {
         @Test
         @DisplayName("Deve gerar chaves em memória quando chaves não estiverem configuradas nas properties")
         void deveGerarChavesEmMemoria() {
-            JWKSource<SecurityContext> jwkSource = securityConfig.jwkSource();
+            MockEnvironment environment = new MockEnvironment();
+            environment.setActiveProfiles("test");
+            JWKSource<SecurityContext> jwkSource = securityConfig.jwkSource(environment);
             assertThat(jwkSource).isNotNull();
+        }
+
+        @Test
+        void exigeChavesForaDosPerfisLocais() {
+            MockEnvironment environment = new MockEnvironment();
+            assertThatThrownBy(() -> securityConfig.jwkSource(environment)).isInstanceOf(IllegalStateException.class);
+            environment.setActiveProfiles("prod", "dev");
+            assertThatThrownBy(() -> securityConfig.jwkSource(environment)).isInstanceOf(IllegalStateException.class);
         }
 
         @Test
@@ -231,7 +268,7 @@ class SecurityConfigTest {
             ReflectionTestUtils.setField(securityConfig, "publicKeyString", pubKeyPem);
             ReflectionTestUtils.setField(securityConfig, "privateKeyString", privKeyPem);
 
-            JWKSource<SecurityContext> jwkSource = securityConfig.jwkSource();
+            JWKSource<SecurityContext> jwkSource = securityConfig.jwkSource(new MockEnvironment());
             assertThat(jwkSource).isNotNull();
         }
     }

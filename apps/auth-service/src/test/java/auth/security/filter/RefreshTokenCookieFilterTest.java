@@ -156,12 +156,12 @@ class RefreshTokenCookieFilterTest {
     }
 
     @Test
-    @DisplayName("Em caso de erro de parse de JSON (corpo não-JSON), deve manter o body original por segurança de falha")
-    void deveManterBodyOriginalSeFalharParseJson() throws ServletException, IOException {
+    @DisplayName("Deve descartar a resposta OAuth2 inválida antes de responder 500")
+    void deveDescartarBodySeFalharParseJson() throws ServletException, IOException {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        String invalidJson = "Not a json response";
+        String invalidJson = "{\"refresh_token\":\"segredo\", ";
 
         FilterChain filterChain = (req, res) -> {
             ContentCachingResponseWrapper wrapper = (ContentCachingResponseWrapper) res;
@@ -172,6 +172,7 @@ class RefreshTokenCookieFilterTest {
         filter.doFilterInternal(request, response, filterChain);
 
         assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).isNull();
-        assertThat(response.getContentAsString(StandardCharsets.UTF_8)).isEqualTo("Not a json response");
+        assertThat(response.getStatus()).isEqualTo(500);
+        assertThat(response.getContentAsString(StandardCharsets.UTF_8)).isEqualTo("{\"error\":\"server_error\"}");
     }
 }

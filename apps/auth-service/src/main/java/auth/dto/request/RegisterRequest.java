@@ -14,9 +14,12 @@ import lombok.Setter;
 
 @Data
 public class RegisterRequest {
+    static final String PASSWORD_PATTERN = "^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=!])(?=\\S+$).{8,}$";
+    static final String PASSWORD_MESSAGE = "Senha deve conter pelo menos um número, uma letra maiúscula, uma letra minúscula, um caractere especial e não deve conter espaços";
+
     @NotBlank
     @Size(min = 3, max = 100, message = "O nome deve ter entre 3 e 100 caracteres")
-    @Pattern(regexp = "^[^<>]*$", message = "O nome não pode conter caracteres especiais como < ou >")
+    @Pattern(regexp = "^[^<>\r\n\\p{Cntrl}]*$", message = "O nome não pode conter <, > ou caracteres de controle")
     private String nome;
 
     @NotBlank(message = "Email é obrigatório")
@@ -27,10 +30,7 @@ public class RegisterRequest {
 
     @Setter
     @NotBlank(message = "Senha é obrigatória")
-    @Size(min = 8, max = 100, message = "Senha deve ter entre 8 e 100 caracteres")
-    @Pattern(
-            regexp = "^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=!])(?=\\S+$).{8,}$",
-            message = "Senha deve conter pelo menos um número, uma letra maiúscula, uma letra minúscula, um caractere especial e não deve conter espaços"
-    )
+    @Size(min = 8, max = 72, message = "Senha deve ter entre 8 e 72 caracteres")
+    @Pattern(regexp = PASSWORD_PATTERN, message = PASSWORD_MESSAGE)
     private String senha;
 }

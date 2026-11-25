@@ -12,6 +12,8 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -103,6 +105,32 @@ class CookieRefreshTokenRequestFilterTest {
 
             assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_FORBIDDEN);
             verify(chain, never()).doFilter(any(), any());
+        }
+
+        @Test
+        void rejeitaOriginInvalidaMesmoComRefererValido() throws Exception {
+            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            request.setParameter("grant_type", "refresh_token");
+            request.addHeader("Origin", "null");
+            request.addHeader("Referer", FRONTEND_URL + "/app");
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request, response, new MockFilterChain());
+            assertThat(response.getStatus()).isEqualTo(403);
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "https://shop.example.test/app,403", "http://shop.example/app,403",
+                "https://shop.example:8443/app,403", "https://SHOP.EXAMPLE:443/app,200"
+        })
+        void comparaOrigemDoReferer(String referer, int esperado) throws Exception {
+            ReflectionTestUtils.setField(filter, "frontendUrl", "https://shop.example");
+            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            request.setParameter("grant_type", "refresh_token");
+            request.addHeader("Referer", referer);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request, response, new MockFilterChain());
+            assertThat(response.getStatus()).isEqualTo(esperado);
         }
 
         @Test

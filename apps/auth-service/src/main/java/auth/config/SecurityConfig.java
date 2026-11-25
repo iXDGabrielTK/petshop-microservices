@@ -5,6 +5,7 @@
  */
 package auth.config;
 
+import auth.security.FrontendOrigin;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
 import auth.security.handler.CookieClearingLogoutHandler;
@@ -25,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.config.Customizer;
@@ -263,7 +265,7 @@ public class SecurityConfig {
     // --- CRIPTOGRAFIA ---
 
     @Bean
-    public JWKSource<SecurityContext> jwkSource() {
+    public JWKSource<SecurityContext> jwkSource(Environment environment) {
         RSAKey rsaKey;
 
         if (publicKeyString != null && !publicKeyString.isBlank() &&
@@ -278,6 +280,10 @@ public class SecurityConfig {
                     .build();
 
         } else {
+            String[] profiles = environment.getActiveProfiles();
+            if (profiles.length == 0 || !Set.of("dev", "test").containsAll(Arrays.asList(profiles))) {
+                throw new IllegalStateException("Configure as chaves RSA pública e privada para assinar os tokens.");
+            }
             log.warn("Usando chaves RSA geradas em memória");
 
             KeyPair keyPair = RsaKeyUtils.generateKeyPair();
@@ -313,7 +319,7 @@ public class SecurityConfig {
 
             String targetUrl = savedRequest.getRedirectUrl();
             requestCache.removeRequest(request, response);
-            response.sendRedirect(targetUrl);
+            response.sendRedirect(FrontendOrigin.acceptsRedirect(frontendBaseUrl, targetUrl) ? targetUrl : frontendBaseUrl);
         };
     }
 

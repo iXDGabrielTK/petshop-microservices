@@ -65,6 +65,13 @@ class DtoValidationTest {
         }
 
         @Test
+        void rejeitaControlesNoNome() {
+            for (String nome : new String[]{"Ana\rSilva", "Ana\nSilva", "Ana\tSilva"}) {
+                assertThat(validator.validateValue(RegisterRequest.class, "nome", nome)).isNotEmpty();
+            }
+        }
+
+        @Test
         @DisplayName("Deve falhar quando nome for curto demais (< 3 caracteres)")
         void deveFalharComNomeCurto() {
             RegisterRequest req = new RegisterRequest();
@@ -158,6 +165,16 @@ class DtoValidationTest {
         }
 
         @Test
+        void aplicaLimitesEComplexidadeDoCadastro() {
+            String limite = "Aa1!" + "a".repeat(68);
+            for (String senha : new String[]{limite, limite + "a", "semcomplexidade", "Aa1!"}) {
+                boolean valida = senha.equals(limite);
+                assertThat(validator.validateValue(ResetPasswordRequest.class, "newPassword", senha).isEmpty()).isEqualTo(valida);
+                assertThat(validator.validateValue(RegisterRequest.class, "senha", senha).isEmpty()).isEqualTo(valida);
+            }
+        }
+
+        @Test
         @DisplayName("Deve falhar quando token ou newPassword forem brancos")
         void deveFalharComCamposBrancos() {
             ResetPasswordRequest req = new ResetPasswordRequest();
@@ -165,7 +182,8 @@ class DtoValidationTest {
             req.setNewPassword("  ");
 
             Set<ConstraintViolation<ResetPasswordRequest>> violations = validator.validate(req);
-            assertThat(violations).hasSize(2);
+            assertThat(violations).extracting(v -> v.getPropertyPath().toString())
+                    .containsExactlyInAnyOrder("token", "newPassword", "newPassword", "newPassword");
         }
     }
 

@@ -5,6 +5,8 @@
  */
 package auth.dto.request;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 @Data
@@ -13,6 +15,9 @@ public class ResetPasswordRequest {
     private String token;
 
     @NotBlank(message = "A nova senha é obrigatória")
+    @Size(min = 8, max = 72, message = "Senha deve ter entre 8 e 72 caracteres")
+    @Pattern(regexp = RegisterRequest.PASSWORD_PATTERN, message = RegisterRequest.PASSWORD_MESSAGE)
     private String newPassword;
 
-    private String confirmPassword;}
+    private String confirmPassword;
+}

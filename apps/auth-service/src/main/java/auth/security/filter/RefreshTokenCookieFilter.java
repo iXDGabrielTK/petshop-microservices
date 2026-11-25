@@ -5,7 +5,7 @@
  */
 package auth.security.filter;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.FilterChain;
@@ -26,6 +26,9 @@ import java.time.Duration;
 
 @Component
 public class RefreshTokenCookieFilter extends OncePerRequestFilter {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     @Value("${auth.cookie.secure}")
     private boolean isCookieSecure;
@@ -52,8 +55,7 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
             String body = new String(responseWrapper.getContentAsByteArray(), StandardCharsets.UTF_8);
 
             try {
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode json = mapper.readTree(body);
+                ObjectNode json = MAPPER.readValue(body, ObjectNode.class);
 
                 if (json.has("refresh_token")) {
                     String refreshToken = json.get("refresh_token").asText();
@@ -66,20 +68,21 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
                             .maxAge(Duration.ofDays(1))
                             .build();
 
-                    response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-
-                    ((ObjectNode) json).remove("refresh_token");
-
-                    byte[] newBody = mapper.writeValueAsBytes(json);
+                    json.remove("refresh_token");
+                    byte[] newBody = MAPPER.writeValueAsBytes(json);
 
                     responseWrapper.resetBuffer();
                     response.setCharacterEncoding("UTF-8");
                     response.setContentType("application/json");
                     responseWrapper.getOutputStream().write(newBody);
+                    response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
                 }
             } catch (Exception e) {
-                // Em caso de erro de parse, mantém o body original (segurança por falha)
-
+                responseWrapper.resetBuffer();
+                logger.error("Falha ao processar a resposta OAuth2 (" + e.getClass().getSimpleName() + ")");
+                responseWrapper.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                responseWrapper.setContentType("application/json");
+                responseWrapper.getOutputStream().write("{\"error\":\"server_error\"}".getBytes(StandardCharsets.UTF_8));
             }
         }
         responseWrapper.copyBodyToResponse();
