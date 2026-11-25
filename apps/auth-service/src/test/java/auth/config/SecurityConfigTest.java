@@ -5,6 +5,7 @@
  */
 package auth.config;
 
+import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
 import auth.security.handler.CookieClearingLogoutHandler;
@@ -60,6 +61,9 @@ class SecurityConfigTest {
     @Mock
     private CookieClearingLogoutHandler cookieClearingLogoutHandler;
 
+    @Mock
+    private LoginAttemptService loginAttemptService;
+
     private SecurityConfig securityConfig;
 
     @BeforeEach
@@ -67,7 +71,8 @@ class SecurityConfigTest {
         securityConfig = new SecurityConfig(
                 cookieRefreshTokenRequestFilter,
                 refreshTokenCookieFilter,
-                cookieClearingLogoutHandler
+                cookieClearingLogoutHandler,
+                loginAttemptService
         );
         ReflectionTestUtils.setField(securityConfig, "frontendBaseUrl", "http://localhost:5173");
         ReflectionTestUtils.setField(securityConfig, "corsAllowedMethods", "GET,POST,PUT,DELETE,OPTIONS");

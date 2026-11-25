@@ -6,7 +6,9 @@
 package auth.config;
 
 import auth.security.FrontendOrigin;
+import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
+import auth.security.filter.LoginLockoutFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
 import auth.security.handler.CookieClearingLogoutHandler;
 import auth.security.user.UserDetailsImpl;
@@ -26,12 +28,15 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.AuthenticationEventPublisher;
+import org.springframework.security.authentication.DefaultAuthenticationEventPublisher;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -53,6 +58,7 @@ import org.springframework.security.oauth2.server.authorization.token.OAuth2Toke
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -101,12 +107,18 @@ public class SecurityConfig {
     private final CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter;
     private final RefreshTokenCookieFilter refreshTokenCookieFilter;
     private final CookieClearingLogoutHandler cookieClearingLogoutHandler;
+    private final LoginAttemptService loginAttemptService;
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
-    public SecurityConfig(CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter, RefreshTokenCookieFilter refreshTokenCookieFilter, CookieClearingLogoutHandler cookieClearingLogoutHandler) {
+    public SecurityConfig(
+            CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter,
+            RefreshTokenCookieFilter refreshTokenCookieFilter,
+            CookieClearingLogoutHandler cookieClearingLogoutHandler,
+            LoginAttemptService loginAttemptService) {
         this.cookieRefreshTokenRequestFilter = cookieRefreshTokenRequestFilter;
         this.refreshTokenCookieFilter = refreshTokenCookieFilter;
         this.cookieClearingLogoutHandler = cookieClearingLogoutHandler;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @Bean
@@ -183,6 +195,14 @@ public class SecurityConfig {
                 )
 
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp
+                                .policyDirectives("default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'")
+                        )
+                )
+
+                .addFilterBefore(new LoginLockoutFilter(loginAttemptService), UsernamePasswordAuthenticationFilter.class)
 
                 .formLogin(form -> form
                         .loginPage("/login")
@@ -346,6 +366,11 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12);
+    }
+
+    @Bean
+    public AuthenticationEventPublisher authenticationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+        return new DefaultAuthenticationEventPublisher(applicationEventPublisher);
     }
 
     @Bean

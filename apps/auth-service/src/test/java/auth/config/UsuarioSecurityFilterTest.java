@@ -9,6 +9,7 @@ import auth.controller.UsuarioController;
 import auth.dto.request.UserSettingsRequest;
 import auth.dto.response.UserResponse;
 import auth.model.Theme;
+import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
 import auth.security.handler.CookieClearingLogoutHandler;
@@ -78,6 +79,7 @@ class UsuarioSecurityFilterTest {
     @EnableWebSecurity
     @Import({
             SecurityConfig.class,
+            LoginAttemptService.class,
             CookieRefreshTokenRequestFilter.class,
             RefreshTokenCookieFilter.class,
             CookieClearingLogoutHandler.class,

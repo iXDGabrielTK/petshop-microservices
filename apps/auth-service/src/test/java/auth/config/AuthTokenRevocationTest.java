@@ -13,6 +13,7 @@ import auth.model.Usuario;
 import auth.repository.PasswordResetTokenRepository;
 import auth.repository.RoleRepository;
 import auth.repository.UsuarioRepository;
+import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
 import auth.security.handler.CookieClearingLogoutHandler;
@@ -99,6 +100,7 @@ class AuthTokenRevocationTest {
     @EnableWebSecurity
     @Import({
             SecurityConfig.class,
+            LoginAttemptService.class,
             CookieRefreshTokenRequestFilter.class,
             RefreshTokenCookieFilter.class,
             CookieClearingLogoutHandler.class,
