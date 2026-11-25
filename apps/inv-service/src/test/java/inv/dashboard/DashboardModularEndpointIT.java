@@ -16,6 +16,7 @@ import inv.inventory.domain.model.Produto;
 import inv.inventory.domain.model.UnidadeMedida;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
 import inv.shared.domain.MetodoPagamento;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -118,6 +122,9 @@ class DashboardModularEndpointIT {
 
     @BeforeEach
     void setUp() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("admin", "pass", List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
+        );
         org.springframework.cache.Cache cache = cacheManager.getCache(inv.dashboard.infrastructure.cache.DashboardCacheConfig.CACHE_NAME);
         if (cache != null) {
             cache.clear();
@@ -139,6 +146,11 @@ class DashboardModularEndpointIT {
         produtoRepository.deleteAll();
 
         redisTemplate.delete(TelemetriaKeys.ATIVIDADE_ZSET);
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test

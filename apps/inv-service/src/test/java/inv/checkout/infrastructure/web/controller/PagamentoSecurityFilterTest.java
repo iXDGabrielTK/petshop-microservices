@@ -350,13 +350,46 @@ class PagamentoSecurityFilterTest {
     }
 
     @Nested
-    @DisplayName("4. Acesso Autorizado com Token Válido (200 OK)")
+    @DisplayName("4. Restrição RBAC (403 Forbidden para ROLE_USER) e Acesso Autorizado (200 OK para ROLE_ADMIN)")
     class AcessoAutorizadoTests {
 
         @Test
-        @DisplayName("POST /pagamentos/intencao/{vendaId} deve responder 200 OK quando fornecido JWT válido")
-        void devePermitirCriarIntencaoComTokenValido() throws Exception {
+        @DisplayName("POST /pagamentos/intencao/{vendaId} deve responder 403 Forbidden para ROLE_USER")
+        void deveRejeitarCriarIntencaoParaRoleUser() throws Exception {
             String token = createValidToken("user@petshop.com", List.of("ROLE_USER"));
+            CriarIntencaoPagamentoRequest request = new CriarIntencaoPagamentoRequest(
+                    UUID.randomUUID(),
+                    MetodoPagamento.PIX,
+                    new BigDecimal("100.00")
+            );
+
+            mockMvc.perform(post("/pagamentos/intencao/10")
+                            .header("Authorization", "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.title").value("Acesso Negado"));
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("GET /pagamentos/{id}/status deve responder 403 Forbidden para ROLE_USER")
+        void deveRejeitarConsultarStatusParaRoleUser() throws Exception {
+            String token = createValidToken("user@petshop.com", List.of("ROLE_USER"));
+
+            mockMvc.perform(get("/pagamentos/42/status")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.title").value("Acesso Negado"));
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/intencao/{vendaId} deve responder 200 OK quando fornecido JWT com ROLE_ADMIN")
+        void devePermitirCriarIntencaoComTokenAdmin() throws Exception {
+            String token = createValidToken("admin@petshop.com", List.of("ROLE_ADMIN"));
             UUID uuid = UUID.randomUUID();
             CriarIntencaoPagamentoRequest request = new CriarIntencaoPagamentoRequest(
                     uuid,
@@ -378,9 +411,9 @@ class PagamentoSecurityFilterTest {
         }
 
         @Test
-        @DisplayName("GET /pagamentos/{id}/status deve responder 200 OK quando fornecido JWT válido")
-        void devePermitirConsultarStatusComTokenValido() throws Exception {
-            String token = createValidToken("user@petshop.com", List.of("ROLE_USER"));
+        @DisplayName("GET /pagamentos/{id}/status deve responder 200 OK quando fornecido JWT com ROLE_ADMIN")
+        void devePermitirConsultarStatusComTokenAdmin() throws Exception {
+            String token = createValidToken("admin@petshop.com", List.of("ROLE_ADMIN"));
 
             when(pagamentoService.buscarStatusPagamento(42L)).thenReturn(StatusPagamento.CONFIRMADO);
 

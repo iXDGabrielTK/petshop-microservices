@@ -9,6 +9,7 @@ import inv.dashboard.application.DashboardQueryService;
 import inv.dashboard.application.DashboardSnapshot;
 import inv.dashboard.infrastructure.web.dto.DashboardStats;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,6 +23,7 @@ import java.util.Objects;
  */
 @RestController
 @RequestMapping("/dashboard")
+@PreAuthorize("hasRole('ADMIN')")
 public class DashboardController {
 
     private final DashboardQueryService queryService;

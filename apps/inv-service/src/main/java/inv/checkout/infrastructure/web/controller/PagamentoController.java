@@ -13,6 +13,7 @@ import inv.checkout.infrastructure.web.dto.PagamentoStatusResponse;
 import inv.checkout.usecase.PagamentoService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,6 +27,7 @@ public class PagamentoController {
     }
 
     @PostMapping("/intencao/{vendaId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<IntencaoPagamentoResponse> criarIntencaoPagamento(
             @PathVariable Long vendaId,
             @RequestBody @Valid CriarIntencaoPagamentoRequest request) {
@@ -41,6 +43,7 @@ public class PagamentoController {
     }
 
     @GetMapping("/{id}/status")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PagamentoStatusResponse> consultarStatus(@PathVariable Long id) {
         StatusPagamento status = pagamentoService.buscarStatusPagamento(id);
         return ResponseEntity.ok(new PagamentoStatusResponse(status));
