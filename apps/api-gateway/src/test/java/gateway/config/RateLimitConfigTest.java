@@ -19,74 +19,119 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("RateLimitConfig — Testes Unitários do KeyResolver para Rate Limiting")
 class RateLimitConfigTest {
 
-    private RateLimitConfig rateLimitConfig;
     private KeyResolver keyResolver;
 
     @BeforeEach
     void setUp() {
-        rateLimitConfig = new RateLimitConfig();
-        keyResolver = rateLimitConfig.userKeyResolver();
+        keyResolver = new RateLimitConfig(0).userKeyResolver();
     }
 
     @Nested
-    @DisplayName("userKeyResolver() — Resolução via Proxies Reversos")
+    @DisplayName("userKeyResolver() — Proteção contra Spoofing e Proxies Confiáveis")
     class ResolucaoProxyTests {
 
         @Test
-        @DisplayName("Deve extrair o primeiro IP do cabeçalho X-Forwarded-For quando fornecido múltiplos IPs")
-        void deveExtrairPrimeiroIpDoXForwardedFor() {
+        @DisplayName("Com hops=0, deve ignorar X-Forwarded-For e X-Real-IP forjados e usar remoteAddress do socket")
+        void deveIgnorarHeadersForjadosQuandoHopsZero() throws Exception {
+            InetSocketAddress socketAddress = new InetSocketAddress(InetAddress.getByName("192.168.1.50"), 54321);
             MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
-                    .header("X-Forwarded-For", "203.0.113.195, 70.41.3.18, 150.172.238.178")
+                    .header("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
+                    .header("X-Real-IP", "198.51.100.42")
+                    .remoteAddress(socketAddress)
                     .build();
             ServerWebExchange exchange = MockServerWebExchange.from(request);
 
             StepVerifier.create(keyResolver.resolve(exchange))
+                    .expectNext("192.168.1.50")
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Com hops=0 e remoteAddress nulo, deve ignorar X-Forwarded-For e X-Real-IP forjados e usar chave anônima")
+        void deveIgnorarHeadersForjadosComRemoteAddressNuloQuandoHopsZero() {
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "1.2.3.4")
+                    .header("X-Real-IP", "198.51.100.42")
+                    .header("User-Agent", "TestClient/1.0")
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(keyResolver.resolve(exchange))
+                    .assertNext(key -> assertThat(key).startsWith(RateLimitConfig.ANONYMOUS_PREFIX))
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Com hops=1, deve usar o último IP confiável do X-Forwarded-For ignorando prefixo forjado pelo cliente")
+        void deveResolverIndiceConfiavelQuandoHopsUm() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(1).userKeyResolver();
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "1.1.1.1, 203.0.113.195")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(resolver.resolve(exchange))
                     .expectNext("203.0.113.195")
                     .verifyComplete();
         }
 
         @Test
-        @DisplayName("Deve extrair o IP do cabeçalho X-Real-IP quando X-Forwarded-For estiver ausente")
-        void deveExtrairIpDoXRealIp() {
+        @DisplayName("Com hops=1 e único IP no X-Forwarded-For, deve resolver esse IP")
+        void deveResolverUnicoIpNoXffQuandoHopsUm() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(1).userKeyResolver();
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "203.0.113.195")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(resolver.resolve(exchange))
+                    .expectNext("203.0.113.195")
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Com hops=1 e sem X-Forwarded-For, deve ignorar X-Real-IP e fazer fallback para remoteAddress")
+        void deveIgnorarXRealIpEFazerFallbackParaRemoteAddressQuandoHopsUm() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(1).userKeyResolver();
             MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
                     .header("X-Real-IP", "198.51.100.42")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
                     .build();
             ServerWebExchange exchange = MockServerWebExchange.from(request);
 
-            StepVerifier.create(keyResolver.resolve(exchange))
-                    .expectNext("198.51.100.42")
+            StepVerifier.create(resolver.resolve(exchange))
+                    .expectNext("10.0.0.10")
                     .verifyComplete();
         }
 
         @Test
-        @DisplayName("Deve extrair o primeiro IP válido do cabeçalho X-Forwarded-For quando houver tokens vazios ou vírgula inicial")
-        void deveExtrairPrimeiroIpValidoComTokensVazios() {
+        @DisplayName("Com hops=2, deve resolver o segundo índice da direita para a esquerda em X-Forwarded-For")
+        void deveResolverSegundoIndiceConfiavelQuandoHopsDois() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(2).userKeyResolver();
             MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
-                    .header("X-Forwarded-For", ",   , 203.0.113.195, 70.41.3.18")
+                    .header("X-Forwarded-For", "1.1.1.1, 203.0.113.195, 70.41.3.18")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
                     .build();
             ServerWebExchange exchange = MockServerWebExchange.from(request);
 
-            StepVerifier.create(keyResolver.resolve(exchange))
+            StepVerifier.create(resolver.resolve(exchange))
                     .expectNext("203.0.113.195")
                     .verifyComplete();
         }
 
         @Test
-        @DisplayName("Deve preferir X-Forwarded-For sobre X-Real-IP quando ambos existirem")
-        void devePreferirXffSobreXRealIp() {
-            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
-                    .header("X-Forwarded-For", "203.0.113.1")
-                    .header("X-Real-IP", "198.51.100.2")
-                    .build();
-            ServerWebExchange exchange = MockServerWebExchange.from(request);
-
-            StepVerifier.create(keyResolver.resolve(exchange))
-                    .expectNext("203.0.113.1")
-                    .verifyComplete();
+        @DisplayName("Deve rejeitar trustedProxyHops negativo no construtor")
+        void deveRejeitarHopsNegativo() {
+            assertThatThrownBy(() -> new RateLimitConfig(-1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("trusted-proxy-hops");
         }
     }
 
