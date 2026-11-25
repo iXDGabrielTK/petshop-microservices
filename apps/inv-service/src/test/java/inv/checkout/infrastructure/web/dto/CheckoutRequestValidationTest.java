@@ -22,11 +22,14 @@ class CheckoutRequestValidationTest {
             var validator = factory.getValidator();
             var item = new ItemVendaRequest(1L, new BigDecimal("9999999.999"));
             assertThat(validator.validate(new VendaRequest(Collections.nCopies(100, item)))).isEmpty();
-            assertThat(validator.validate(new VendaRequest(Collections.nCopies(101, item)))).isNotEmpty();
-            assertThat(validator.validate(new VendaRequest(List.of()))).isNotEmpty();
+            for (var itens : List.of(Collections.nCopies(101, item), List.<ItemVendaRequest>of())) {
+                assertThat(validator.validate(new VendaRequest(itens)))
+                        .extracting(v -> v.getPropertyPath().toString()).containsExactly("itens");
+            }
             for (String valor : List.of("10000000", "1.0001")) {
                 var invalido = new ItemVendaRequest(1L, new BigDecimal(valor));
-                assertThat(validator.validate(new VendaRequest(List.of(invalido)))).isNotEmpty();
+                assertThat(validator.validate(new VendaRequest(List.of(item, invalido))))
+                        .extracting(v -> v.getPropertyPath().toString()).containsExactly("itens[1].quantidade");
             }
         }
     }
@@ -37,9 +40,11 @@ class CheckoutRequestValidationTest {
             var validator = factory.getValidator();
             var limite = new ConfirmarPagamentoWebhookRequest(new BigDecimal("99999999.99"), "x".repeat(100));
             assertThat(validator.validate(limite)).isEmpty();
-            assertThat(validator.validate(new ConfirmarPagamentoWebhookRequest(BigDecimal.ONE, "x".repeat(101)))).isNotEmpty();
+            assertThat(validator.validate(new ConfirmarPagamentoWebhookRequest(BigDecimal.ONE, "x".repeat(101))))
+                    .extracting(v -> v.getPropertyPath().toString()).containsExactly("nsu");
             for (String valor : List.of("100000000", "1.001")) {
-                assertThat(validator.validate(new ConfirmarPagamentoWebhookRequest(new BigDecimal(valor), "nsu"))).isNotEmpty();
+                assertThat(validator.validate(new ConfirmarPagamentoWebhookRequest(new BigDecimal(valor), "nsu")))
+                        .extracting(v -> v.getPropertyPath().toString()).containsExactly("valor_recebido");
             }
         }
     }
