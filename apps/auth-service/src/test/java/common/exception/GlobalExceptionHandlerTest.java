@@ -18,6 +18,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -32,10 +33,13 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 
+import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -46,25 +50,39 @@ class GlobalExceptionHandlerTest {
 
     @Test
     @DisplayName("handleGeneralException deve mapear exceção genérica para HTTP 500 com detalhe sanitizado")
-    void deveTratarExcecaoGenerica() {
-        Exception ex = new RuntimeException("Falha no nó de processamento interno");
+    void deveTratarExcecaoGenerica() throws Exception {
+        var cause = new SQLException("SELECT token_hash FROM credenciais_internas");
+        var failure = new IllegalStateException("Falha no nó de processamento interno", cause);
+        var mvc = MockMvcBuilders.standaloneSetup(new FailingController(failure))
+                .setControllerAdvice(handler)
+                .build();
         Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
         ListAppender<ILoggingEvent> events = new ListAppender<>();
         events.start();
         logger.addAppender(events);
 
         try {
-            ProblemDetail problem = handler.handleGeneralException(ex);
+            var response = mvc.perform(get("/falha"))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                    .andExpect(jsonPath("$.status").value(500))
+                    .andExpect(jsonPath("$.title").value("Erro Interno do Servidor"))
+                    .andExpect(jsonPath("$.detail").value("Ocorreu um erro interno inesperado."))
+                    .andExpect(jsonPath("$.type").value("https://petshop.com/errors/internal-server-error"))
+                    .andExpect(jsonPath("$.timestamp").exists())
+                    .andReturn().getResponse();
 
-            assertThat(problem.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR.value());
-            assertThat(problem.getTitle()).isEqualTo("Erro Interno do Servidor");
-            assertThat(problem.getDetail()).isEqualTo("Ocorreu um erro interno inesperado.");
-            assertThat(problem.getType().toString()).contains("internal-server-error");
-            assertThat(problem.getProperties()).containsKey("timestamp");
+            assertThat(response.getContentAsString(StandardCharsets.UTF_8)).doesNotContain(
+                    "Falha no nó de processamento interno", "SELECT", "token_hash", "credenciais_internas",
+                    "IllegalStateException", "SQLException", "GlobalExceptionHandlerTest");
             assertThat(events.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-                assertThat(event.getThrowableProxy()).isInstanceOfSatisfying(ThrowableProxy.class,
-                        proxy -> assertThat(proxy.getThrowable()).isSameAs(ex));
+                assertThat(event.getThrowableProxy()).isInstanceOfSatisfying(ThrowableProxy.class, proxy -> {
+                    assertThat(proxy.getThrowable()).isSameAs(failure);
+                    assertThat(proxy.getStackTraceElementProxyArray()).isNotEmpty();
+                    assertThat(proxy.getCause()).isInstanceOfSatisfying(ThrowableProxy.class,
+                            causeProxy -> assertThat(causeProxy.getThrowable()).isSameAs(cause));
+                });
             });
         } finally {
             logger.detachAppender(events);
@@ -75,14 +93,25 @@ class GlobalExceptionHandlerTest {
     @Test
     @DisplayName("Violação de integridade deve retornar HTTP 409 com detalhe sanitizado")
     void deveTratarViolacaoDeIntegridadeSemExporDetalhesDoBanco() throws Exception {
-        var mvc = MockMvcBuilders.standaloneSetup(new FailingController())
+        var cause = new SQLException("duplicate key value violates unique constraint usuarios_email_key");
+        var failure = new DataIntegrityViolationException("INSERT INTO usuarios (email) VALUES (?)", cause);
+        var mvc = MockMvcBuilders.standaloneSetup(new FailingController(failure))
                 .setControllerAdvice(handler)
                 .build();
 
-        mvc.perform(get("/conflito-de-integridade"))
+        var response = mvc.perform(get("/falha"))
                 .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.title").value("Conflito de Integridade de Dados"))
                 .andExpect(jsonPath("$.detail").value("Os dados informados conflitam com os registros existentes."))
-                .andExpect(jsonPath("$.type").value("https://petshop.com/errors/data-integrity-violation"));
+                .andExpect(jsonPath("$.type").value("https://petshop.com/errors/data-integrity-violation"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andReturn().getResponse();
+
+        assertThat(response.getContentAsString(StandardCharsets.UTF_8)).doesNotContain(
+                "INSERT", "usuarios", "email", "constraint", "usuarios_email_key",
+                "DataIntegrityViolationException", "SQLException");
     }
 
     @Test
@@ -246,9 +275,15 @@ class GlobalExceptionHandlerTest {
     @RestController
     static class FailingController {
 
-        @GetMapping("/conflito-de-integridade")
-        void falharComViolacaoDeIntegridade() {
-            throw new DataIntegrityViolationException("INSERT INTO usuarios violou a constraint usuarios_email_key");
+        private final RuntimeException failure;
+
+        FailingController(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        @GetMapping("/falha")
+        void falhar() {
+            throw failure;
         }
     }
 }
