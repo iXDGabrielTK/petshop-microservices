@@ -409,6 +409,23 @@ class PagamentoServiceTest {
             verify(pagamentoRepository, never()).save(any());
             verifyNoInteractions(eventPublisher);
         }
+
+        @ParameterizedTest(name = "Método eletrônico {0} rejeita valor divergente")
+        @EnumSource(value = MetodoPagamento.class, names = {"CARTAO_CREDITO", "CARTAO_DEBITO"})
+        @DisplayName("Deve rejeitar confirmação webhook com valor divergente para pagamento eletrônico")
+        void deveRejeitarConfirmacaoWebhookComValorDivergenteParaEletronico(MetodoPagamento metodo) {
+            Long pagamentoId = 70L;
+            Pagamento pagamento = criarPagamento(pagamentoId, 10L, metodo, StatusPagamento.PROCESSANDO,
+                    new BigDecimal("100.00"), UUID.randomUUID());
+            when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
+
+            assertThatThrownBy(() -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("99.99"), "NSU-DIV"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Valor recebido diverge do valor esperado para pagamento eletrônico.");
+
+            verify(pagamentoRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
     }
 
     @Nested
@@ -596,6 +613,55 @@ class PagamentoServiceTest {
                     .hasMessageContaining("saldo devedor atual da venda");
 
             verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Deve rejeitar intenção quando metodo ou uuidReferencia forem nulos")
+        void deveRejeitarMetodoOuUuidNulo() {
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    10L, null, new BigDecimal("50.00"), UUID.randomUUID()))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("Método");
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    10L, MetodoPagamento.PIX, new BigDecimal("50.00"), null))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("UUID");
+
+            verifyNoInteractions(pagamentoRepository, vendaRepository);
+        }
+
+        @Test
+        @DisplayName("Deve validar teto de saldo devedor para CARTAO_DEBITO (rejeitar excesso, saldo zero e aceitar igual)")
+        void deveValidarSaldoDevedorParaCartaoDebito() {
+            UUID uuidExcesso = UUID.randomUUID();
+            Venda vendaSaldo60 = criarVendaComSaldo(10L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("100.00"), new BigDecimal("40.00"));
+            when(pagamentoRepository.findByUuidReferencia(uuidExcesso)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(vendaSaldo60));
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    10L, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("60.01"), uuidExcesso))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("saldo devedor atual da venda");
+
+            UUID uuidSaldoZero = UUID.randomUUID();
+            Venda vendaQuitada = criarVendaComSaldo(11L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("100.00"), new BigDecimal("100.00"));
+            when(pagamentoRepository.findByUuidReferencia(uuidSaldoZero)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(11L)).thenReturn(Optional.of(vendaQuitada));
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    11L, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("1.00"), uuidSaldoZero))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("saldo devedor atual da venda");
+
+            UUID uuidIgual = UUID.randomUUID();
+            when(pagamentoRepository.findByUuidReferencia(uuidIgual)).thenReturn(Optional.empty());
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidIgual, 10L, "CARTAO_DEBITO", "PROCESSANDO", new BigDecimal("60.00"), BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(206L));
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("60.00"), uuidIgual);
+            assertThat(id).isEqualTo(206L);
         }
 
         @Test

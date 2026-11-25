@@ -6,6 +6,7 @@
 package inv.checkout.domain.model;
 
 import common.exception.BusinessException;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -175,6 +176,64 @@ class ItemVendaTest {
             assertThat(item.getNomeProdutoSnapshot()).isEqualTo(nome);
             assertThat(item.getPrecoUnitarioSnapshot()).isEqualTo(preco);
             assertThat(item.getQuantidade()).isEqualTo(quantidade);
+        }
+
+        @Test
+        @DisplayName("Deve rejeitar quantidade fracionária para UN e aceitar para KG ou inteiros equivalentes")
+        void deveValidarUnidadeMedidaNoDominio() {
+            for (String fracao : new String[]{"0.5", "1.250"}) {
+                assertThatThrownBy(() -> ItemVenda.criar(
+                        vendaPadrao,
+                        1L,
+                        "Coleira",
+                        new BigDecimal("30.00"),
+                        new BigDecimal(fracao),
+                        UnidadeMedidaCheckout.UN
+                ))
+                        .isInstanceOf(BusinessException.class)
+                        .hasMessageContaining("UN");
+
+                assertThatThrownBy(() -> vendaPadrao.adicionarItem(
+                        1L,
+                        "Coleira",
+                        new BigDecimal("30.00"),
+                        new BigDecimal(fracao),
+                        UnidadeMedidaCheckout.UN
+                ))
+                        .isInstanceOf(BusinessException.class)
+                        .hasMessageContaining("UN");
+            }
+
+            assertThatThrownBy(() -> ItemVenda.criar(
+                    vendaPadrao,
+                    1L,
+                    "Coleira",
+                    new BigDecimal("30.00"),
+                    BigDecimal.ONE,
+                    null
+            ))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("unidadeMedida é obrigatória");
+
+            ItemVenda inteiroEquivalente = ItemVenda.criar(
+                    vendaPadrao,
+                    1L,
+                    "Coleira",
+                    new BigDecimal("30.00"),
+                    new BigDecimal("2.000"),
+                    UnidadeMedidaCheckout.UN
+            );
+            assertThat(inteiroEquivalente.getSubTotal()).isEqualByComparingTo("60.00");
+
+            ItemVenda fracionarioKg = ItemVenda.criar(
+                    vendaPadrao,
+                    2L,
+                    "Ração Granel",
+                    new BigDecimal("20.00"),
+                    new BigDecimal("0.250"),
+                    UnidadeMedidaCheckout.KG
+            );
+            assertThat(fracionarioKg.getSubTotal()).isEqualByComparingTo("5.00");
         }
     }
 

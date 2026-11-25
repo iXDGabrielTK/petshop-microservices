@@ -21,7 +21,6 @@ import inv.inventory.api.ComandoEstoqueVenda;
 import inv.inventory.api.EstoqueCommandService;
 import inv.inventory.api.ItemComando;
 import inv.inventory.api.ProdutoCheckoutView;
-import inv.inventory.api.UnidadeMedidaCheckout;
 import inv.shared.event.VendaEstornadaEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -83,12 +82,24 @@ public class VendaService {
     public Venda iniciarVenda(VendaRequest pedido) {
         log.debug("Processando início de venda. Verificando disponibilidade de estoque...");
 
+        if (pedido == null || pedido.itens() == null || pedido.itens().isEmpty()) {
+            throw new BusinessException("O carrinho não pode estar vazio.");
+        }
+        for (ItemVendaRequest itemRequest : pedido.itens()) {
+            if (itemRequest == null || itemRequest.produtoId() == null) {
+                throw new BusinessException("Item de venda inválido.");
+            }
+            if (itemRequest.quantidade() == null || itemRequest.quantidade().signum() <= 0) {
+                throw new BusinessException("A quantidade do item deve ser maior que zero.");
+            }
+        }
+
         Map<Long, ProdutoCheckoutView> produtos = carregarCatalogo(pedido);
         Map<Long, BigDecimal> quantidadesConsolidadas = new LinkedHashMap<>();
 
         for (ItemVendaRequest itemRequest : pedido.itens()) {
             ProdutoCheckoutView prod = produtos.get(itemRequest.produtoId());
-            if (prod.unidadeMedida() == UnidadeMedidaCheckout.UN
+            if (!prod.unidadeMedida().permiteQuantidadeFracionaria()
                     && itemRequest.quantidade().stripTrailingZeros().scale() > 0) {
                 throw new BusinessException(
                         "Produto vendido por unidade (UN) não aceita quantidade fracionária: " + prod.nome());
@@ -100,7 +111,7 @@ public class VendaService {
 
         for (Map.Entry<Long, BigDecimal> entry : quantidadesConsolidadas.entrySet()) {
             ProdutoCheckoutView prod = produtos.get(entry.getKey());
-            venda.adicionarItem(prod.id(), prod.nome(), prod.precoVenda(), entry.getValue());
+            venda.adicionarItem(prod.id(), prod.nome(), prod.precoVenda(), entry.getValue(), prod.unidadeMedida());
         }
 
         estoqueCommandService.reservar(comandoPara(venda));

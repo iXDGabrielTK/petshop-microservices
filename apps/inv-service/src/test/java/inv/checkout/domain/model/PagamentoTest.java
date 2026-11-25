@@ -315,6 +315,16 @@ class PagamentoTest {
                     .isInstanceOf(BusinessException.class)
                     .hasMessage("Valor recebido diverge do valor esperado para pagamento eletrônico.");
             assertThat(cartao.getStatus()).isEqualTo(StatusPagamento.PROCESSANDO);
+
+            Pagamento debito = new Pagamento(venda, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("60.00"), UUID.randomUUID());
+            debito.processar();
+
+            for (String divergente : new String[]{"59.99", "60.01"}) {
+                assertThatThrownBy(() -> debito.confirmar(new BigDecimal(divergente), "NSU-DEB-DIV"))
+                        .isInstanceOf(BusinessException.class)
+                        .hasMessage("Valor recebido diverge do valor esperado para pagamento eletrônico.");
+                assertThat(debito.getStatus()).isEqualTo(StatusPagamento.PROCESSANDO);
+            }
         }
 
         @Test

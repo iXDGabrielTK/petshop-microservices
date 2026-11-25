@@ -271,6 +271,35 @@ class VendaServiceTest {
         }
 
         @Test
+        @DisplayName("Deve rejeitar quantidade <= 0 ou nula antes da consolidação sem consultar catálogo")
+        void deveRejeitarQuantidadeNaoPositivaOuNulaAntesDaConsolidacao() {
+            VendaRequest pedidoNegativoDuplicado = new VendaRequest(List.of(
+                    new ItemVendaRequest(10L, new BigDecimal("5.000")),
+                    new ItemVendaRequest(10L, new BigDecimal("-3.000"))
+            ));
+            assertThatThrownBy(() -> vendaService.iniciarVenda(pedidoNegativoDuplicado))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("maior que zero");
+
+            VendaRequest pedidoZero = new VendaRequest(List.of(
+                    new ItemVendaRequest(10L, new BigDecimal("2.000")),
+                    new ItemVendaRequest(10L, BigDecimal.ZERO)
+            ));
+            assertThatThrownBy(() -> vendaService.iniciarVenda(pedidoZero))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("maior que zero");
+
+            VendaRequest pedidoNulo = new VendaRequest(List.of(
+                    new ItemVendaRequest(10L, null)
+            ));
+            assertThatThrownBy(() -> vendaService.iniciarVenda(pedidoNulo))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("maior que zero");
+
+            verifyNoInteractions(catalogoQueryService, vendaRepository, estoqueCommandService);
+        }
+
+        @Test
         @DisplayName("Deve propagar exceção e não avançar status para AGUARDANDO_PAGAMENTO quando reserva falhar")
         void deveFalharQuandoReservaDeEstoqueFalhar() {
             Long produtoId = 10L;

@@ -6,6 +6,7 @@
 package inv.checkout.domain.model;
 
 import common.exception.BusinessException;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -51,7 +52,18 @@ public class ItemVenda {
             String nomeProdutoSnapshot,
             BigDecimal precoUnitarioSnapshot,
             BigDecimal quantidade) {
+        return criar(venda, produtoId, nomeProdutoSnapshot, precoUnitarioSnapshot, quantidade, UnidadeMedidaCheckout.KG);
+    }
+
+    static ItemVenda criar(
+            Venda venda,
+            Long produtoId,
+            String nomeProdutoSnapshot,
+            BigDecimal precoUnitarioSnapshot,
+            BigDecimal quantidade,
+            UnidadeMedidaCheckout unidadeMedida) {
         Objects.requireNonNull(venda, "venda é obrigatória");
+        Objects.requireNonNull(unidadeMedida, "unidadeMedida é obrigatória");
         if (produtoId == null || produtoId <= 0) {
             throw new IllegalArgumentException("produtoId deve ser positivo");
         }
@@ -63,6 +75,11 @@ public class ItemVenda {
         }
         if (quantidade == null || quantidade.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("quantidade deve ser positiva");
+        }
+        if (!unidadeMedida.permiteQuantidadeFracionaria()
+                && quantidade.stripTrailingZeros().scale() > 0) {
+            throw new BusinessException(
+                    "Produto vendido por unidade (UN) não aceita quantidade fracionária: " + nomeProdutoSnapshot);
         }
         ItemVenda item = new ItemVenda();
         item.venda = venda;

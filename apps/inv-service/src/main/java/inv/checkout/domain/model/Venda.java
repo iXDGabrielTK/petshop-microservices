@@ -6,6 +6,7 @@
 package inv.checkout.domain.model;
 
 import common.exception.BusinessException;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
@@ -57,10 +58,19 @@ public class Venda {
             String nomeProduto,
             BigDecimal precoUnitario,
             BigDecimal quantidade) {
+        adicionarItem(produtoId, nomeProduto, precoUnitario, quantidade, UnidadeMedidaCheckout.KG);
+    }
+
+    public void adicionarItem(
+            Long produtoId,
+            String nomeProduto,
+            BigDecimal precoUnitario,
+            BigDecimal quantidade,
+            UnidadeMedidaCheckout unidadeMedida) {
         if (this.status != StatusVenda.ABERTA) {
             throw new BusinessException("Não é possível adicionar itens. A venda não está ABERTA.");
         }
-        this.itens.add(ItemVenda.criar(this, produtoId, nomeProduto, precoUnitario, quantidade));
+        this.itens.add(ItemVenda.criar(this, produtoId, nomeProduto, precoUnitario, quantidade, unidadeMedida));
         recalcularTotal();
     }
 

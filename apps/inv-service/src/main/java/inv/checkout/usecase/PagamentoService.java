@@ -45,6 +45,13 @@ public class PagamentoService {
                                        BigDecimal valor,
                                        UUID uuidReferencia) {
 
+        if (metodo == null) {
+            throw new BusinessException("Método de pagamento é obrigatório.");
+        }
+        if (uuidReferencia == null) {
+            throw new BusinessException("UUID de referência é obrigatório.");
+        }
+
         if (valor == null
                 || valor.signum() <= 0
                 || valor.compareTo(VALOR_MAXIMO_INTENCAO) > 0
