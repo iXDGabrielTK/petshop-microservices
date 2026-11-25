@@ -10,6 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.support.PropertiesLoaderUtils;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
@@ -17,11 +19,16 @@ import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
+import org.springframework.web.reactive.function.server.RouterFunctions;
+import org.springframework.web.reactive.function.server.ServerResponse;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebFilter;
 
+import java.io.IOException;
 import java.security.KeyPair;
 import java.util.Base64;
 import java.util.List;
@@ -31,6 +38,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("GatewaySecurityConfig — Testes Unitários de Segurança Reativa WebFlux")
 class GatewaySecurityConfigTest {
+
+    private static final List<String> ROTAS_ADMIN_ACTUATOR = List.of(
+            "/actuator", "/actuator/env", "/actuator/heapdump", "/actuator/beans",
+            "/actuator/health/readiness", "/actuator/info/custom"
+    );
 
     private GatewaySecurityConfig gatewaySecurityConfig;
     private String validPublicKeyPem;
@@ -130,38 +142,45 @@ class GatewaySecurityConfigTest {
     @DisplayName("springSecurityFilterChain()")
     class SpringSecurityFilterChainTests {
 
-        private org.springframework.test.web.reactive.server.WebTestClient client;
+        private WebTestClient client;
 
         @BeforeEach
         void setUpChain() {
             ServerHttpSecurity http = ServerHttpSecurity.http();
             SecurityWebFilterChain filterChain = gatewaySecurityConfig.springSecurityFilterChain(http);
-            java.util.List<org.springframework.web.server.WebFilter> webFilters =
-                    filterChain.getWebFilters().collectList().block();
+            List<WebFilter> webFilters = filterChain.getWebFilters().collectList().block();
 
             assertThat(webFilters).isNotNull();
 
-            client = org.springframework.test.web.reactive.server.WebTestClient.bindToRouterFunction(
-                    org.springframework.web.reactive.function.server.RouterFunctions.route()
-                            .POST("/usuarios/register", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("registered"))
-                            .GET("/usuarios/me", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("usuarios_ok"))
-                            .GET("/oauth2/token", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("token_ok"))
-                            .GET("/vendas/10", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("vendas_ok"))
-                            .GET("/produtos/20", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("produtos_ok"))
-                            .GET("/movimentacoes/30", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("mov_ok"))
-                            .GET("/dashboard/stats", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("stats_ok"))
-                            .GET("/actuator/health", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("healthy"))
-                            .GET("/actuator/info", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().build())
-                            .GET("/actuator/env", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().build())
-                            .GET("/actuator/heapdump", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().build())
-                            .GET("/v3/api-docs/swagger-config", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("docs_ok"))
-                            .POST("/pagamentos/webhook/confirmar/1", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("webhook_ok"))
-                            .POST("/pagamentos/checkout", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("pago"))
-                            .GET("/rota-privada", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("privado"))
-                            .build()
-            )
-            .webFilter(webFilters.toArray(new org.springframework.web.server.WebFilter[0]))
-            .build();
+            var routes = RouterFunctions.route()
+                    .POST("/usuarios/register", req -> ServerResponse.ok().bodyValue("registered"))
+                    .GET("/usuarios/me", req -> ServerResponse.ok().bodyValue("usuarios_ok"))
+                    .GET("/oauth2/token", req -> ServerResponse.ok().bodyValue("token_ok"))
+                    .GET("/vendas/10", req -> ServerResponse.ok().bodyValue("vendas_ok"))
+                    .GET("/produtos/20", req -> ServerResponse.ok().bodyValue("produtos_ok"))
+                    .GET("/movimentacoes/30", req -> ServerResponse.ok().bodyValue("mov_ok"))
+                    .GET("/dashboard/stats", req -> ServerResponse.ok().bodyValue("stats_ok"))
+                    .GET("/actuator/health", req -> ServerResponse.ok().bodyValue("healthy"))
+                    .GET("/actuator/info", req -> ServerResponse.ok().build())
+                    .GET("/v3/api-docs/swagger-config", req -> ServerResponse.ok().bodyValue("docs_ok"))
+                    .POST("/pagamentos/webhook/confirmar/1", req -> ServerResponse.ok().bodyValue("webhook_ok"))
+                    .POST("/pagamentos/checkout", req -> ServerResponse.ok().bodyValue("pago"))
+                    .GET("/rota-privada", req -> ServerResponse.ok().bodyValue("privado"));
+            ROTAS_ADMIN_ACTUATOR.forEach(path -> routes.GET(path, req -> ServerResponse.ok().build()));
+
+            client = WebTestClient.bindToRouterFunction(routes.build())
+                    .webFilter(webFilters.toArray(WebFilter[]::new))
+                    .build();
+        }
+
+        @Test
+        @DisplayName("Deve expor apenas health e info com detalhes de saúde condicionados à autorização por padrão")
+        void deveLimitarExposicaoDoActuatorNaConfiguracao() throws IOException {
+            var properties = PropertiesLoaderUtils.loadProperties(new ClassPathResource("application.properties"));
+
+            assertThat(properties.getProperty("management.endpoints.web.exposure.include")).isEqualTo("health,info");
+            assertThat(properties.getProperty("management.endpoint.health.show-details"))
+                    .isEqualTo("${MANAGEMENT_HEALTH_SHOW_DETAILS:when-authorized}");
         }
 
         @Test
@@ -174,17 +193,23 @@ class GatewaySecurityConfigTest {
             client.get().uri("/produtos/20").exchange().expectStatus().isOk();
             client.get().uri("/movimentacoes/30").exchange().expectStatus().isOk();
             client.get().uri("/dashboard/stats").exchange().expectStatus().isOk();
-            client.get().uri("/actuator/health").exchange().expectStatus().isOk();
-            client.get().uri("/actuator/info").exchange().expectStatus().isOk();
             client.get().uri("/v3/api-docs/swagger-config").exchange().expectStatus().isOk();
             client.post().uri("/pagamentos/webhook/confirmar/1").exchange().expectStatus().isOk();
         }
 
         @Test
+        @DisplayName("Deve permitir health e info do Actuator sem autenticação")
+        void devePermitirActuatorPublicoSemAutenticacao() {
+            client.get().uri("/actuator/health").exchange().expectStatus().isOk()
+                    .expectBody(String.class).isEqualTo("healthy");
+            client.get().uri("/actuator/info").exchange().expectStatus().isOk();
+        }
+
+        @Test
         @DisplayName("Deve exigir autenticação para endpoints administrativos do Actuator")
         void deveExigirTokenNoActuatorAdministrativo() {
-            client.get().uri("/actuator/env").exchange().expectStatus().isUnauthorized();
-            client.get().uri("/actuator/heapdump").exchange().expectStatus().isUnauthorized();
+            ROTAS_ADMIN_ACTUATOR.forEach(path ->
+                    client.get().uri(path).exchange().expectStatus().isUnauthorized());
         }
 
         @Test
@@ -192,10 +217,8 @@ class GatewaySecurityConfigTest {
         void deveNegarActuatorAdministrativoSemPapelAdmin() throws Exception {
             String token = createSignedJwt("user123", java.time.Duration.ofMinutes(15), List.of("ROLE_USER"));
 
-            client.get().uri("/actuator/env").headers(headers -> headers.setBearerAuth(token))
-                    .exchange().expectStatus().isForbidden();
-            client.get().uri("/actuator/heapdump").headers(headers -> headers.setBearerAuth(token))
-                    .exchange().expectStatus().isForbidden();
+            ROTAS_ADMIN_ACTUATOR.forEach(path -> client.get().uri(path).headers(headers -> headers.setBearerAuth(token))
+                    .exchange().expectStatus().isForbidden());
         }
 
         @Test
@@ -203,10 +226,8 @@ class GatewaySecurityConfigTest {
         void devePermitirActuatorAdministrativoParaAdmin() throws Exception {
             String token = createSignedJwt("admin123", java.time.Duration.ofMinutes(15), List.of("ROLE_ADMIN"));
 
-            client.get().uri("/actuator/env").headers(headers -> headers.setBearerAuth(token))
-                    .exchange().expectStatus().isOk();
-            client.get().uri("/actuator/heapdump").headers(headers -> headers.setBearerAuth(token))
-                    .exchange().expectStatus().isOk();
+            ROTAS_ADMIN_ACTUATOR.forEach(path -> client.get().uri(path).headers(headers -> headers.setBearerAuth(token))
+                    .exchange().expectStatus().isOk());
         }
 
         @Test
