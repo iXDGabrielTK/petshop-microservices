@@ -58,34 +58,47 @@ public class VendaEstornadaEventListener {
                 event = objectMapper.readValue(m.getBody(), VendaEstornadaEvent.class);
             } catch (Exception e) {
                 log.error("Erro ao desserializar Message para VendaEstornadaEvent ({}). Mensagem enviada para DLQ.", e.getClass().getSimpleName());
-                throw new AmqpRejectAndDontRequeueException(e);
+                throw rejeicaoDePayload(e);
             }
         } else if (message instanceof String s) {
             try {
                 event = objectMapper.readValue(s, VendaEstornadaEvent.class);
             } catch (JsonProcessingException e) {
-                String trecho = s.substring(0, Math.min(s.length(), MAX_PAYLOAD_LOG)).replace('\r', ' ').replace('\n', ' ');
                 log.error("Erro ao desserializar JSON de VendaEstornadaEvent ({}): {}. Mensagem enviada para DLQ.",
-                        e.getClass().getSimpleName(), trecho);
-                throw new AmqpRejectAndDontRequeueException(e);
+                        e.getClass().getSimpleName(), trechoParaLog(s));
+                throw rejeicaoDePayload(e);
             }
         } else if (message instanceof byte[] b) {
             try {
                 event = objectMapper.readValue(b, VendaEstornadaEvent.class);
             } catch (Exception e) {
                 log.error("Erro ao desserializar bytes de VendaEstornadaEvent ({}). Mensagem enviada para DLQ.", e.getClass().getSimpleName());
-                throw new AmqpRejectAndDontRequeueException(e);
+                throw rejeicaoDePayload(e);
             }
         } else {
             try {
                 event = objectMapper.convertValue(message, VendaEstornadaEvent.class);
             } catch (Exception e) {
                 log.error("Tipo de mensagem não suportado para VendaEstornadaEvent: {}. Mensagem enviada para DLQ.", message.getClass().getName());
-                throw new AmqpRejectAndDontRequeueException(e);
+                throw rejeicaoDePayload(e);
             }
         }
 
         processar(event);
+    }
+
+    private static String trechoParaLog(String payload) {
+        int fim = Math.min(MAX_PAYLOAD_LOG, payload.length());
+        if (fim > 0 && Character.isHighSurrogate(payload.charAt(fim - 1))) {
+            fim--;
+        }
+        return payload.substring(0, fim).replace('\r', ' ').replace('\n', ' ');
+    }
+
+    private static AmqpRejectAndDontRequeueException rejeicaoDePayload(Exception erro) {
+        // O contêiner também registra a rejeição. A mensagem do parser pode incluir o payload bruto.
+        return new AmqpRejectAndDontRequeueException("Payload inválido para VendaEstornadaEvent (" +
+                erro.getClass().getSimpleName() + ")");
     }
 
     private void processar(VendaEstornadaEvent event) {

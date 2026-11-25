@@ -15,6 +15,8 @@ import inv.shared.event.VendaEstornadaEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -51,20 +53,26 @@ class VendaEstornadaEventListenerTest {
 
     private VendaEstornadaEventListener listener;
 
-    @Test
-    void limitaPayloadNoLogDeErro() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void limitaPayloadNoLogDeErro(boolean cortaParSurrogado) {
         Logger logger = (Logger) LoggerFactory.getLogger(VendaEstornadaEventListener.class);
         ListAppender<ILoggingEvent> eventos = new ListAppender<>();
         eventos.start();
         logger.addAppender(eventos);
         try {
-            String payload = "inicio\r\nlinha" + "x".repeat(256) + "fim-do-payload";
+            String prefixo = "inicio\r\nlinha";
+            int limite = cortaParSurrogado ? 255 : 256;
+            String trecho = prefixo + "x".repeat(limite - prefixo.length());
+            String payload = trecho + "🐾fim-do-payload";
             assertThatThrownBy(() -> listener.handleVendaEstornada(payload))
-                    .isInstanceOf(AmqpRejectAndDontRequeueException.class);
+                    .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                    .hasNoCause()
+                    .hasMessageNotContaining("inicio");
             assertThat(eventos.list).singleElement().satisfies(evento -> {
                 assertThat(evento.getFormattedMessage()).contains("inicio  linha")
                         .doesNotContain("\r", "\n", "fim-do-payload");
-                assertThat(evento.getArgumentArray()[1]).asString().hasSize(256);
+                assertThat(evento.getArgumentArray()[1]).isEqualTo(trecho.replace('\r', ' ').replace('\n', ' '));
                 assertThat(evento.getThrowableProxy()).isNull();
             });
         } finally {
