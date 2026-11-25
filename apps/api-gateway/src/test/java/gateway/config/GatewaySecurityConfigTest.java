@@ -24,6 +24,7 @@ import org.springframework.web.server.ServerWebExchange;
 
 import java.security.KeyPair;
 import java.util.Base64;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -150,6 +151,9 @@ class GatewaySecurityConfigTest {
                             .GET("/movimentacoes/30", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("mov_ok"))
                             .GET("/dashboard/stats", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("stats_ok"))
                             .GET("/actuator/health", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("healthy"))
+                            .GET("/actuator/info", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().build())
+                            .GET("/actuator/env", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().build())
+                            .GET("/actuator/heapdump", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().build())
                             .GET("/v3/api-docs/swagger-config", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("docs_ok"))
                             .POST("/pagamentos/webhook/confirmar/1", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("webhook_ok"))
                             .POST("/pagamentos/checkout", req -> org.springframework.web.reactive.function.server.ServerResponse.ok().bodyValue("pago"))
@@ -171,8 +175,38 @@ class GatewaySecurityConfigTest {
             client.get().uri("/movimentacoes/30").exchange().expectStatus().isOk();
             client.get().uri("/dashboard/stats").exchange().expectStatus().isOk();
             client.get().uri("/actuator/health").exchange().expectStatus().isOk();
+            client.get().uri("/actuator/info").exchange().expectStatus().isOk();
             client.get().uri("/v3/api-docs/swagger-config").exchange().expectStatus().isOk();
             client.post().uri("/pagamentos/webhook/confirmar/1").exchange().expectStatus().isOk();
+        }
+
+        @Test
+        @DisplayName("Deve exigir autenticação para endpoints administrativos do Actuator")
+        void deveExigirTokenNoActuatorAdministrativo() {
+            client.get().uri("/actuator/env").exchange().expectStatus().isUnauthorized();
+            client.get().uri("/actuator/heapdump").exchange().expectStatus().isUnauthorized();
+        }
+
+        @Test
+        @DisplayName("Deve negar acesso ao Actuator administrativo para JWT sem ROLE_ADMIN")
+        void deveNegarActuatorAdministrativoSemPapelAdmin() throws Exception {
+            String token = createSignedJwt("user123", java.time.Duration.ofMinutes(15), List.of("ROLE_USER"));
+
+            client.get().uri("/actuator/env").headers(headers -> headers.setBearerAuth(token))
+                    .exchange().expectStatus().isForbidden();
+            client.get().uri("/actuator/heapdump").headers(headers -> headers.setBearerAuth(token))
+                    .exchange().expectStatus().isForbidden();
+        }
+
+        @Test
+        @DisplayName("Deve permitir acesso ao Actuator administrativo para JWT com ROLE_ADMIN")
+        void devePermitirActuatorAdministrativoParaAdmin() throws Exception {
+            String token = createSignedJwt("admin123", java.time.Duration.ofMinutes(15), List.of("ROLE_ADMIN"));
+
+            client.get().uri("/actuator/env").headers(headers -> headers.setBearerAuth(token))
+                    .exchange().expectStatus().isOk();
+            client.get().uri("/actuator/heapdump").headers(headers -> headers.setBearerAuth(token))
+                    .exchange().expectStatus().isOk();
         }
 
         @Test
@@ -227,11 +261,16 @@ class GatewaySecurityConfigTest {
     }
 
     private String createSignedJwt(String subject, java.time.Duration validFor) throws Exception {
+        return createSignedJwt(subject, validFor, List.of());
+    }
+
+    private String createSignedJwt(String subject, java.time.Duration validFor, List<String> roles) throws Exception {
         com.nimbusds.jwt.JWTClaimsSet claims = new com.nimbusds.jwt.JWTClaimsSet.Builder()
                 .subject(subject)
                 .issuer("https://auth-service")
                 .issueTime(new java.util.Date())
                 .expirationTime(new java.util.Date(System.currentTimeMillis() + validFor.toMillis()))
+                .claim("roles", roles)
                 .build();
 
         com.nimbusds.jose.JWSHeader header = new com.nimbusds.jose.JWSHeader.Builder(com.nimbusds.jose.JWSAlgorithm.RS256).build();
