@@ -204,6 +204,101 @@ class WebhookHmacFilterTest {
         assertThat(corpoLido.get()).isEmpty();
     }
 
+    @Test
+    @DisplayName("Deve rejeitar com 401 limpo quando assinatura for malformada (comprimento ímpar ou caracteres inválidos)")
+    void deveRejeitarAssinaturaMalformadaSemLancarErro() throws Exception {
+        WebhookHmacFilter filter = new WebhookHmacFilter(SECRET, 300, FIXED_CLOCK);
+        long ts = NOW.getEpochSecond();
+        String path = "/pagamentos/webhook/confirmar/42";
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+        FilterChain chain = mock(FilterChain.class);
+
+        for (String assinaturaMalformada : new String[]{
+                "sha256=abc",
+                "12345",
+                "sha256=" + "g".repeat(64),
+                "z".repeat(64)
+        }) {
+            MockHttpServletRequest request = criarRequisicao(path, body, String.valueOf(ts), assinaturaMalformada);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request, response, chain);
+            assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        }
+
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    @DisplayName("Deve rejeitar com 401 quando headers X-Webhook-Timestamp ou X-Webhook-Signature forem duplicados")
+    void deveRejeitarHeadersDuplicados() throws Exception {
+        WebhookHmacFilter filter = new WebhookHmacFilter(SECRET, 300, FIXED_CLOCK);
+        long ts = NOW.getEpochSecond();
+        String path = "/pagamentos/webhook/confirmar/42";
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+        String assinatura = WebhookHmacFilter.assinar(SECRET, ts, path, body);
+        FilterChain chain = mock(FilterChain.class);
+
+        MockHttpServletRequest tsDuplicado = criarRequisicao(path, body, String.valueOf(ts), assinatura);
+        tsDuplicado.addHeader(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(ts));
+        MockHttpServletResponse res1 = new MockHttpServletResponse();
+        filter.doFilter(tsDuplicado, res1, chain);
+        assertThat(res1.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
+
+        MockHttpServletRequest sigDuplicada = criarRequisicao(path, body, String.valueOf(ts), assinatura);
+        sigDuplicada.addHeader(WebhookHmacFilter.HEADER_SIGNATURE, assinatura);
+        MockHttpServletResponse res2 = new MockHttpServletResponse();
+        filter.doFilter(sigDuplicada, res2, chain);
+        assertThat(res2.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
+
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    @DisplayName("Deve rejeitar timestamps extremos sem overflow e aceitar limites exatos da janela")
+    void deveTratarTimestampsExtremosELimitesExatos() throws Exception {
+        WebhookHmacFilter filter = new WebhookHmacFilter(SECRET, 300, FIXED_CLOCK);
+        String path = "/pagamentos/webhook/confirmar/42";
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+        FilterChain chainBloqueado = mock(FilterChain.class);
+
+        for (long extremo : new long[]{Long.MIN_VALUE, Long.MAX_VALUE}) {
+            String sig = WebhookHmacFilter.assinar(SECRET, extremo, path, body);
+            MockHttpServletRequest req = criarRequisicao(path, body, String.valueOf(extremo), sig);
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            filter.doFilter(req, res, chainBloqueado);
+            assertThat(res.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
+        }
+        verify(chainBloqueado, never()).doFilter(any(), any());
+
+        for (long limiteValido : new long[]{NOW.getEpochSecond() - 300, NOW.getEpochSecond() + 300}) {
+            String sig = WebhookHmacFilter.assinar(SECRET, limiteValido, path, body);
+            MockHttpServletRequest req = criarRequisicao(path, body, String.valueOf(limiteValido), sig);
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            filter.doFilter(req, res, (r, s) -> {});
+            assertThat(res.getStatus()).isEqualTo(HttpServletResponse.SC_OK);
+        }
+    }
+
+    @Test
+    @DisplayName("Deve rejeitar com 413 Payload Too Large quando body exceder MAX_BODY_BYTES")
+    void deveRejeitarCorpoAcimaDoLimite() throws Exception {
+        WebhookHmacFilter filter = new WebhookHmacFilter(SECRET, 300, FIXED_CLOCK);
+        long ts = NOW.getEpochSecond();
+        String path = "/pagamentos/webhook/confirmar/42";
+        byte[] bodyGrande = new byte[WebhookHmacFilter.MAX_BODY_BYTES + 1];
+        String sig = WebhookHmacFilter.assinar(SECRET, ts, path, bodyGrande);
+        FilterChain chain = mock(FilterChain.class);
+
+        MockHttpServletRequest req = criarRequisicao(path, bodyGrande, String.valueOf(ts), sig);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        filter.doFilter(req, res, chain);
+
+        assertThat(res.getStatus()).isEqualTo(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verify(chain, never()).doFilter(any(), any());
+    }
+
     private static MockHttpServletRequest criarRequisicao(String path, byte[] body, String timestamp, String signature) {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
         request.setRequestURI(path);

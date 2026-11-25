@@ -268,6 +268,80 @@ class PagamentoSecurityFilterTest {
 
             verify(pagamentoService).falharPagamentoWebhook(42L);
         }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando timestamp futuro exceder janela")
+        void deveRejeitarWebhookConfirmarComTimestampFuturoForaDaJanela() throws Exception {
+            byte[] body = objectMapper.writeValueAsBytes(
+                    new ConfirmarPagamentoWebhookRequest(new BigDecimal("150.50"), "NSU-123456"));
+            long timestampFuturo = Instant.now().plusSeconds(600).getEpochSecond();
+            String signature = WebhookHmacFilter.assinar(
+                    WEBHOOK_HMAC_SECRET, timestampFuturo, "/pagamentos/webhook/confirmar/42", body);
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestampFuturo))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, signature)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando assinatura HMAC for malformada")
+        void deveRejeitarWebhookConfirmarComAssinaturaMalformada() throws Exception {
+            byte[] body = objectMapper.writeValueAsBytes(
+                    new ConfirmarPagamentoWebhookRequest(new BigDecimal("150.50"), "NSU-123456"));
+            long timestamp = Instant.now().getEpochSecond();
+
+            for (String assinaturaMalformada : new String[]{"sha256=abc", "sha256=" + "g".repeat(64)}) {
+                mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                                .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(timestamp))
+                                .header(WebhookHmacFilter.HEADER_SIGNATURE, assinaturaMalformada)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isUnauthorized());
+            }
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/confirmar/{id} deve retornar 401 quando enviado apenas JWT ROLE_ADMIN sem headers HMAC")
+        void deveRejeitarWebhookConfirmarApenasComJwtAdminSemHmac() throws Exception {
+            String adminToken = createValidToken("admin@petshop.com", List.of("ROLE_ADMIN"));
+            byte[] body = objectMapper.writeValueAsBytes(
+                    new ConfirmarPagamentoWebhookRequest(new BigDecimal("150.50"), "NSU-123456"));
+
+            mockMvc.perform(post("/pagamentos/webhook/confirmar/42")
+                            .header("Authorization", "Bearer " + adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/webhook/falhar/{id} deve retornar 401 com assinatura inválida ou timestamp expirado")
+        void deveRejeitarWebhookFalharComAssinaturaInvalidaOuTimestampExpirado() throws Exception {
+            long agora = Instant.now().getEpochSecond();
+            mockMvc.perform(post("/pagamentos/webhook/falhar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(agora))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, "sha256=" + "0".repeat(64)))
+                    .andExpect(status().isUnauthorized());
+
+            long expirado = agora - 600;
+            String sigExpirada = WebhookHmacFilter.assinar(
+                    WEBHOOK_HMAC_SECRET, expirado, "/pagamentos/webhook/falhar/42", new byte[0]);
+            mockMvc.perform(post("/pagamentos/webhook/falhar/42")
+                            .header(WebhookHmacFilter.HEADER_TIMESTAMP, String.valueOf(expirado))
+                            .header(WebhookHmacFilter.HEADER_SIGNATURE, sigExpirada))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(pagamentoService);
+        }
     }
 
     @Nested
@@ -423,6 +497,42 @@ class PagamentoSecurityFilterTest {
                     .andExpect(jsonPath("$.status").value("CONFIRMADO"));
 
             verify(pagamentoService).buscarStatusPagamento(42L);
+        }
+
+        @Test
+        @DisplayName("POST /pagamentos/intencao/{vendaId} e GET /pagamentos/{id}/status devem responder 403 Forbidden para JWT sem roles")
+        void deveRejeitarEndpointsAdminParaJwtSemRoles() throws Exception {
+            String tokenSemRoles = createToken(
+                    "sem-role@petshop.com",
+                    null,
+                    new Date(),
+                    new Date(System.currentTimeMillis() + Duration.ofHours(1).toMillis()),
+                    KEY_PAIR
+            );
+            String tokenRolesVazio = createValidToken("vazio@petshop.com", List.of());
+
+            CriarIntencaoPagamentoRequest request = new CriarIntencaoPagamentoRequest(
+                    UUID.randomUUID(),
+                    MetodoPagamento.PIX,
+                    new BigDecimal("100.00")
+            );
+            String body = objectMapper.writeValueAsString(request);
+
+            for (String token : new String[]{tokenSemRoles, tokenRolesVazio}) {
+                mockMvc.perform(post("/pagamentos/intencao/10")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isForbidden())
+                        .andExpect(jsonPath("$.title").value("Acesso Negado"));
+
+                mockMvc.perform(get("/pagamentos/42/status")
+                                .header("Authorization", "Bearer " + token))
+                        .andExpect(status().isForbidden())
+                        .andExpect(jsonPath("$.title").value("Acesso Negado"));
+            }
+
+            verifyNoInteractions(pagamentoService);
         }
     }
 }

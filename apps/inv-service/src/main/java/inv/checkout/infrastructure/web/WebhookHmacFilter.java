@@ -30,6 +30,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -91,29 +93,29 @@ public class WebhookHmacFilter extends OncePerRequestFilter {
             return;
         }
 
-        String timestampHeader = request.getHeader(HEADER_TIMESTAMP);
-        String signatureHeader = request.getHeader(HEADER_SIGNATURE);
-        if (timestampHeader == null || timestampHeader.isBlank()
-                || signatureHeader == null || signatureHeader.isBlank()) {
+        String timestampHeader = obterHeaderUnico(request, HEADER_TIMESTAMP);
+        String signatureHeader = obterHeaderUnico(request, HEADER_SIGNATURE);
+        if (timestampHeader == null || signatureHeader == null) {
             rejeitarNaoAutorizado(response);
             return;
         }
 
         long timestamp;
         try {
-            timestamp = Long.parseLong(timestampHeader.trim());
+            timestamp = Long.parseLong(timestampHeader);
         } catch (NumberFormatException e) {
             rejeitarNaoAutorizado(response);
             return;
         }
 
         long now = clock.instant().getEpochSecond();
-        if (timestamp < now - maxSkewSeconds || timestamp > now + maxSkewSeconds) {
+        long diff = timestamp >= now ? timestamp - now : now - timestamp;
+        if (diff < 0 || diff > maxSkewSeconds) {
             rejeitarNaoAutorizado(response);
             return;
         }
 
-        byte[] providedMac = decodificarAssinatura(signatureHeader.trim());
+        byte[] providedMac = decodificarAssinatura(signatureHeader);
         if (providedMac == null) {
             rejeitarNaoAutorizado(response);
             return;
@@ -144,6 +146,19 @@ public class WebhookHmacFilter extends OncePerRequestFilter {
     private static void rejeitarNaoAutorizado(HttpServletResponse response) {
         SecurityContextHolder.clearContext();
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+    }
+
+    private static String obterHeaderUnico(HttpServletRequest request, String headerName) {
+        Enumeration<String> headers = request.getHeaders(headerName);
+        if (headers == null) {
+            return null;
+        }
+        List<String> valores = Collections.list(headers);
+        if (valores.size() != 1) {
+            return null;
+        }
+        String valor = valores.getFirst();
+        return (valor == null || valor.isBlank()) ? null : valor.trim();
     }
 
     private static byte[] decodificarAssinatura(String rawSignature) {
@@ -235,7 +250,7 @@ public class WebhookHmacFilter extends OncePerRequestFilter {
         @Override
         public BufferedReader getReader() {
             String encoding = getCharacterEncoding();
-            Charset charset = (encoding != null && !encoding.isBlank())
+            Charset charset = (encoding != null && !encoding.isBlank() && Charset.isSupported(encoding))
                     ? Charset.forName(encoding)
                     : StandardCharsets.UTF_8;
             return new BufferedReader(new InputStreamReader(getInputStream(), charset));
