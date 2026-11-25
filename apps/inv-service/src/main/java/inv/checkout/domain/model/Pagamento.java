@@ -94,6 +94,15 @@ public class Pagamento {
             throw new BusinessException("Transição inválida: Pagamento com status " + this.status + " não pode ser confirmado.");
         }
 
+        if (valorRecebido == null || valorRecebido.signum() <= 0) {
+            throw new BusinessException("Valor recebido deve ser maior que zero.");
+        }
+
+        if (this.metodo.isExigeProcessamento()
+                && (this.valorEsperado == null || valorRecebido.compareTo(this.valorEsperado) != 0)) {
+            throw new BusinessException("Valor recebido diverge do valor esperado para pagamento eletrônico.");
+        }
+
         this.valorRecebido = valorRecebido;
         this.nsuTransacao = nsu;
         this.status = StatusPagamento.CONFIRMADO;

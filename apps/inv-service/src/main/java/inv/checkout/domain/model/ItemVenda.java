@@ -5,6 +5,7 @@
  */
 package inv.checkout.domain.model;
 
+import common.exception.BusinessException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -69,6 +70,9 @@ public class ItemVenda {
         item.nomeProdutoSnapshot = nomeProdutoSnapshot;
         item.precoUnitarioSnapshot = precoUnitarioSnapshot;
         item.quantidade = quantidade;
+        if (item.getSubTotal().signum() <= 0) {
+            throw new BusinessException("Subtotal do item deve ser maior que zero.");
+        }
         return item;
     }
 

@@ -7,6 +7,7 @@ package inv.inventory.infrastructure.query;
 
 import inv.inventory.api.CatalogoQueryService;
 import inv.inventory.api.ProdutoCheckoutView;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,14 @@ class JpaCatalogoQueryService implements CatalogoQueryService {
     public List<ProdutoCheckoutView> buscarParaCheckout(Set<Long> produtoIds) {
         Objects.requireNonNull(produtoIds, "produtoIds");
         if (produtoIds.isEmpty()) return List.of();
-        return produtoRepository.buscarViewsCheckout(produtoIds);
+        return produtoRepository.buscarViewsCheckout(produtoIds).stream()
+                .map(p -> new ProdutoCheckoutView(
+                        p.id(),
+                        p.nome(),
+                        p.precoVenda(),
+                        p.unidadeMedida() != null
+                                ? UnidadeMedidaCheckout.valueOf(p.unidadeMedida().name())
+                                : UnidadeMedidaCheckout.UN))
+                .toList();
     }
 }

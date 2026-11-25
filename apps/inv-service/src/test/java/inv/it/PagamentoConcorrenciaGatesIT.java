@@ -235,7 +235,9 @@ class PagamentoConcorrenciaGatesIT {
 
         try (ExecutorService pool = Executors.newFixedThreadPool(totalThreads)) {
             for (int i = 0; i < totalThreads; i++) {
-                BigDecimal valorChamada = paresDistintos ? valorTotal.add(BigDecimal.valueOf(i)) : valorTotal;
+                BigDecimal valorChamada = (paresDistintos && !metodo.isExigeProcessamento())
+                        ? valorTotal.add(BigDecimal.valueOf(i))
+                        : valorTotal;
                 String nsuChamada = "NSU-GATE1-" + (paresDistintos ? i : "BURST");
                 pool.submit(() -> {
                     try {
@@ -263,7 +265,8 @@ class PagamentoConcorrenciaGatesIT {
         if (paresDistintos) {
             int indiceVencedor = Integer.parseInt(nsuVencedor.substring("NSU-GATE1-".length()));
             assertThat(indiceVencedor).isBetween(0, totalThreads - 1);
-            assertThat(valorVencedor).isEqualByComparingTo(valorTotal.add(BigDecimal.valueOf(indiceVencedor)));
+            BigDecimal esperado = metodo.isExigeProcessamento() ? valorTotal : valorTotal.add(BigDecimal.valueOf(indiceVencedor));
+            assertThat(valorVencedor).isEqualByComparingTo(esperado);
         } else {
             assertThat(valorVencedor).isEqualByComparingTo(valorTotal);
             assertThat(nsuVencedor).isEqualTo("NSU-GATE1-BURST");
@@ -364,7 +367,7 @@ class PagamentoConcorrenciaGatesIT {
         Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(new ItemVendaRequest(produto.getId(), BigDecimal.ONE))));
         Long pagamentoId = pagamentoService.criarIntencaoPagamento(venda.getId(), MetodoPagamento.CARTAO_CREDITO,
                 new BigDecimal("100.00"), UUID.randomUUID());
-        Runnable confirmar = () -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("110.00"), "NSU-VENCEDOR");
+        Runnable confirmar = () -> pagamentoService.confirmarPagamentoWebhook(pagamentoId, new BigDecimal("100.00"), "NSU-VENCEDOR");
         Runnable falhar = () -> pagamentoService.falharPagamentoWebhook(pagamentoId);
 
         executarComPagamentoRetido(confirmacaoPrimeiro ? confirmar : falhar,
@@ -373,7 +376,7 @@ class PagamentoConcorrenciaGatesIT {
 
         Pagamento pagamento = pagamentoRepository.findById(pagamentoId).orElseThrow();
         assertThat(pagamento.getStatus()).isEqualTo(confirmacaoPrimeiro ? StatusPagamento.CONFIRMADO : StatusPagamento.FALHOU);
-        assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(confirmacaoPrimeiro ? "110.00" : "0.00");
+        assertThat(pagamento.getValorRecebido()).isEqualByComparingTo(confirmacaoPrimeiro ? "100.00" : "0.00");
         assertThat(pagamento.getNsuTransacao()).isEqualTo(confirmacaoPrimeiro ? "NSU-VENCEDOR" : null);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox WHERE event_type LIKE '%PagamentoConfirmadoEvent'", Long.class))
                 .isEqualTo(confirmacaoPrimeiro ? 1L : 0L);

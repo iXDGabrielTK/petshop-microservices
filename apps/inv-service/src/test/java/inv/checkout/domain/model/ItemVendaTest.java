@@ -5,6 +5,7 @@
  */
 package inv.checkout.domain.model;
 
+import common.exception.BusinessException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -105,18 +106,27 @@ class ItemVendaTest {
         }
 
         @Test
-        @DisplayName("Deve permitir criação com precoUnitarioSnapshot igual a zero")
-        void devePermitirPrecoUnitarioZero() {
-            ItemVenda item = ItemVenda.criar(
+        @DisplayName("Deve rejeitar item com precoUnitarioSnapshot igual a zero ou subtotal arredondado a zero")
+        void deveRejeitarItemComSubTotalNaoPositivo() {
+            assertThatThrownBy(() -> ItemVenda.criar(
                     vendaPadrao,
                     1L,
                     "Amostra Grátis",
                     BigDecimal.ZERO,
                     new BigDecimal("1.000")
-            );
+            ))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Subtotal do item deve ser maior que zero.");
 
-            assertThat(item.getPrecoUnitarioSnapshot()).isEqualTo(BigDecimal.ZERO);
-            assertThat(item.getSubTotal()).isEqualByComparingTo(new BigDecimal("0.00"));
+            assertThatThrownBy(() -> ItemVenda.criar(
+                    vendaPadrao,
+                    1L,
+                    "Granel ínfimo",
+                    new BigDecimal("1.00"),
+                    new BigDecimal("0.001")
+            ))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Subtotal do item deve ser maior que zero.");
         }
 
         @Test

@@ -21,6 +21,7 @@ import inv.inventory.api.ComandoEstoqueVenda;
 import inv.inventory.api.EstoqueCommandService;
 import inv.inventory.api.ItemComando;
 import inv.inventory.api.ProdutoCheckoutView;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import inv.shared.event.VendaEstornadaEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -82,11 +84,23 @@ public class VendaService {
         log.debug("Processando início de venda. Verificando disponibilidade de estoque...");
 
         Map<Long, ProdutoCheckoutView> produtos = carregarCatalogo(pedido);
-        Venda venda = vendaRepository.save(new Venda());
+        Map<Long, BigDecimal> quantidadesConsolidadas = new LinkedHashMap<>();
 
         for (ItemVendaRequest itemRequest : pedido.itens()) {
             ProdutoCheckoutView prod = produtos.get(itemRequest.produtoId());
-            venda.adicionarItem(prod.id(), prod.nome(), prod.precoVenda(), itemRequest.quantidade());
+            if (prod.unidadeMedida() == UnidadeMedidaCheckout.UN
+                    && itemRequest.quantidade().stripTrailingZeros().scale() > 0) {
+                throw new BusinessException(
+                        "Produto vendido por unidade (UN) não aceita quantidade fracionária: " + prod.nome());
+            }
+            quantidadesConsolidadas.merge(itemRequest.produtoId(), itemRequest.quantidade(), BigDecimal::add);
+        }
+
+        Venda venda = vendaRepository.save(new Venda());
+
+        for (Map.Entry<Long, BigDecimal> entry : quantidadesConsolidadas.entrySet()) {
+            ProdutoCheckoutView prod = produtos.get(entry.getKey());
+            venda.adicionarItem(prod.id(), prod.nome(), prod.precoVenda(), entry.getValue());
         }
 
         estoqueCommandService.reservar(comandoPara(venda));

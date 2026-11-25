@@ -8,6 +8,7 @@ package inv.inventory;
 import inv.InvServiceApplication;
 import inv.inventory.api.CatalogoQueryService;
 import inv.inventory.api.ProdutoCheckoutView;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import inv.inventory.domain.model.Produto;
 import inv.inventory.domain.model.UnidadeMedida;
 import inv.inventory.infrastructure.persistence.ProdutoRepository;
@@ -121,6 +122,31 @@ class JpaCatalogoQueryServiceIT {
 
         assertThat(views)
                 .containsExactly(new ProdutoCheckoutView(semSaldo.getId(), "Produto Indisponível / Inativo", new BigDecimal("59.00")));
+    }
+
+    @Test
+    @DisplayName("Deve projetar UnidadeMedida.KG como UnidadeMedidaCheckout.KG sem hidratar entidade")
+    void deveProjetarUnidadeMedidaKgSemHidratarEntidade() {
+        Produto produtoKg = new Produto();
+        produtoKg.setCodigoBarras("7892000000041");
+        produtoKg.setNome("Ração a Granel KG");
+        produtoKg.setUnidadeMedida(UnidadeMedida.KG);
+        produtoKg.setPrecoVenda(new BigDecimal("24.90"));
+        produtoKg.setEstoqueDisponivel(new BigDecimal("10.000"));
+        produtoKg.setEstoqueReservado(BigDecimal.ZERO);
+        produtoKg.setEstoqueMinimo(BigDecimal.ONE);
+        produtoKg = produtoRepository.saveAndFlush(produtoKg);
+
+        Statistics stats = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+        stats.clear();
+
+        List<ProdutoCheckoutView> views = catalogoQueryService.buscarParaCheckout(Set.of(produtoKg.getId()));
+
+        assertThat(views).containsExactly(
+                new ProdutoCheckoutView(produtoKg.getId(), "Ração a Granel KG", new BigDecimal("24.90"), UnidadeMedidaCheckout.KG)
+        );
+        assertThat(stats.getPrepareStatementCount()).isEqualTo(1L);
+        assertThat(stats.getEntityLoadCount()).isZero();
     }
 
     @Test

@@ -31,13 +31,13 @@ public interface ProdutoRepository extends JpaRepository<Produto, Long> {
 
     Page<Produto> findByNomeContainingIgnoreCase(String nome, Pageable pageable);
 
-    /** Catálogo para o PDV: projeção direta no record da API, sem hidratar entidades. */
+    /** Catálogo para o PDV: projeção direta interna, sem hidratar entidades. */
     @Query("""
-        SELECT new inv.inventory.api.ProdutoCheckoutView(p.id, p.nome, p.precoVenda)
+        SELECT new inv.inventory.infrastructure.persistence.ProdutoCheckoutProjection(p.id, p.nome, p.precoVenda, p.unidadeMedida)
           FROM Produto p
          WHERE p.id IN :ids
         """)
-    List<ProdutoCheckoutView> buscarViewsCheckout(@Param("ids") Collection<Long> ids);
+    List<ProdutoCheckoutProjection> buscarViewsCheckout(@Param("ids") Collection<Long> ids);
 
     /** Metadados para alerta de estoque mínimo e mensagens de erro: 1 SELECT por comando, em lote. */
     @Query("""

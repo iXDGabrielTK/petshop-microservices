@@ -286,6 +286,47 @@ class PagamentoTest {
                     .isInstanceOf(BusinessException.class)
                     .hasMessage("Transição inválida: Pagamento com status PROCESSANDO não pode ser confirmado.");
         }
+
+        @Test
+        @DisplayName("Deve lançar BusinessException quando valorRecebido for nulo, zero ou negativo")
+        void deveLancarExcecaoQuandoValorRecebidoNaoPositivo() {
+            Venda venda = new Venda();
+            Pagamento pagamentoPix = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+
+            assertThatThrownBy(() -> pagamentoPix.confirmar(null, "PIX-1"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Valor recebido deve ser maior que zero.");
+            assertThatThrownBy(() -> pagamentoPix.confirmar(BigDecimal.ZERO, "PIX-1"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Valor recebido deve ser maior que zero.");
+            assertThatThrownBy(() -> pagamentoPix.confirmar(new BigDecimal("-10.00"), "PIX-1"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Valor recebido deve ser maior que zero.");
+        }
+
+        @Test
+        @DisplayName("Deve lançar BusinessException quando pagamento eletrônico receber valor divergente do esperado")
+        void deveLancarExcecaoQuandoPagamentoEletronicoDivergirDoValorEsperado() {
+            Venda venda = new Venda();
+            Pagamento cartao = new Pagamento(venda, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("100.00"), UUID.randomUUID());
+            cartao.processar();
+
+            assertThatThrownBy(() -> cartao.confirmar(new BigDecimal("99.99"), "NSU-DIVERGENTE"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Valor recebido diverge do valor esperado para pagamento eletrônico.");
+            assertThat(cartao.getStatus()).isEqualTo(StatusPagamento.PROCESSANDO);
+        }
+
+        @Test
+        @DisplayName("Deve aceitar valorRecebido diferente do esperado para DINHEIRO e PIX (ex.: troco)")
+        void deveAceitarValorDiferenteDoEsperadoParaDinheiroEPix() {
+            Venda venda = new Venda();
+            Pagamento dinheiro = new Pagamento(venda, MetodoPagamento.DINHEIRO, new BigDecimal("80.00"), UUID.randomUUID());
+            assertThat(dinheiro.confirmar(new BigDecimal("100.00"), "DIN-TROCO")).isTrue();
+
+            Pagamento pix = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+            assertThat(pix.confirmar(new BigDecimal("60.00"), "PIX-EXTRA")).isTrue();
+        }
     }
 
     @Nested

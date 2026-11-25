@@ -170,7 +170,7 @@ class PagamentoServiceTest {
             BigDecimal valor = new BigDecimal("150.00");
             String nsu = "NSU-CREDITO-01";
 
-            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PROCESSANDO);
+            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_CREDITO, StatusPagamento.PROCESSANDO, valor, UUID.randomUUID());
             when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
@@ -192,7 +192,7 @@ class PagamentoServiceTest {
             BigDecimal valor = new BigDecimal("60.00");
             String nsu = "NSU-DEBITO-01";
 
-            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_DEBITO, StatusPagamento.PROCESSANDO);
+            Pagamento pagamento = criarPagamento(pagamentoId, vendaId, MetodoPagamento.CARTAO_DEBITO, StatusPagamento.PROCESSANDO, valor, UUID.randomUUID());
             when(pagamentoRepository.findByIdWithLock(pagamentoId)).thenReturn(Optional.of(pagamento));
 
             pagamentoService.confirmarPagamentoWebhook(pagamentoId, valor, nsu);
@@ -566,7 +566,7 @@ class PagamentoServiceTest {
         void deveCriarIntencaoComStatusProcessandoQuandoMetodoExigeProcessamento() {
             UUID uuidRef = UUID.randomUUID();
             BigDecimal valor = new BigDecimal("150.00");
-            Venda venda = criarVenda(10L, StatusVenda.AGUARDANDO_PAGAMENTO);
+            Venda venda = criarVendaComSaldo(10L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("150.00"), BigDecimal.ZERO);
 
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
             when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
@@ -579,6 +579,41 @@ class PagamentoServiceTest {
             assertThat(id).isEqualTo(200L);
             verify(pagamentoRepository).inserirIntencaoIdempotente(
                     uuidRef, 10L, "CARTAO_CREDITO", "PROCESSANDO", valor, BigDecimal.ZERO, false, false);
+        }
+
+        @Test
+        @DisplayName("Deve rejeitar intenção eletrônica quando valor exceder saldo devedor atual da venda")
+        void deveRejeitarIntencaoEletronicaQuandoExcederSaldoDevedor() {
+            UUID uuidRef = UUID.randomUUID();
+            Venda venda = criarVendaComSaldo(10L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("100.00"), new BigDecimal("40.00"));
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    10L, MetodoPagamento.CARTAO_CREDITO, new BigDecimal("60.01"), uuidRef))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("saldo devedor atual da venda");
+
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Deve permitir intenção em DINHEIRO acima do saldo devedor (para troco)")
+        void devePermitirIntencaoDinheiroAcimaDoSaldoDevedor() {
+            UUID uuidRef = UUID.randomUUID();
+            BigDecimal valor = new BigDecimal("150.00");
+            Venda venda = criarVendaComSaldo(10L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("100.00"), BigDecimal.ZERO);
+
+            when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidRef, 10L, "DINHEIRO", "PENDENTE", valor, BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(205L));
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.DINHEIRO, valor, uuidRef);
+
+            assertThat(id).isEqualTo(205L);
         }
 
         @Test
@@ -606,7 +641,7 @@ class PagamentoServiceTest {
         void deveCriarIntencaoComStatusProcessandoQuandoCartaoDebito() {
             UUID uuidRef = UUID.randomUUID();
             BigDecimal valor = new BigDecimal("89.90");
-            Venda venda = criarVenda(15L, StatusVenda.AGUARDANDO_PAGAMENTO);
+            Venda venda = criarVendaComSaldo(15L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("89.90"), BigDecimal.ZERO);
 
             when(pagamentoRepository.findByUuidReferencia(uuidRef)).thenReturn(Optional.empty());
             when(vendaRepository.findByIdWithLock(15L)).thenReturn(Optional.of(venda));
@@ -930,9 +965,15 @@ class PagamentoServiceTest {
     }
 
     private static Venda criarVenda(Long vendaId, StatusVenda status) {
+        return criarVendaComSaldo(vendaId, status, new BigDecimal("100.00"), BigDecimal.ZERO);
+    }
+
+    private static Venda criarVendaComSaldo(Long vendaId, StatusVenda status, BigDecimal valorTotal, BigDecimal valorPago) {
         Venda venda = new Venda();
         ReflectionTestUtils.setField(venda, "id", vendaId);
         ReflectionTestUtils.setField(venda, "status", status);
+        ReflectionTestUtils.setField(venda, "valorTotal", valorTotal);
+        ReflectionTestUtils.setField(venda, "valorPago", valorPago);
         return venda;
     }
 }

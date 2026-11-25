@@ -8,10 +8,20 @@ package inv.inventory.api;
 import java.math.BigDecimal;
 import java.util.Objects;
 
-public record ProdutoCheckoutView(Long id, String nome, BigDecimal precoVenda) {
+public record ProdutoCheckoutView(
+        Long id,
+        String nome,
+        BigDecimal precoVenda,
+        UnidadeMedidaCheckout unidadeMedida) {
+
     public ProdutoCheckoutView {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(nome, "nome");
         Objects.requireNonNull(precoVenda, "precoVenda");
+        Objects.requireNonNull(unidadeMedida, "unidadeMedida");
+    }
+
+    public ProdutoCheckoutView(Long id, String nome, BigDecimal precoVenda) {
+        this(id, nome, precoVenda, UnidadeMedidaCheckout.UN);
     }
 }

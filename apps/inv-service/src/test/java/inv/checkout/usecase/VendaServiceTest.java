@@ -19,6 +19,7 @@ import inv.inventory.api.ComandoEstoqueVenda;
 import inv.inventory.api.EstoqueCommandService;
 import inv.inventory.api.ItemComando;
 import inv.inventory.api.ProdutoCheckoutView;
+import inv.inventory.api.UnidadeMedidaCheckout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -170,7 +171,7 @@ class VendaServiceTest {
         }
 
         @Test
-        @DisplayName("Deve permitir itens com produtoId duplicado no pedido, deduplicando consulta ao catálogo e mantendo itens no comando")
+        @DisplayName("Deve consolidar itens com produtoId duplicado no pedido, somando quantidades antes de criar ItemVenda")
         void deveIniciarVendaComItensDuplicadosNoPedido() {
             Long produtoId = 10L;
             BigDecimal qtd1 = new BigDecimal("2.000");
@@ -200,8 +201,9 @@ class VendaServiceTest {
             assertThat(vendaCriada).isNotNull();
             assertThat(vendaCriada.getId()).isEqualTo(vendaId);
             assertThat(vendaCriada.getStatus()).isEqualTo(StatusVenda.AGUARDANDO_PAGAMENTO);
-            assertThat(vendaCriada.getItens()).hasSize(2);
-            // 2 * 50.00 + 3 * 50.00 = 100.00 + 150.00 = 250.00
+            assertThat(vendaCriada.getItens()).hasSize(1);
+            assertThat(vendaCriada.getItens().getFirst().getQuantidade()).isEqualByComparingTo(new BigDecimal("5.000"));
+            // (2 + 3) * 50.00 = 250.00
             assertThat(vendaCriada.getValorTotal()).isEqualByComparingTo(new BigDecimal("250.00"));
 
             verify(catalogoQueryService, times(1)).buscarParaCheckout(Set.of(produtoId));
@@ -212,11 +214,60 @@ class VendaServiceTest {
             ComandoEstoqueVenda comando = comandoCaptor.getValue();
             assertThat(comando.vendaId()).isEqualTo(vendaId);
             assertThat(comando.itens()).containsExactly(
-                    new ItemComando(produtoId, qtd1),
-                    new ItemComando(produtoId, qtd2)
+                    new ItemComando(produtoId, new BigDecimal("5.000"))
             );
 
             verify(vendaRepository, times(2)).save(any(Venda.class));
+        }
+
+        @Test
+        @DisplayName("Deve rejeitar quantidade fracionária para produto vendido por unidade (UN), inclusive em itens duplicados")
+        void deveRejeitarQuantidadeFracionariaParaProdutoUnidade() {
+            Long produtoId = 10L;
+            ProdutoCheckoutView prodUn = new ProdutoCheckoutView(
+                    produtoId, "Coleira", new BigDecimal("30.00"), UnidadeMedidaCheckout.UN);
+
+            when(catalogoQueryService.buscarParaCheckout(Set.of(produtoId))).thenReturn(List.of(prodUn));
+
+            VendaRequest pedidoSimples = new VendaRequest(List.of(
+                    new ItemVendaRequest(produtoId, new BigDecimal("0.500"))
+            ));
+            assertThatThrownBy(() -> vendaService.iniciarVenda(pedidoSimples))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("UN");
+
+            VendaRequest pedidoFracionadoSomandoInteiro = new VendaRequest(List.of(
+                    new ItemVendaRequest(produtoId, new BigDecimal("0.500")),
+                    new ItemVendaRequest(produtoId, new BigDecimal("0.500"))
+            ));
+            assertThatThrownBy(() -> vendaService.iniciarVenda(pedidoFracionadoSomandoInteiro))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("UN");
+
+            verifyNoInteractions(estoqueCommandService, vendaRepository);
+        }
+
+        @Test
+        @DisplayName("Deve aceitar quantidade fracionária para produto vendido por KG")
+        void deveAceitarQuantidadeFracionariaParaProdutoKg() {
+            Long produtoId = 15L;
+            BigDecimal qtd = new BigDecimal("0.250");
+            ProdutoCheckoutView prodKg = new ProdutoCheckoutView(
+                    produtoId, "Ração Granel", new BigDecimal("20.00"), UnidadeMedidaCheckout.KG);
+
+            when(catalogoQueryService.buscarParaCheckout(Set.of(produtoId))).thenReturn(List.of(prodKg));
+            when(vendaRepository.save(any(Venda.class))).thenAnswer(invocation -> {
+                Venda v = invocation.getArgument(0);
+                if (v.getId() == null) {
+                    ReflectionTestUtils.setField(v, "id", 301L);
+                }
+                return v;
+            });
+
+            Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(new ItemVendaRequest(produtoId, qtd))));
+
+            assertThat(venda.getValorTotal()).isEqualByComparingTo("5.00");
+            assertThat(venda.getItens()).hasSize(1);
         }
 
         @Test

@@ -69,9 +69,19 @@ public class PagamentoService {
             return validarIntencaoExistente(pagamentoExistentePosLock.get(), vendaId, metodo, valor);
         }
 
-        // 4. Validação do status da venda
+        // 4. Validação do status da venda e do saldo devedor para métodos eletrônicos
         if (!venda.getStatus().aceitaPagamento()) {
             throw new ConflictException("A venda não aceita pagamentos no status: " + venda.getStatus());
+        }
+
+        if (metodo.isExigeProcessamento()) {
+            BigDecimal valorTotal = venda.getValorTotal() != null ? venda.getValorTotal() : BigDecimal.ZERO;
+            BigDecimal valorPago = venda.getValorPago() != null ? venda.getValorPago() : BigDecimal.ZERO;
+            BigDecimal saldoDevedor = valorTotal.subtract(valorPago);
+            if (valor.compareTo(saldoDevedor) > 0) {
+                throw new BusinessException(
+                        "Valor da intenção excede o saldo devedor atual da venda (" + saldoDevedor + ").");
+            }
         }
 
         // 5. Inserção atômica idempotente usando o domínio como fonte única dos valores iniciais
