@@ -10,7 +10,25 @@ import java.net.URISyntaxException;
 
 public final class FrontendOrigin {
 
+    private static final String AUTHORIZE_PATH = "/oauth2/authorize";
+
     private FrontendOrigin() {}
+
+    public static String resolvePostLoginRedirect(String frontendUrl, String target) {
+        if (target != null && target.indexOf('\\') < 0) {
+            try {
+                URI uri = new URI(target);
+                if (!uri.isOpaque() && AUTHORIZE_PATH.equals(uri.getPath())
+                        && !hasControl(uri.getQuery()) && !hasControl(uri.getFragment())) {
+                    String rawQuery = uri.getRawQuery();
+                    return AUTHORIZE_PATH + (rawQuery != null ? "?" + rawQuery : "");
+                }
+            } catch (URISyntaxException ignored) {
+                // cai na validação padrão
+            }
+        }
+        return acceptsRedirect(frontendUrl, target) ? target : frontendUrl;
+    }
 
     public static boolean acceptsHeader(String frontendUrl, String origin, String referer) {
         String header = origin != null ? origin : referer;

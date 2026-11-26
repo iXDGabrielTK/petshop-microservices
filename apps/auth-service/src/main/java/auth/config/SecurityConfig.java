@@ -399,7 +399,7 @@ public class SecurityConfig {
 
             String targetUrl = savedRequest.getRedirectUrl();
             requestCache.removeRequest(request, response);
-            response.sendRedirect(FrontendOrigin.acceptsRedirect(frontendBaseUrl, targetUrl) ? targetUrl : frontendBaseUrl);
+            response.sendRedirect(FrontendOrigin.resolvePostLoginRedirect(frontendBaseUrl, targetUrl));
         };
     }
 

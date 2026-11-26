@@ -221,7 +221,49 @@ class SecurityConfigTest {
 
             handler.onAuthenticationSuccess(loginRequest, loginResponse, auth);
 
-            assertThat(loginResponse.getRedirectedUrl()).contains("/oauth2/authorize?client_id=petshop-client");
+            assertThat(loginResponse.getRedirectedUrl()).isEqualTo("/oauth2/authorize?client_id=petshop-client&continue");
+        }
+
+        @Test
+        @DisplayName("Deve preservar fluxo /oauth2/authorize como path relativo para DefaultSavedRequest em host e porta do auth-service")
+        void devePreservarFluxoOAuth2AuthorizeComoPathRelativoParaDefaultSavedRequest() throws Exception {
+            AuthenticationSuccessHandler handler = securityConfig.customAuthenticationSuccessHandler();
+
+            MockHttpServletRequest authorizeRequest = new MockHttpServletRequest("GET", "/oauth2/authorize");
+            authorizeRequest.setServerName("localhost");
+            authorizeRequest.setServerPort(8081);
+            authorizeRequest.setQueryString("client_id=petshop-client&response_type=code");
+            MockHttpSession session = new MockHttpSession();
+            authorizeRequest.setSession(session);
+
+            MockHttpServletResponse authorizeResponse = new MockHttpServletResponse();
+            HttpSessionRequestCache requestCache = new HttpSessionRequestCache();
+            requestCache.saveRequest(authorizeRequest, authorizeResponse);
+
+            MockHttpServletRequest loginRequest = new MockHttpServletRequest("POST", "/login");
+            loginRequest.setSession(session);
+            MockHttpServletResponse loginResponse = new MockHttpServletResponse();
+
+            handler.onAuthenticationSuccess(loginRequest, loginResponse, mock(Authentication.class));
+
+            assertThat(loginResponse.getRedirectedUrl())
+                    .isEqualTo("/oauth2/authorize?client_id=petshop-client&response_type=code&continue");
+        }
+
+        @Test
+        @DisplayName("Não deve vazar host externo quando SavedRequest apontar para /oauth2/authorize em domínio malicioso")
+        void naoDeveVazarHostExternoParaAuthorizeEmDominioExterno() throws Exception {
+            SavedRequest saved = mock(SavedRequest.class);
+            when(saved.getRedirectUrl()).thenReturn("http://evil.com/oauth2/authorize?client_id=petshop-client");
+            MockHttpServletRequest request = new MockHttpServletRequest();
+            request.getSession().setAttribute("SPRING_SECURITY_SAVED_REQUEST", saved);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+
+            securityConfig.customAuthenticationSuccessHandler().onAuthenticationSuccess(request, response, null);
+
+            assertThat(response.getRedirectedUrl())
+                    .isEqualTo("/oauth2/authorize?client_id=petshop-client")
+                    .doesNotContain("evil.com");
         }
     }
 
@@ -230,6 +272,11 @@ class SecurityConfigTest {
             "/authorized,/authorized",
             "/conta?voltar=%2Fpedidos,/conta?voltar=%2Fpedidos",
             "http://LOCALHOST:5173/app,http://LOCALHOST:5173/app",
+            "http://localhost:8081/oauth2/authorize?client_id=petshop-client&response_type=code,/oauth2/authorize?client_id=petshop-client&response_type=code",
+            "http://evil.com/oauth2/authorize?client_id=petshop-client,/oauth2/authorize?client_id=petshop-client",
+            "http://evil.com/foo,http://localhost:5173",
+            "http://localhost:8081/oauth2/%61uthorize?client_id=petshop-client,/oauth2/authorize?client_id=petshop-client",
+            "http://localhost:8081/oauth2/authorize?x=%0d%0a,http://localhost:5173",
             "//example.org/app,http://localhost:5173",
             "/\\example.org,http://localhost:5173",
             "/%5cexample.org,http://localhost:5173",
