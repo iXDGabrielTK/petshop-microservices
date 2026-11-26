@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -20,7 +21,7 @@ import java.util.List;
  * <p>
  * Desembrulha wrappers (como {@code ForwardedHeaderFilter}) antes de inspecionar o socket real
  * e aplica {@code auth.login.lockout.trusted-proxy-hops} (padrão {@code 0}) pela direita da cadeia
- * {@code X-Forwarded-For} apenas quando houver proxies confiáveis configurados.
+ * {@code X-Forwarded-For} consolidada entre todas as linhas do cabeçalho apenas quando houver proxies confiáveis configurados.
  */
 @Component
 public class ClientIpResolver {
@@ -51,24 +52,36 @@ public class ClientIpResolver {
 
         if (raw instanceof HttpServletRequest rawHttp) {
             List<String> xffHeaders = Collections.list(rawHttp.getHeaders("X-Forwarded-For"));
-            if (xffHeaders.size() == 1) {
-                String resolved = resolveFromXForwardedFor(xffHeaders.get(0));
-                if (resolved != null) {
-                    return resolved;
-                }
+            String resolved = resolveFromXForwardedFor(xffHeaders);
+            if (resolved != null) {
+                return resolved;
             }
         }
 
         return socketIp != null ? socketIp : UNKNOWN_IP;
     }
 
-    private String resolveFromXForwardedFor(String headerValue) {
-        if (headerValue == null || headerValue.isBlank()) {
+    private String resolveFromXForwardedFor(List<String> headerValues) {
+        if (headerValues == null || headerValues.isEmpty()) {
             return null;
         }
-        String[] parts = headerValue.split(",", -1);
-        int index = Math.max(0, parts.length - trustedProxyHops);
-        return normalizeIp(parts[index]);
+        List<String> entries = new ArrayList<>();
+        for (String headerValue : headerValues) {
+            if (headerValue == null) {
+                continue;
+            }
+            for (String part : headerValue.split(",", -1)) {
+                String normalized = normalizeIp(part);
+                if (normalized != null) {
+                    entries.add(normalized);
+                }
+            }
+        }
+        if (entries.isEmpty()) {
+            return null;
+        }
+        int index = Math.max(0, entries.size() - trustedProxyHops);
+        return entries.get(index);
     }
 
     private static ServletRequest unwrap(ServletRequest request) {

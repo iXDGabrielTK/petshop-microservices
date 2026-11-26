@@ -9,7 +9,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.support.ResourcePropertySource;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
+
+import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -69,20 +73,68 @@ class ClientIpResolverTest {
     }
 
     @Test
-    @DisplayName("Com hops=1, deve descartar múltiplos headers X-Forwarded-For ou valor vazio e fazer fallback para remoteAddr")
-    void deveFazerFallbackQuandoXffAmbiguoOuVazio() {
+    @DisplayName("Com hops=1, deve unificar múltiplos headers X-Forwarded-For, ignorar entradas vazias e fazer fallback só quando vazio")
+    void deveUnificarMultiplosHeadersXffEIgnorarEntradasVazias() {
         ClientIpResolver resolver = new ClientIpResolver(1);
 
         MockHttpServletRequest multiHeader = new MockHttpServletRequest("POST", "/login");
         multiHeader.setRemoteAddr("10.0.0.10");
         multiHeader.addHeader("X-Forwarded-For", "1.1.1.1");
         multiHeader.addHeader("X-Forwarded-For", "203.0.113.195");
-        assertThat(resolver.resolve(multiHeader)).isEqualTo("10.0.0.10");
+        assertThat(resolver.resolve(multiHeader)).isEqualTo("203.0.113.195");
 
         MockHttpServletRequest trailingComma = new MockHttpServletRequest("POST", "/login");
         trailingComma.setRemoteAddr("10.0.0.10");
         trailingComma.addHeader("X-Forwarded-For", "1.1.1.1, ");
-        assertThat(resolver.resolve(trailingComma)).isEqualTo("10.0.0.10");
+        assertThat(resolver.resolve(trailingComma)).isEqualTo("1.1.1.1");
+
+        MockHttpServletRequest onlyBlankTokens = new MockHttpServletRequest("POST", "/login");
+        onlyBlankTokens.setRemoteAddr("10.0.0.10");
+        onlyBlankTokens.addHeader("X-Forwarded-For", " , ");
+        assertThat(resolver.resolve(onlyBlankTokens)).isEqualTo("10.0.0.10");
+
+        MockHttpServletRequest emptyHeader = new MockHttpServletRequest("POST", "/login");
+        emptyHeader.setRemoteAddr("10.0.0.10");
+        emptyHeader.addHeader("X-Forwarded-For", "");
+        assertThat(resolver.resolve(emptyHeader)).isEqualTo("10.0.0.10");
+    }
+
+    @Test
+    @DisplayName("Deve resolver hops=1 e hops=2 corretamente com múltiplos headers XFF e vírgulas vazias")
+    void deveResolverHopsUmEDoisComMultiplosHeadersEVirgulasVazias() {
+        ClientIpResolver hops1 = new ClientIpResolver(1);
+        ClientIpResolver hops2 = new ClientIpResolver(2);
+
+        MockHttpServletRequest multiLine = new MockHttpServletRequest("POST", "/login");
+        multiLine.setRemoteAddr("10.0.0.10");
+        multiLine.addHeader("X-Forwarded-For", "1.2.3.4");
+        multiLine.addHeader("X-Forwarded-For", "5.6.7.8");
+        assertThat(hops1.resolve(multiLine)).isEqualTo("5.6.7.8");
+        assertThat(hops2.resolve(multiLine)).isEqualTo("1.2.3.4");
+
+        MockHttpServletRequest extraCommasSingleLine = new MockHttpServletRequest("POST", "/login");
+        extraCommasSingleLine.setRemoteAddr("10.0.0.10");
+        extraCommasSingleLine.addHeader("X-Forwarded-For", "1.2.3.4,, 5.6.7.8,");
+        assertThat(hops1.resolve(extraCommasSingleLine)).isEqualTo("5.6.7.8");
+        assertThat(hops2.resolve(extraCommasSingleLine)).isEqualTo("1.2.3.4");
+
+        MockHttpServletRequest extraCommasMultiLine = new MockHttpServletRequest("POST", "/login");
+        extraCommasMultiLine.setRemoteAddr("10.0.0.10");
+        extraCommasMultiLine.addHeader("X-Forwarded-For", "1.2.3.4, ");
+        extraCommasMultiLine.addHeader("X-Forwarded-For", ",5.6.7.8");
+        assertThat(hops1.resolve(extraCommasMultiLine)).isEqualTo("5.6.7.8");
+        assertThat(hops2.resolve(extraCommasMultiLine)).isEqualTo("1.2.3.4");
+    }
+
+    @Test
+    @DisplayName("Deve configurar server.forward-headers-strategy como none por padrão e aceitar override via variável")
+    void deveDefinirForwardHeadersStrategyComoNonePorPadrao() throws IOException {
+        MockEnvironment environment = new MockEnvironment();
+        environment.getPropertySources().addLast(new ResourcePropertySource("classpath:application.properties"));
+        assertThat(environment.getRequiredProperty("server.forward-headers-strategy")).isEqualTo("none");
+
+        environment.setProperty("SERVER_FORWARD_HEADERS_STRATEGY", "native");
+        assertThat(environment.getRequiredProperty("server.forward-headers-strategy")).isEqualTo("native");
     }
 
     @Test
