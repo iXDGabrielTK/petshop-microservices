@@ -5,6 +5,7 @@
  */
 package auth.security.filter;
 
+import auth.security.ClientIpResolver;
 import auth.security.LoginAttemptService;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,7 +36,7 @@ class LoginLockoutFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new LoginLockoutFilter(loginAttemptService);
+        filter = new LoginLockoutFilter(loginAttemptService, new ClientIpResolver(0));
     }
 
     @Test
@@ -84,5 +85,24 @@ class LoginLockoutFilterTest {
         verifyNoInteractions(loginAttemptService);
         verify(filterChain).doFilter(getLogin, getRes);
         verify(filterChain).doFilter(postOther, postRes);
+    }
+
+    @Test
+    @DisplayName("Deve bloquear POST /login com parâmetro de matriz (;jsessionid) e ignorar X-Forwarded-For forjado")
+    void deveBloquearPostLoginComParametroDeMatrizEIgnorarXffForjado() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login;jsessionid=bypass123");
+        request.setParameter("username", "user@petshop.com");
+        request.setRemoteAddr("10.0.0.5");
+        request.addHeader("X-Forwarded-For", "198.51.100.77");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        when(loginAttemptService.isBlocked("user@petshop.com", "10.0.0.5")).thenReturn(true);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl()).isEqualTo("/login?error");
+        verify(loginAttemptService).isBlocked("user@petshop.com", "10.0.0.5");
+        verifyNoInteractions(filterChain);
     }
 }

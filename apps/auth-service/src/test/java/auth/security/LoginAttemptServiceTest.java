@@ -14,6 +14,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -114,6 +121,72 @@ class LoginAttemptServiceTest {
 
         assertThat(bounded.trackedEntriesCount()).isEqualTo(3);
         assertThat(bounded.isBlocked("atacante@petshop.com", "192.168.1.10")).isTrue();
+    }
+
+    @Test
+    @DisplayName("Deve isolar bloqueio por usuário no mesmo IP sem afetar outros usuários")
+    void deveIsolarBloqueioPorUsuarioNoMesmoIp() {
+        for (int i = 0; i < 5; i++) {
+            service.recordFailure("alvo@petshop.com", "10.0.0.1");
+        }
+
+        assertThat(service.isBlocked("alvo@petshop.com", "10.0.0.1")).isTrue();
+        assertThat(service.isBlocked("outro@petshop.com", "10.0.0.1")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Deve tratar username e IP nulos ou em branco de forma segura e determinística")
+    void deveTratarUsernameEIpNulosOuEmBranco() {
+        for (int i = 0; i < 5; i++) {
+            service.recordFailure(null, "  ");
+        }
+
+        assertThat(service.isBlocked("", null)).isTrue();
+        assertThat(service.isBlocked("   ", "unknown")).isTrue();
+        service.recordSuccess(null, null);
+        assertThat(service.isBlocked("", "")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Deve compactar componentes gigantes da chave evitando amplificação de heap")
+    void deveCompactarComponentesGigantesDaChave() {
+        String hugeUsername = "a".repeat(10_000) + "@petshop.com";
+        for (int i = 0; i < 5; i++) {
+            service.recordFailure(hugeUsername, "10.0.0.1");
+        }
+
+        assertThat(service.isBlocked(hugeUsername, "10.0.0.1")).isTrue();
+        assertThat(service.isBlocked("b".repeat(10_000) + "@petshop.com", "10.0.0.1")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Deve manter thread-safety e respeitar maxEntries sob concorrência")
+    void deveManterThreadSafetySobConcorrencia() throws Exception {
+        LoginAttemptService concurrentService = new LoginAttemptService(5, Duration.ofMinutes(15), 25, clock);
+        int threads = 8;
+        CountDownLatch startGate = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (int t = 0; t < threads; t++) {
+            final int workerId = t;
+            futures.add(executor.submit(() -> {
+                startGate.await();
+                for (int i = 0; i < 50; i++) {
+                    concurrentService.recordFailure("user-" + workerId + "-" + i + "@petshop.com", "10.0.0." + workerId);
+                    concurrentService.isBlocked("user-" + workerId + "-" + i + "@petshop.com", "10.0.0." + workerId);
+                }
+                return null;
+            }));
+        }
+
+        startGate.countDown();
+        for (Future<?> future : futures) {
+            future.get(10, TimeUnit.SECONDS);
+        }
+        executor.shutdown();
+
+        assertThat(concurrentService.trackedEntriesCount()).isLessThanOrEqualTo(25);
     }
 
     @Test

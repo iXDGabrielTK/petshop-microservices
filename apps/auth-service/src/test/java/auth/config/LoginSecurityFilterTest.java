@@ -8,6 +8,7 @@ package auth.config;
 import auth.controller.LoginController;
 import auth.model.Role;
 import auth.model.Usuario;
+import auth.security.ClientIpResolver;
 import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
@@ -43,8 +44,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.filter.ForwardedHeaderFilter;
 import org.springframework.web.servlet.ViewResolver;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.thymeleaf.spring6.SpringTemplateEngine;
 import org.thymeleaf.spring6.view.ThymeleafViewResolver;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
@@ -62,6 +66,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -81,13 +86,20 @@ class LoginSecurityFilterTest {
     @Import({
             SecurityConfig.class,
             LoginAttemptService.class,
+            ClientIpResolver.class,
             LoginAttemptEventListener.class,
             CookieRefreshTokenRequestFilter.class,
             RefreshTokenCookieFilter.class,
             CookieClearingLogoutHandler.class,
             LoginController.class
     })
-    static class TestContextConfig {
+    static class TestContextConfig implements WebMvcConfigurer {
+
+        @Override
+        public void addResourceHandlers(ResourceHandlerRegistry registry) {
+            registry.addResourceHandler("/css/**")
+                    .addResourceLocations("classpath:/static/css/");
+        }
 
         @Bean
         ClassLoaderTemplateResolver thymeleafTemplateResolver() {
@@ -132,6 +144,7 @@ class LoginSecurityFilterTest {
         registry.add("auth.login.lockout.max-attempts", () -> "5");
         registry.add("auth.login.lockout.duration-minutes", () -> "15");
         registry.add("auth.login.lockout.max-entries", () -> "100");
+        registry.add("auth.login.lockout.trusted-proxy-hops", () -> "0");
     }
 
     @Autowired
@@ -167,6 +180,8 @@ class LoginSecurityFilterTest {
         loginAttemptService.recordSuccess("cliente@petshop.com", "10.10.10.1");
         loginAttemptService.recordSuccess("cliente@petshop.com", "10.10.10.2");
         loginAttemptService.recordSuccess("inexistente@petshop.com", "10.10.10.3");
+        loginAttemptService.recordSuccess("cliente@petshop.com", "10.10.10.4");
+        loginAttemptService.recordSuccess("cliente@petshop.com", "10.10.10.5");
     }
 
     @Test
@@ -180,11 +195,26 @@ class LoginSecurityFilterTest {
         String html = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(html).doesNotContain("cdn.tailwindcss.com");
         assertThat(html).doesNotContain("<script");
+        assertThat(html).doesNotContainPattern("(?i)\\sstyle\\s*=");
+        assertThat(html).doesNotContainPattern("(?i)\\son[a-z]+\\s*=");
+        assertThat(html).doesNotContainPattern("(?i)<link[^>]+https?://");
         assertThat(html).contains("/css/login.css");
 
         ClassPathResource cssResource = new ClassPathResource("static/css/login.css");
         assertThat(cssResource.exists()).isTrue();
         assertThat(cssResource.contentLength()).isGreaterThan(0);
+    }
+
+    @Test
+    @DisplayName("GET /css/login.css deve retornar 200 OK sem autenticação e sem redirect para /login")
+    void getCssLoginDeveRetornar200SemAutenticacao() throws Exception {
+        MvcResult cssResult = mockMvc.perform(get("/css/login.css"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/css"))
+                .andReturn();
+
+        assertThat(cssResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .contains(".login-layout");
     }
 
     @Test
@@ -255,5 +285,81 @@ class LoginSecurityFilterTest {
         }
 
         verify(userDetailsService, times(5)).loadUserByUsername("inexistente@petshop.com");
+    }
+
+    @Test
+    @DisplayName("POST /login deve resistir a spoofing de X-Forwarded-For mesmo com ForwardedHeaderFilter ativo")
+    void deveResistirASpoofingDeXffMesmoComForwardedHeaderFilterAtivo() throws Exception {
+        MockMvc forwardedMockMvc = MockMvcBuilders.webAppContextSetup(context)
+                .addFilters(new ForwardedHeaderFilter(), (Filter) context.getBean("springSecurityFilterChain"))
+                .build();
+
+        Usuario usuario = new Usuario("Cliente", "cliente@petshop.com", passwordEncoder.encode("SenhaForte@123"));
+        usuario.adicionarRole(new Role(1L, "USER"));
+        when(userDetailsService.loadUserByUsername("cliente@petshop.com"))
+                .thenReturn(new UserDetailsImpl(usuario, List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+
+        for (int i = 1; i <= 5; i++) {
+            final int attempt = i;
+            forwardedMockMvc.perform(post("/login")
+                            .with(csrf())
+                            .header("X-Forwarded-For", "198.51.100." + attempt)
+                            .with(req -> {
+                                req.setRemoteAddr("10.10.10.4");
+                                return req;
+                            })
+                            .param("username", "cliente@petshop.com")
+                            .param("password", "SenhaErrada"))
+                    .andExpect(status().is3xxRedirection())
+                    .andExpect(redirectedUrl("http://localhost/login?error"));
+        }
+
+        forwardedMockMvc.perform(post("/login")
+                        .with(csrf())
+                        .header("X-Forwarded-For", "203.0.113.99")
+                        .with(req -> {
+                            req.setRemoteAddr("10.10.10.4");
+                            return req;
+                        })
+                        .param("username", "cliente@petshop.com")
+                        .param("password", "SenhaForte@123"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("http://localhost/login?error"));
+
+        verify(userDetailsService, times(5)).loadUserByUsername("cliente@petshop.com");
+    }
+
+    @Test
+    @DisplayName("POST /login;jsessionid=... após lockout deve ser rejeitado na cadeia sem consultar UserDetailsService")
+    void deveBloquearPostLoginComParametroDeMatrizAposLockout() throws Exception {
+        Usuario usuario = new Usuario("Cliente", "cliente@petshop.com", passwordEncoder.encode("SenhaForte@123"));
+        usuario.adicionarRole(new Role(1L, "USER"));
+        when(userDetailsService.loadUserByUsername("cliente@petshop.com"))
+                .thenReturn(new UserDetailsImpl(usuario, List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+
+        for (int i = 0; i < 5; i++) {
+            mockMvc.perform(post("/login")
+                            .with(csrf())
+                            .with(req -> {
+                                req.setRemoteAddr("10.10.10.5");
+                                return req;
+                            })
+                            .param("username", "cliente@petshop.com")
+                            .param("password", "SenhaErrada"))
+                    .andExpect(status().is3xxRedirection())
+                    .andExpect(redirectedUrl("/login?error"));
+        }
+
+        mockMvc.perform(post("/login;jsessionid=bypass")
+                        .with(csrf())
+                        .with(req -> {
+                            req.setRemoteAddr("10.10.10.5");
+                            return req;
+                        })
+                        .param("username", "cliente@petshop.com")
+                        .param("password", "SenhaForte@123"))
+                .andExpect(status().isBadRequest());
+
+        verify(userDetailsService, times(5)).loadUserByUsername("cliente@petshop.com");
     }
 }

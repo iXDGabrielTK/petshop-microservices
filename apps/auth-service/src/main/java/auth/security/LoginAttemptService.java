@@ -9,9 +9,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -25,6 +29,9 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Service
 public class LoginAttemptService {
+
+    private static final int MAX_KEY_USERNAME_LENGTH = 256;
+    private static final int MAX_KEY_IP_LENGTH = 64;
 
     private final int maxAttempts;
     private final Duration lockDuration;
@@ -149,7 +156,23 @@ public class LoginAttemptService {
         static AttemptKey of(String username, String ip) {
             String normalizedUser = username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
             String normalizedIp = (ip == null || ip.isBlank()) ? "unknown" : ip.trim();
-            return new AttemptKey(normalizedUser, normalizedIp);
+            return new AttemptKey(
+                    boundComponent(normalizedUser, MAX_KEY_USERNAME_LENGTH),
+                    boundComponent(normalizedIp, MAX_KEY_IP_LENGTH)
+            );
+        }
+
+        private static String boundComponent(String value, int maxLength) {
+            if (value.length() <= maxLength) {
+                return value;
+            }
+            try {
+                byte[] digest = MessageDigest.getInstance("SHA-256")
+                        .digest(value.getBytes(StandardCharsets.UTF_8));
+                return "sha256:" + HexFormat.of().formatHex(digest);
+            } catch (NoSuchAlgorithmException e) {
+                return value.substring(0, maxLength);
+            }
         }
     }
 

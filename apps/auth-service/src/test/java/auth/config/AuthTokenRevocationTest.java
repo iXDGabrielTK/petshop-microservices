@@ -13,6 +13,7 @@ import auth.model.Usuario;
 import auth.repository.PasswordResetTokenRepository;
 import auth.repository.RoleRepository;
 import auth.repository.UsuarioRepository;
+import auth.security.ClientIpResolver;
 import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
@@ -101,6 +102,7 @@ class AuthTokenRevocationTest {
     @Import({
             SecurityConfig.class,
             LoginAttemptService.class,
+            ClientIpResolver.class,
             CookieRefreshTokenRequestFilter.class,
             RefreshTokenCookieFilter.class,
             CookieClearingLogoutHandler.class,

@@ -5,6 +5,7 @@
  */
 package auth.config;
 
+import auth.security.ClientIpResolver;
 import auth.security.FrontendOrigin;
 import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
@@ -25,6 +26,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,6 +61,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.WebAuthenticationDetails;
 import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -108,17 +111,20 @@ public class SecurityConfig {
     private final RefreshTokenCookieFilter refreshTokenCookieFilter;
     private final CookieClearingLogoutHandler cookieClearingLogoutHandler;
     private final LoginAttemptService loginAttemptService;
+    private final ClientIpResolver clientIpResolver;
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     public SecurityConfig(
             CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter,
             RefreshTokenCookieFilter refreshTokenCookieFilter,
             CookieClearingLogoutHandler cookieClearingLogoutHandler,
-            LoginAttemptService loginAttemptService) {
+            LoginAttemptService loginAttemptService,
+            ClientIpResolver clientIpResolver) {
         this.cookieRefreshTokenRequestFilter = cookieRefreshTokenRequestFilter;
         this.refreshTokenCookieFilter = refreshTokenCookieFilter;
         this.cookieClearingLogoutHandler = cookieClearingLogoutHandler;
         this.loginAttemptService = loginAttemptService;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Bean
@@ -202,11 +208,18 @@ public class SecurityConfig {
                         )
                 )
 
-                .addFilterBefore(new LoginLockoutFilter(loginAttemptService), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new LoginLockoutFilter(loginAttemptService, clientIpResolver), UsernamePasswordAuthenticationFilter.class)
 
                 .formLogin(form -> form
                         .loginPage("/login")
                         .permitAll()
+                        .authenticationDetailsSource(request -> {
+                            HttpSession session = request.getSession(false);
+                            return new WebAuthenticationDetails(
+                                    clientIpResolver.resolve(request),
+                                    session != null ? session.getId() : null
+                            );
+                        })
                         .successHandler(customAuthenticationSuccessHandler())
                 )
 
