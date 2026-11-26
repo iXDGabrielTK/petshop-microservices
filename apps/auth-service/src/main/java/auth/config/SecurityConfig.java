@@ -56,6 +56,7 @@ import org.springframework.security.oauth2.server.authorization.client.JdbcRegis
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.authorization.jackson2.OAuth2AuthorizationServerJackson2Module;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
@@ -323,9 +324,11 @@ public class SecurityConfig {
         ClassLoader classLoader = JdbcOAuth2AuthorizationService.class.getClassLoader();
         List<Module> modules = SecurityJackson2Modules.getModules(classLoader);
         objectMapper.registerModules(modules);
+        objectMapper.registerModule(new OAuth2AuthorizationServerJackson2Module());
 
         // Mantendo seu Mixin para serialização funcionar
         objectMapper.addMixIn(UserDetailsImpl.class, UserDetailsImplMixin.class);
+        objectMapper.addMixIn(Long.class, LongMixin.class);
 
         rowMapper.setObjectMapper(objectMapper);
         service.setAuthorizationRowMapper(rowMapper);
@@ -426,6 +429,9 @@ public class SecurityConfig {
             requestCache.removeRequest(request, response);
             response.sendRedirect(FrontendOrigin.resolvePostLoginRedirect(frontendBaseUrl, targetUrl));
         };
+    }
+
+    private abstract static class LongMixin {
     }
 
 }
