@@ -62,7 +62,7 @@ class CookieRefreshTokenRequestFilterTest {
     @Test
     @DisplayName("Deve repassar requisição /oauth2/token com grant_type diferente de refresh_token sem bloqueio CSRF")
     void deveIgnorarTokenEndpointComOutroGrantType() throws ServletException, IOException {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+        MockHttpServletRequest request = tokenRequest();
         request.setParameter("grant_type", "authorization_code");
         MockHttpServletResponse response = new MockHttpServletResponse();
         FilterChain chain = mock(FilterChain.class);
@@ -72,6 +72,50 @@ class CookieRefreshTokenRequestFilterTest {
         verify(chain).doFilter(request, response);
     }
 
+    @Test
+    @DisplayName("Deve ignorar GET /oauth2/token e POST /oauth2/tokenx")
+    void deveIgnorarMetodoGetESufixoTokenx() throws ServletException, IOException {
+        for (MockHttpServletRequest request : new MockHttpServletRequest[]{
+                requestComPath("GET", "/oauth2/token", "/oauth2/token"),
+                requestComPath("POST", "/oauth2/tokenx", "/oauth2/tokenx")
+        }) {
+            request.setParameter("grant_type", "refresh_token");
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            FilterChain chain = mock(FilterChain.class);
+
+            filter.doFilter(request, response, chain);
+
+            verify(chain).doFilter(request, response);
+        }
+    }
+
+    @Test
+    @DisplayName("Deve atuar normalmente quando /oauth2/token chegar com percent-encoding (/oauth2/%74oken)")
+    void deveAtuarEmPathComPercentEncoding() throws ServletException, IOException {
+        MockHttpServletRequest bloqueado = requestComPath("POST", "/oauth2/%74oken", "/oauth2/token");
+        bloqueado.setParameter("grant_type", "refresh_token");
+        MockHttpServletResponse responseBloqueado = new MockHttpServletResponse();
+        FilterChain chainBloqueado = mock(FilterChain.class);
+
+        filter.doFilter(bloqueado, responseBloqueado, chainBloqueado);
+
+        assertThat(responseBloqueado.getStatus()).isEqualTo(HttpServletResponse.SC_FORBIDDEN);
+        verifyNoInteractions(chainBloqueado);
+
+        MockHttpServletRequest valido = requestComPath("POST", "/oauth2/%74oken", "/oauth2/token");
+        valido.setParameter("grant_type", "refresh_token");
+        valido.addHeader("Origin", FRONTEND_URL);
+        valido.setCookies(new Cookie("refresh_token", "rt-encoded-123"));
+        MockHttpServletResponse responseValido = new MockHttpServletResponse();
+        FilterChain chainValido = mock(FilterChain.class);
+
+        filter.doFilter(valido, responseValido, chainValido);
+
+        ArgumentCaptor<ServletRequest> captor = ArgumentCaptor.forClass(ServletRequest.class);
+        verify(chainValido).doFilter(captor.capture(), eq(responseValido));
+        assertThat(captor.getValue().getParameter("refresh_token")).isEqualTo("rt-encoded-123");
+    }
+
     @Nested
     @DisplayName("Validação CSRF de Origin e Referer")
     class CsrfValidationTests {
@@ -79,7 +123,7 @@ class CookieRefreshTokenRequestFilterTest {
         @Test
         @DisplayName("Deve bloquear com 403 Forbidden quando Origin e Referer forem nulos")
         void deveBloquearQuandoOriginERefererForemNulos() throws ServletException, IOException {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             MockHttpServletResponse response = new MockHttpServletResponse();
             FilterChain chain = mock(FilterChain.class);
@@ -94,7 +138,7 @@ class CookieRefreshTokenRequestFilterTest {
         @Test
         @DisplayName("Deve bloquear com 403 quando Origin e Referer forem de domínios maliciosos")
         void deveBloquearQuandoOriginMalicioso() throws ServletException, IOException {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Origin", "http://evil-attacker.com");
             request.addHeader("Referer", "http://evil-attacker.com/login");
@@ -113,7 +157,7 @@ class CookieRefreshTokenRequestFilterTest {
         void rejeitaCabecalhoInvalidoAntesDeEncaminhar(String invalido) throws Exception {
             ReflectionTestUtils.setField(filter, "frontendUrl", "https://shop.example");
             for (String header : new String[]{"Origin", "Referer"}) {
-                MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+                MockHttpServletRequest request = tokenRequest();
                 request.setParameter("grant_type", "refresh_token");
                 request.addHeader(header, invalido);
                 if ("Origin".equals(header)) request.addHeader("Referer", "https://shop.example/app");
@@ -130,7 +174,7 @@ class CookieRefreshTokenRequestFilterTest {
         @ParameterizedTest
         @ValueSource(strings = {"Origin", "Referer"})
         void rejeitaCabecalhoAmbiguo(String header) throws Exception {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader(header, FRONTEND_URL);
             request.addHeader(header, "https://outro.example");
@@ -148,7 +192,7 @@ class CookieRefreshTokenRequestFilterTest {
         })
         void comparaOrigemDoReferer(String referer, int esperado) throws Exception {
             ReflectionTestUtils.setField(filter, "frontendUrl", "https://shop.example");
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Referer", referer);
             MockHttpServletResponse response = new MockHttpServletResponse();
@@ -162,7 +206,7 @@ class CookieRefreshTokenRequestFilterTest {
         @CsvSource({"http://shop.example:80,http://SHOP.example", "https://shop.example,https://shop.example:443"})
         void aceitaPortaPadraoEquivalente(String frontend, String origin) throws Exception {
             ReflectionTestUtils.setField(filter, "frontendUrl", frontend);
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Origin", origin);
             MockHttpServletResponse response = new MockHttpServletResponse();
@@ -174,7 +218,7 @@ class CookieRefreshTokenRequestFilterTest {
         @Test
         @DisplayName("Deve aceitar quando Origin for exatamente frontendUrl com barra no final")
         void deveAceitarQuandoOriginComBarraFinal() throws ServletException, IOException {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Origin", FRONTEND_URL + "/");
             MockHttpServletResponse response = new MockHttpServletResponse();
@@ -188,7 +232,7 @@ class CookieRefreshTokenRequestFilterTest {
         @Test
         @DisplayName("Deve aceitar quando Origin for nulo mas Referer começar com frontendUrl")
         void deveAceitarQuandoRefererValido() throws ServletException, IOException {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Referer", FRONTEND_URL + "/app/settings");
             MockHttpServletResponse response = new MockHttpServletResponse();
@@ -207,7 +251,7 @@ class CookieRefreshTokenRequestFilterTest {
         @Test
         @DisplayName("Deve passar a requisição original se o cookie refresh_token não estiver presente")
         void devePassarRequisicaoOriginalSemCookie() throws ServletException, IOException {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.addHeader("Origin", FRONTEND_URL);
             request.setCookies(new Cookie("OTHER_COOKIE", "valor"));
@@ -222,7 +266,7 @@ class CookieRefreshTokenRequestFilterTest {
         @Test
         @DisplayName("Deve envelopar a requisição e injetar refresh_token dos cookies nos parâmetros")
         void deveEnveloparRequisicaoComRefreshTokenDoCookie() throws ServletException, IOException {
-            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+            MockHttpServletRequest request = tokenRequest();
             request.setParameter("grant_type", "refresh_token");
             request.setParameter("client_id", "petshop-client");
             request.addHeader("Origin", FRONTEND_URL);
@@ -255,5 +299,15 @@ class CookieRefreshTokenRequestFilterTest {
             assertThat(Collections.list(wrappedRequest.getParameterNames()))
                     .contains("refresh_token", "grant_type", "client_id");
         }
+    }
+
+    private static MockHttpServletRequest tokenRequest() {
+        return requestComPath("POST", "/oauth2/token", "/oauth2/token");
+    }
+
+    private static MockHttpServletRequest requestComPath(String method, String requestUri, String servletPath) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, requestUri);
+        request.setServletPath(servletPath);
+        return request;
     }
 }

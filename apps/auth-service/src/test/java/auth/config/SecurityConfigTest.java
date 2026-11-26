@@ -24,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.env.MockEnvironment;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
@@ -350,6 +351,20 @@ class SecurityConfigTest {
             assertThat(settings.getTokenEndpoint()).isEqualTo("/oauth2/token");
             assertThat(settings.getAuthorizationEndpoint()).isEqualTo("/oauth2/authorize");
             assertThat(settings.getJwkSetEndpoint()).isEqualTo("/oauth2/jwks");
+        }
+
+        @Test
+        @DisplayName("Deve desabilitar o registro global no container Servlet para os filtros de cookie do authorization server")
+        void deveDesabilitarRegistroGlobalDosFiltrosDeCookie() {
+            FilterRegistrationBean<CookieRefreshTokenRequestFilter> reqReg =
+                    securityConfig.cookieRefreshTokenRequestFilterRegistration(cookieRefreshTokenRequestFilter);
+            FilterRegistrationBean<RefreshTokenCookieFilter> resReg =
+                    securityConfig.refreshTokenCookieFilterRegistration(refreshTokenCookieFilter);
+
+            assertThat(reqReg.isEnabled()).isFalse();
+            assertThat(reqReg.getFilter()).isSameAs(cookieRefreshTokenRequestFilter);
+            assertThat(resReg.isEnabled()).isFalse();
+            assertThat(resReg.getFilter()).isSameAs(refreshTokenCookieFilter);
         }
     }
 }

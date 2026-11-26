@@ -70,6 +70,7 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import javax.sql.DataSource;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.Principal;
@@ -295,6 +296,52 @@ class AuthTokenRevocationTest {
                         .cookie(new Cookie("refresh_token", "rt-outro-usuario")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.access_token").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("POST /oauth2/%74oken deve validar CSRF e aplicar extração/rotação do cookie refresh_token")
+    void deveProcessarTokenEndpointComPercentEncoding() throws Exception {
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-enc-1", "rt-enc-1");
+
+        mockMvc.perform(post(URI.create("/oauth2/%74oken"))
+                        .header(HttpHeaders.ORIGIN, "http://evil.com")
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", "rt-enc-1")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post(URI.create("/oauth2/%74oken"))
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", "rt-enc-1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.refresh_token").doesNotExist())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, org.hamcrest.Matchers.containsString("refresh_token=")));
+    }
+
+    @Test
+    @DisplayName("POST /%6cogout deve validar Origin e revogar o refresh_token normalmente")
+    void deveValidarOriginERevogarNoLogoutComPercentEncoding() throws Exception {
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-enc-logout", "rt-enc-logout");
+
+        mockMvc.perform(post(URI.create("/%6cogout"))
+                        .header(HttpHeaders.ORIGIN, "http://evil.com")
+                        .cookie(new Cookie("refresh_token", "rt-enc-logout")))
+                .andExpect(status().isForbidden());
+
+        assertThat(authorizationService.findByToken("rt-enc-logout", OAuth2TokenType.REFRESH_TOKEN)).isNotNull();
+
+        mockMvc.perform(post(URI.create("/%6cogout"))
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .cookie(new Cookie("refresh_token", "rt-enc-logout")))
+                .andExpect(status().isOk());
+
+        assertThat(authorizationService.findByToken("rt-enc-logout", OAuth2TokenType.REFRESH_TOKEN)).isNull();
     }
 
     private void salvarAutorizacaoAtiva(String email, Long userId, String accessTokenValue, String refreshTokenValue) {

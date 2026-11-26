@@ -16,7 +16,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseCookie;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
@@ -27,6 +30,8 @@ import java.time.Duration;
 
 @Component
 public class RefreshTokenCookieFilter extends OncePerRequestFilter {
+
+    private static final RequestMatcher TOKEN_ENDPOINT = AntPathRequestMatcher.antMatcher(HttpMethod.POST, "/oauth2/token");
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .enable(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY)
@@ -42,7 +47,7 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain filterChain)
             throws ServletException, IOException {
 
-        if (!request.getRequestURI().endsWith("/oauth2/token")) {
+        if (!TOKEN_ENDPOINT.matches(request)) {
             filterChain.doFilter(request, response);
             return;
         }

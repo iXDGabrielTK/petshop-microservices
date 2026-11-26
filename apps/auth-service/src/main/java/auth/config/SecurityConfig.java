@@ -30,11 +30,13 @@ import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.AuthenticationEventPublisher;
@@ -68,7 +70,9 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
 import org.springframework.security.web.savedrequest.RequestCache;
 import org.springframework.security.web.savedrequest.SavedRequest;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -113,6 +117,7 @@ public class SecurityConfig {
     private final LoginAttemptService loginAttemptService;
     private final ClientIpResolver clientIpResolver;
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+    private static final RequestMatcher LOGOUT_REQUEST_MATCHER = AntPathRequestMatcher.antMatcher(HttpMethod.POST, "/logout");
 
     public SecurityConfig(
             CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter,
@@ -182,11 +187,11 @@ public class SecurityConfig {
                                 "/usuarios/reset-password",
                                 "/oauth2/**",
                                 "/api/**",
-                                "/actuator/**",
-                                // /logout é acionado pela SPA cross-origin via fetch sem leitura do cookie CSRF;
-                                // a proteção contra CSRF é feita por validação estrita de Origin/Referer antes do LogoutFilter.
-                                "/logout"
+                                "/actuator/**"
                         )
+                        // Endpoints de logout são acionados pela SPA cross-origin via fetch sem leitura do cookie CSRF;
+                        // a proteção contra CSRF é feita por validação estrita de Origin/Referer antes do LogoutFilter.
+                        .ignoringRequestMatchers(LOGOUT_REQUEST_MATCHER)
                 )
 
                 .authorizeHttpRequests((authorize) -> authorize
@@ -196,7 +201,7 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers("/actuator/**", "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/usuarios/register", "/usuarios/forgot-password", "/usuarios/reset-password", "/error").permitAll()
-                        .requestMatchers("/logout").permitAll()
+                        .requestMatchers(LOGOUT_REQUEST_MATCHER).permitAll()
                         .anyRequest().authenticated()
                 )
 
@@ -226,13 +231,29 @@ public class SecurityConfig {
                 .addFilterBefore(logoutOriginValidationFilter(), LogoutFilter.class)
 
                 .logout(logout -> logout
-                        .logoutUrl("/logout")
+                        .logoutRequestMatcher(LOGOUT_REQUEST_MATCHER)
                         .addLogoutHandler(cookieClearingLogoutHandler)
                         .deleteCookies("JSESSIONID")
                         .logoutSuccessHandler((req, res, auth) -> res.setStatus(HttpServletResponse.SC_OK))
                 );
 
         return http.build();
+    }
+
+    @Bean
+    public FilterRegistrationBean<CookieRefreshTokenRequestFilter> cookieRefreshTokenRequestFilterRegistration(
+            CookieRefreshTokenRequestFilter filter) {
+        FilterRegistrationBean<CookieRefreshTokenRequestFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<RefreshTokenCookieFilter> refreshTokenCookieFilterRegistration(
+            RefreshTokenCookieFilter filter) {
+        FilterRegistrationBean<RefreshTokenCookieFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     private OncePerRequestFilter logoutOriginValidationFilter() {
@@ -242,7 +263,7 @@ public class SecurityConfig {
                     HttpServletRequest request,
                     HttpServletResponse response,
                     FilterChain filterChain) throws ServletException, IOException {
-                if ("/logout".equals(request.getRequestURI())) {
+                if (LOGOUT_REQUEST_MATCHER.matches(request)) {
                     String origin = request.getHeader("Origin");
                     String referer = request.getHeader("Referer");
                     String selectedHeader = origin == null ? "Referer" : "Origin";

@@ -12,16 +12,18 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.*;
 
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
 public class CookieRefreshTokenRequestFilter implements Filter {
+
+    private static final RequestMatcher TOKEN_ENDPOINT = AntPathRequestMatcher.antMatcher(HttpMethod.POST, "/oauth2/token");
 
     @Value("${frontend.base-url}")
     private String frontendUrl;
@@ -33,7 +35,7 @@ public class CookieRefreshTokenRequestFilter implements Filter {
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
 
-        if ("/oauth2/token".equals(req.getRequestURI()) &&
+        if (TOKEN_ENDPOINT.matches(req) &&
                 "refresh_token".equals(request.getParameter("grant_type"))) {
 
             String origin = req.getHeader("Origin");

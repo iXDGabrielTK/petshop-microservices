@@ -57,9 +57,10 @@ class RefreshTokenCookieFilterTest {
     }
 
     @Test
-    @DisplayName("Deve ignorar requisições que não terminam com /oauth2/token")
+    @DisplayName("Deve ignorar requisições que não correspondam a POST /oauth2/token")
     void deveIgnorarUrisDiferentes() throws ServletException, IOException {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/usuarios/me");
+        request.setServletPath("/usuarios/me");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         FilterChain filterChain = (req, res) -> {
@@ -74,9 +75,56 @@ class RefreshTokenCookieFilterTest {
     }
 
     @Test
+    @DisplayName("Deve ignorar GET /oauth2/token e POST /oauth2/tokenx")
+    void deveIgnorarMetodoGetESufixoTokenx() throws ServletException, IOException {
+        for (MockHttpServletRequest request : new MockHttpServletRequest[]{
+                requestComPath("GET", "/oauth2/token", "/oauth2/token"),
+                requestComPath("POST", "/oauth2/tokenx", "/oauth2/tokenx")
+        }) {
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            FilterChain filterChain = (req, res) -> res.getWriter().write("OK");
+
+            filter.doFilterInternal(request, response, filterChain);
+
+            assertThat(response.getHeader(HttpHeaders.CACHE_CONTROL)).isNull();
+            assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).isNull();
+            assertThat(response.getContentAsString()).isEqualTo("OK");
+        }
+    }
+
+    @Test
+    @DisplayName("Deve atuar normalmente quando /oauth2/token chegar com percent-encoding (/oauth2/%74oken)")
+    void deveAtuarEmPathComPercentEncoding() throws ServletException, IOException {
+        MockHttpServletRequest request = requestComPath("POST", "/oauth2/%74oken", "/oauth2/token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        String originalJsonResponse = """
+                {
+                    "access_token": "jwt-access-token-encoded",
+                    "refresh_token": "secret-refresh-token-encoded",
+                    "token_type": "Bearer",
+                    "expires_in": 1800
+                }
+                """;
+
+        FilterChain filterChain = (req, res) -> {
+            ContentCachingResponseWrapper wrapper = (ContentCachingResponseWrapper) res;
+            wrapper.setStatus(200);
+            wrapper.getOutputStream().write(originalJsonResponse.getBytes(StandardCharsets.UTF_8));
+        };
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        assertThat(response.getHeader(HttpHeaders.SET_COOKIE)).contains("refresh_token=secret-refresh-token-encoded");
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode jsonNode = mapper.readTree(response.getContentAsString(StandardCharsets.UTF_8));
+        assertThat(jsonNode.has("refresh_token")).isFalse();
+    }
+
+    @Test
     @DisplayName("Deve extrair refresh_token do JSON para Cookie HttpOnly e remover do body quando status for 200")
     void deveExtrairRefreshTokenParaCookieERemoverDoBody() throws ServletException, IOException {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+        MockHttpServletRequest request = tokenRequest();
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         String originalJsonResponse = """
@@ -124,7 +172,7 @@ class RefreshTokenCookieFilterTest {
     @Test
     @DisplayName("Não deve extrair cookie se o JSON não contiver refresh_token")
     void naoDeveCriarCookieSeJsonNaoContiverRefreshToken() throws ServletException, IOException {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+        MockHttpServletRequest request = tokenRequest();
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         String jsonResponse = """
@@ -150,7 +198,7 @@ class RefreshTokenCookieFilterTest {
     @Test
     @DisplayName("Não deve alterar body nem extrair cookie se status for diferente de 200 (ex: 400 Bad Request)")
     void naoDeveCriarCookieSeStatusDiferenteDe200() throws ServletException, IOException {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+        MockHttpServletRequest request = tokenRequest();
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         String errorResponse = """
@@ -180,7 +228,7 @@ class RefreshTokenCookieFilterTest {
     @ExtendWith(OutputCaptureExtension.class)
     @DisplayName("Deve descartar a resposta OAuth2 inválida antes de responder 500")
     void deveDescartarBodySeFalharParseJson(String invalidJson, CapturedOutput output) throws ServletException, IOException {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/oauth2/token");
+        MockHttpServletRequest request = tokenRequest();
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         FilterChain filterChain = (req, res) -> {
@@ -195,5 +243,15 @@ class RefreshTokenCookieFilterTest {
         assertThat(response.getStatus()).isEqualTo(500);
         assertThat(response.getContentAsString(StandardCharsets.UTF_8)).isEqualTo("{\"error\":\"server_error\"}");
         assertThat(output.getAll()).contains("Falha ao processar a resposta OAuth2").doesNotContain("segredo");
+    }
+
+    private static MockHttpServletRequest tokenRequest() {
+        return requestComPath("POST", "/oauth2/token", "/oauth2/token");
+    }
+
+    private static MockHttpServletRequest requestComPath(String method, String requestUri, String servletPath) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, requestUri);
+        request.setServletPath(servletPath);
+        return request;
     }
 }
