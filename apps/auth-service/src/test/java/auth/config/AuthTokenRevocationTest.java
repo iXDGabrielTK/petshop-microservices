@@ -23,7 +23,6 @@ import auth.service.AuthService;
 import auth.service.UsuarioService;
 import common.exception.GlobalExceptionHandler;
 import common.security.RsaKeyUtils;
-import jakarta.servlet.Filter;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -90,6 +89,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -198,7 +199,7 @@ class AuthTokenRevocationTest {
     @BeforeAll
     void setUpOnce() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
-                .addFilter((Filter) context.getBean("springSecurityFilterChain"))
+                .apply(springSecurity())
                 .build();
 
         registeredClient = RegisteredClient.withId(CLIENT_UUID)
@@ -408,13 +409,16 @@ class AuthTokenRevocationTest {
     void devePermitirDuasRenovacoesConsecutivasEExpirarCookieLegado() throws Exception {
         salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-rot-1", "rt-rot-1");
 
+        Cookie legacyCookie = new Cookie("refresh_token", "rt-rot-1");
+        legacyCookie.setPath("/oauth2/token");
+
         MvcResult result1 = mockMvc.perform(post("/oauth2/token")
                         .header(HttpHeaders.ORIGIN, ORIGIN)
                         .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
                         .accept(MediaType.APPLICATION_JSON)
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .param("grant_type", "refresh_token")
-                        .cookie(new Cookie("refresh_token", "rt-rot-1")))
+                        .cookie(legacyCookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.access_token").isNotEmpty())
                 .andExpect(jsonPath("$.refresh_token").doesNotExist())
@@ -468,8 +472,8 @@ class AuthTokenRevocationTest {
                 .filter(c -> c.contains("Path=/oauth2/token;"))
                 .findFirst()
                 .orElseThrow();
-        assertThat(activeCookie2).contains("Max-Age=86400");
-        assertThat(legacyCookie2).contains("refresh_token=;").contains("Max-Age=0");
+        assertThat(activeCookie2).contains("Max-Age=86400").contains("HttpOnly").contains("Secure").contains("SameSite=Lax");
+        assertThat(legacyCookie2).contains("refresh_token=;").contains("Max-Age=0").contains("HttpOnly").contains("Secure").contains("SameSite=Lax");
 
         String rt3 = extrairValorCookie(activeCookie2);
         assertThat(rt3).isNotBlank().isNotEqualTo(rt2);
@@ -502,6 +506,41 @@ class AuthTokenRevocationTest {
 
         mockMvc.perform(post("/oauth2/rota-arbitraria").session(session))
                 .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/oauth2/rota-arbitraria").session(session).with(csrf().useInvalidToken()))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/oauth2/rota-arbitraria").session(session).with(csrf()))
+                .andExpect(status().isNotFound());
+
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-csrf-1", "rt-csrf-1");
+        MvcResult tokenResult = mockMvc.perform(post("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", "rt-csrf-1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.access_token").isNotEmpty())
+                .andReturn();
+
+        String rtAtual = tokenResult.getResponse().getHeaders(HttpHeaders.SET_COOKIE).stream()
+                .filter(c -> c.contains("Path=/oauth2;"))
+                .findFirst()
+                .map(AuthTokenRevocationTest::extrairValorCookie)
+                .orElseThrow();
+
+        mockMvc.perform(post("/oauth2/logout")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .cookie(new Cookie("refresh_token", rtAtual)))
+                .andExpect(status().isOk());
+
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-csrf-2", "rt-csrf-2");
+        mockMvc.perform(post("/logout")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .cookie(new Cookie("refresh_token", "rt-csrf-2")))
+                .andExpect(status().isOk());
     }
 
     private static String extrairValorCookie(String setCookieHeader) {

@@ -182,6 +182,47 @@ class RefreshTokenCookieFilterTest {
     }
 
     @Test
+    @DisplayName("Deve espelhar atributos de segurança configurados (secure=false, sameSite=Strict) no cookie atual e no legado")
+    void deveEspelharAtributosConfiguradosNosDoisCookies() throws ServletException, IOException {
+        ReflectionTestUtils.setField(filter, "isCookieSecure", false);
+        ReflectionTestUtils.setField(filter, "cookieSameSite", "Strict");
+
+        MockHttpServletRequest request = tokenRequest();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        FilterChain filterChain = (req, res) -> {
+            ContentCachingResponseWrapper wrapper = (ContentCachingResponseWrapper) res;
+            wrapper.setStatus(200);
+            wrapper.getOutputStream().write("{\"access_token\":\"at\",\"refresh_token\":\"rt-novo\"}".getBytes(StandardCharsets.UTF_8));
+        };
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        List<String> setCookieHeaders = response.getHeaders(HttpHeaders.SET_COOKIE);
+        assertThat(setCookieHeaders).hasSize(2);
+
+        String activeCookie = setCookieHeaders.get(0);
+        assertThat(activeCookie)
+                .contains("refresh_token=rt-novo")
+                .contains("Path=/oauth2;")
+                .contains("Max-Age=86400")
+                .contains("HttpOnly")
+                .contains("SameSite=Strict")
+                .doesNotContain("Secure")
+                .doesNotContain("Domain=");
+
+        String legacyCookie = setCookieHeaders.get(1);
+        assertThat(legacyCookie)
+                .contains("refresh_token=;")
+                .contains("Path=/oauth2/token;")
+                .contains("Max-Age=0")
+                .contains("HttpOnly")
+                .contains("SameSite=Strict")
+                .doesNotContain("Secure")
+                .doesNotContain("Domain=");
+    }
+
+    @Test
     @DisplayName("Não deve extrair cookie se o JSON não contiver refresh_token")
     void naoDeveCriarCookieSeJsonNaoContiverRefreshToken() throws ServletException, IOException {
         MockHttpServletRequest request = tokenRequest();
