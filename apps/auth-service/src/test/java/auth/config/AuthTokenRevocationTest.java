@@ -65,6 +65,7 @@ import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.test.context.web.WebAppConfiguration;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
@@ -396,6 +397,95 @@ class AuthTokenRevocationTest {
                 .andExpect(status().isOk());
 
         assertThat(authorizationService.findByToken("rt-enc-logout", OAuth2TokenType.REFRESH_TOKEN)).isNull();
+    }
+
+    @Test
+    @DisplayName("Duas renovações consecutivas via /oauth2/token devem rotacionar refresh_token em /oauth2 e expirar cookie legado /oauth2/token")
+    void devePermitirDuasRenovacoesConsecutivasEExpirarCookieLegado() throws Exception {
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-rot-1", "rt-rot-1");
+
+        MvcResult result1 = mockMvc.perform(post("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", "rt-rot-1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.access_token").isNotEmpty())
+                .andExpect(jsonPath("$.refresh_token").doesNotExist())
+                .andReturn();
+
+        List<String> cookies1 = result1.getResponse().getHeaders(HttpHeaders.SET_COOKIE);
+        assertThat(cookies1).hasSize(2);
+        String activeCookie1 = cookies1.stream()
+                .filter(c -> c.contains("Path=/oauth2;"))
+                .findFirst()
+                .orElseThrow();
+        String legacyCookie1 = cookies1.stream()
+                .filter(c -> c.contains("Path=/oauth2/token;"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(activeCookie1).contains("Max-Age=86400").contains("HttpOnly").contains("Secure").contains("SameSite=Lax");
+        assertThat(legacyCookie1).contains("refresh_token=;").contains("Max-Age=0").contains("HttpOnly").contains("Secure").contains("SameSite=Lax");
+
+        String rt2 = extrairValorCookie(activeCookie1);
+        assertThat(rt2).isNotBlank().isNotEqualTo("rt-rot-1");
+
+        mockMvc.perform(post("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", "rt-rot-1")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+
+        MvcResult result2 = mockMvc.perform(post("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", rt2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.access_token").isNotEmpty())
+                .andExpect(jsonPath("$.refresh_token").doesNotExist())
+                .andReturn();
+
+        List<String> cookies2 = result2.getResponse().getHeaders(HttpHeaders.SET_COOKIE);
+        assertThat(cookies2).hasSize(2);
+        String activeCookie2 = cookies2.stream()
+                .filter(c -> c.contains("Path=/oauth2;"))
+                .findFirst()
+                .orElseThrow();
+        String legacyCookie2 = cookies2.stream()
+                .filter(c -> c.contains("Path=/oauth2/token;"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(activeCookie2).contains("Max-Age=86400");
+        assertThat(legacyCookie2).contains("refresh_token=;").contains("Max-Age=0");
+
+        String rt3 = extrairValorCookie(activeCookie2);
+        assertThat(rt3).isNotBlank().isNotEqualTo(rt2);
+
+        mockMvc.perform(post("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", rt2)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+    }
+
+    private static String extrairValorCookie(String setCookieHeader) {
+        String prefix = "refresh_token=";
+        int start = setCookieHeader.indexOf(prefix) + prefix.length();
+        int end = setCookieHeader.indexOf(';', start);
+        return end >= 0 ? setCookieHeader.substring(start, end) : setCookieHeader.substring(start);
     }
 
     private void salvarAutorizacaoAtiva(String email, Long userId, String accessTokenValue, String refreshTokenValue) {

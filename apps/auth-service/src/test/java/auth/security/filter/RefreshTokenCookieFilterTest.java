@@ -31,6 +31,7 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -148,9 +149,11 @@ class RefreshTokenCookieFilterTest {
         assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store, no-cache, must-revalidate, max-age=0");
         assertThat(response.getHeader("Pragma")).isEqualTo("no-cache");
 
-        // Valida Cookie seguro gerado
-        String setCookieHeader = response.getHeader(HttpHeaders.SET_COOKIE);
-        assertThat(setCookieHeader).isNotNull();
+        // Valida Cookie seguro gerado e expiração do cookie legado (/oauth2/token)
+        List<String> setCookieHeaders = response.getHeaders(HttpHeaders.SET_COOKIE);
+        assertThat(setCookieHeaders).hasSize(2);
+
+        String setCookieHeader = setCookieHeaders.get(0);
         assertThat(setCookieHeader).contains("refresh_token=secret-refresh-token-456");
         assertThat(setCookieHeader).contains("Path=/oauth2;");
         assertThat(setCookieHeader).doesNotContain("Path=/oauth2/token");
@@ -158,6 +161,14 @@ class RefreshTokenCookieFilterTest {
         assertThat(setCookieHeader).contains("Secure");
         assertThat(setCookieHeader).contains("SameSite=Lax");
         assertThat(setCookieHeader).contains("Max-Age=86400");
+
+        String legacyCookieHeader = setCookieHeaders.get(1);
+        assertThat(legacyCookieHeader).contains("refresh_token=;");
+        assertThat(legacyCookieHeader).contains("Path=/oauth2/token;");
+        assertThat(legacyCookieHeader).contains("Max-Age=0");
+        assertThat(legacyCookieHeader).contains("HttpOnly");
+        assertThat(legacyCookieHeader).contains("Secure");
+        assertThat(legacyCookieHeader).contains("SameSite=Lax");
 
         // Valida que o body foi reescrito sem o refresh_token
         String newResponseBody = response.getContentAsString(StandardCharsets.UTF_8);

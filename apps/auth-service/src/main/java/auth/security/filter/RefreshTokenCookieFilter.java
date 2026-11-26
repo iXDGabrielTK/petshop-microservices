@@ -79,6 +79,14 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
                             .maxAge(Duration.ofDays(1))
                             .build();
 
+                    ResponseCookie legacyCookie = ResponseCookie.from("refresh_token", "")
+                            .httpOnly(true)
+                            .secure(isCookieSecure)
+                            .sameSite(cookieSameSite)
+                            .path("/oauth2/token")
+                            .maxAge(0)
+                            .build();
+
                     json.remove("refresh_token");
                     byte[] newBody = MAPPER.writeValueAsBytes(json);
 
@@ -87,6 +95,7 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
                     response.setContentType("application/json");
                     responseWrapper.getOutputStream().write(newBody);
                     response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+                    response.addHeader(HttpHeaders.SET_COOKIE, legacyCookie.toString());
                 }
             } catch (Exception e) {
                 responseWrapper.resetBuffer();
