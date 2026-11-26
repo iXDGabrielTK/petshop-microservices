@@ -14,6 +14,7 @@ import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -23,8 +24,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -91,6 +94,36 @@ class RedisAtividadeSistemaAdapterIT {
 
         assertThat(contagem).isPresent();
         assertThat(contagem.getAsLong()).isEqualTo(15L);
+        assertThat(redisTemplate.keys(TelemetriaKeys.ATIVIDADE_BUCKET_PREFIX + "*")).containsExactly(key);
+    }
+
+    @Test
+    @DisplayName("Deve garantir TTL atômico e autorreparo via script Lua mantendo leitura pelo adaptador")
+    void deveLerBucketsGravadosPeloScriptLuaComTtlGarantidoEAutorreparo() {
+        String key = TelemetriaKeys.atividadeBucketKey(NOW.minus(Duration.ofMinutes(3)));
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>(TelemetriaKeys.ATIVIDADE_INCREMENT_LUA, Long.class);
+        String ttlSeconds = String.valueOf(TelemetriaKeys.ATIVIDADE_BUCKET_TTL.toSeconds());
+
+        for (int i = 0; i < 10; i++) {
+            Long count = redisTemplate.execute(script, List.of(key), ttlSeconds);
+            assertThat(count).isEqualTo(i + 1L);
+        }
+
+        Long initialTtl = redisTemplate.getExpire(key, TimeUnit.SECONDS);
+        assertThat(initialTtl).isNotNull().isBetween(1L, TelemetriaKeys.ATIVIDADE_BUCKET_TTL.toSeconds());
+
+        // Simula chave órfã sem TTL (ex.: falha parcial externa) e valida autorreparo no próximo incremento
+        assertThat(redisTemplate.persist(key)).isTrue();
+        assertThat(redisTemplate.getExpire(key, TimeUnit.SECONDS)).isEqualTo(-1L);
+
+        Long repairedCount = redisTemplate.execute(script, List.of(key), ttlSeconds);
+        assertThat(repairedCount).isEqualTo(11L);
+        Long repairedTtl = redisTemplate.getExpire(key, TimeUnit.SECONDS);
+        assertThat(repairedTtl).isNotNull().isBetween(1L, TelemetriaKeys.ATIVIDADE_BUCKET_TTL.toSeconds());
+
+        OptionalLong contagem = adapter.contarEventosNaJanela(Duration.ofHours(1));
+        assertThat(contagem).isPresent();
+        assertThat(contagem.getAsLong()).isEqualTo(11L);
         assertThat(redisTemplate.keys(TelemetriaKeys.ATIVIDADE_BUCKET_PREFIX + "*")).containsExactly(key);
     }
 

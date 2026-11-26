@@ -18,10 +18,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.core.Ordered;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
-import org.springframework.data.redis.core.ReactiveValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -30,12 +31,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.lenient;
@@ -49,18 +51,19 @@ import static org.mockito.Mockito.when;
 class ActivityFilterTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-11-25T15:30:15Z");
+    private static final String EXPECTED_TTL_SECONDS = String.valueOf(TelemetriaKeys.ATIVIDADE_BUCKET_TTL.toSeconds());
 
     @Mock
     private ReactiveRedisTemplate<String, String> redisTemplate;
 
     @Mock
-    private ReactiveValueOperations<String, String> valueOperations;
-
-    @Mock
     private GatewayFilterChain chain;
 
     @Captor
-    private ArgumentCaptor<String> keyCaptor;
+    private ArgumentCaptor<List<String>> keysCaptor;
+
+    @Captor
+    private ArgumentCaptor<RedisScript<Long>> scriptCaptor;
 
     private Clock fixedClock;
     private ActivityFilter activityFilter;
@@ -70,9 +73,8 @@ class ActivityFilterTest {
     void setUp() {
         fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
 
-        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        lenient().when(valueOperations.increment(anyString())).thenReturn(Mono.just(1L));
-        lenient().when(redisTemplate.expire(anyString(), any(Duration.class))).thenReturn(Mono.just(Boolean.TRUE));
+        lenient().when(redisTemplate.execute(any(RedisScript.class), anyList(), anyList()))
+                .thenReturn(Flux.just(1L));
         lenient().when(chain.filter(any())).thenReturn(Mono.empty());
 
         activityFilter = new ActivityFilter(redisTemplate, fixedClock);
@@ -86,15 +88,19 @@ class ActivityFilterTest {
     class SucessoTests {
 
         @Test
-        @DisplayName("Deve incrementar o bucket do minuto corrente com TTL de 1 hora sem usar ZSet")
-        void deveIncrementarBucketComTtl() {
+        @DisplayName("Deve incrementar o bucket via script Lua atômico com TTL de 1 hora sem usar ZSet")
+        void deveIncrementarBucketViaLuaComTtl() {
             String expectedKey = TelemetriaKeys.atividadeBucketKey(FIXED_NOW);
 
             StepVerifier.create(activityFilter.filter(exchange, chain))
                     .verifyComplete();
 
-            verify(valueOperations).increment(expectedKey);
-            verify(redisTemplate).expire(expectedKey, TelemetriaKeys.ATIVIDADE_BUCKET_TTL);
+            verify(redisTemplate).execute(
+                    scriptCaptor.capture(),
+                    eq(List.of(expectedKey)),
+                    eq(List.of(EXPECTED_TTL_SECONDS))
+            );
+            assertThat(scriptCaptor.getValue().getScriptAsString()).isEqualTo(TelemetriaKeys.ATIVIDADE_INCREMENT_LUA);
             verify(redisTemplate, never()).opsForZSet();
             verify(chain).filter(exchange);
         }
@@ -107,8 +113,11 @@ class ActivityFilterTest {
                         .verifyComplete();
             }
 
-            verify(valueOperations, times(50)).increment(keyCaptor.capture());
-            Set<String> distinctKeys = new HashSet<>(keyCaptor.getAllValues());
+            verify(redisTemplate, times(50)).execute(any(RedisScript.class), keysCaptor.capture(), anyList());
+            Set<String> distinctKeys = new HashSet<>();
+            for (List<String> keys : keysCaptor.getAllValues()) {
+                distinctKeys.addAll(keys);
+            }
             assertThat(distinctKeys).containsExactly(TelemetriaKeys.atividadeBucketKey(FIXED_NOW));
         }
 
@@ -121,8 +130,16 @@ class ActivityFilterTest {
             StepVerifier.create(activityFilter.filter(exchange, chain)).verifyComplete();
             StepVerifier.create(nextMinuteFilter.filter(exchange, chain)).verifyComplete();
 
-            verify(valueOperations).increment(TelemetriaKeys.atividadeBucketKey(FIXED_NOW));
-            verify(valueOperations).increment(TelemetriaKeys.atividadeBucketKey(nextMinute));
+            verify(redisTemplate).execute(
+                    any(RedisScript.class),
+                    eq(List.of(TelemetriaKeys.atividadeBucketKey(FIXED_NOW))),
+                    eq(List.of(EXPECTED_TTL_SECONDS))
+            );
+            verify(redisTemplate).execute(
+                    any(RedisScript.class),
+                    eq(List.of(TelemetriaKeys.atividadeBucketKey(nextMinute))),
+                    eq(List.of(EXPECTED_TTL_SECONDS))
+            );
         }
 
         @Test
@@ -138,25 +155,26 @@ class ActivityFilterTest {
     class TratamentoErroTests {
 
         @Test
-        @DisplayName("Deve tolerar falha no increment do Redis sem quebrar o pipeline")
-        void deveTolerarFalhaNoIncrement() {
-            when(valueOperations.increment(anyString()))
-                    .thenReturn(Mono.error(new RuntimeException("Redis connection refused")));
+        @DisplayName("Deve tolerar falha no script Redis sem quebrar o pipeline")
+        void deveTolerarFalhaNoScriptRedis() {
+            when(redisTemplate.execute(any(RedisScript.class), anyList(), anyList()))
+                    .thenReturn(Flux.error(new RuntimeException("Redis connection refused")));
 
             StepVerifier.create(activityFilter.filter(exchange, chain))
                     .verifyComplete();
 
-            verify(valueOperations).increment(anyString());
+            verify(redisTemplate).execute(any(RedisScript.class), anyList(), anyList());
             verify(chain).filter(exchange);
         }
 
         @Test
-        @DisplayName("Deve tolerar falha no expire do Redis sem quebrar o pipeline")
-        void deveTolerarFalhaNoExpire() {
-            when(redisTemplate.expire(anyString(), eq(TelemetriaKeys.ATIVIDADE_BUCKET_TTL)))
-                    .thenReturn(Mono.error(new RuntimeException("Redis timeout")));
+        @DisplayName("Deve operar em fail-open quando Redis travar além do timeout reativo configurado")
+        void deveOperarFailOpenQuandoRedisExcederTimeout() {
+            when(redisTemplate.execute(any(RedisScript.class), anyList(), anyList()))
+                    .thenReturn(Flux.never());
 
-            StepVerifier.create(activityFilter.filter(exchange, chain))
+            StepVerifier.withVirtualTime(() -> activityFilter.filter(exchange, chain))
+                    .thenAwait(Duration.ofMillis(250))
                     .verifyComplete();
 
             verify(chain).filter(exchange);
@@ -181,11 +199,19 @@ class ActivityFilterTest {
     class ValidacaoParametrosTests {
 
         @Test
-        @DisplayName("Construtor deve rejeitar redisTemplate nulo")
-        void deveRejeitarRedisTemplateNulo() {
+        @DisplayName("Construtor deve rejeitar redisTemplate nulo ou timeout inválido")
+        void deveRejeitarParametrosInvalidosNoConstrutor() {
             assertThatThrownBy(() -> new ActivityFilter(null))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("redisTemplate não pode ser nulo");
+
+            assertThatThrownBy(() -> new ActivityFilter(redisTemplate, fixedClock, null))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("telemetryTimeout não pode ser nulo");
+
+            assertThatThrownBy(() -> new ActivityFilter(redisTemplate, fixedClock, Duration.ZERO))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("telemetryTimeout");
         }
 
         @Test

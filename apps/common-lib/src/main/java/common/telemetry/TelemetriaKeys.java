@@ -16,6 +16,12 @@ public final class TelemetriaKeys {
 
     public static final String ATIVIDADE_BUCKET_PREFIX = "system:activity:bucket:";
     public static final Duration ATIVIDADE_BUCKET_TTL = Duration.ofHours(1);
+    public static final String ATIVIDADE_INCREMENT_LUA =
+            "local count = redis.call('INCR', KEYS[1])\n"
+            + "if count == 1 or redis.call('TTL', KEYS[1]) < 0 then\n"
+            + "    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))\n"
+            + "end\n"
+            + "return count";
 
     private TelemetriaKeys() {}
 
