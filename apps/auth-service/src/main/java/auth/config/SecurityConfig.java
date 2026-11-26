@@ -190,7 +190,6 @@ public class SecurityConfig {
                                 "/usuarios/register",
                                 "/usuarios/forgot-password",
                                 "/usuarios/reset-password",
-                                "/oauth2/**",
                                 "/api/**",
                                 "/actuator/**"
                         )

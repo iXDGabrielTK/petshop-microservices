@@ -41,10 +41,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextImpl;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
@@ -58,6 +60,7 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -87,6 +90,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -479,6 +483,25 @@ class AuthTokenRevocationTest {
                         .cookie(new Cookie("refresh_token", rt2)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("invalid_grant"));
+    }
+
+    @Test
+    @DisplayName("Rotas arbitrárias sob /oauth2/** na cadeia padrão devem exigir CSRF enquanto /oauth2/token, /oauth2/logout e /logout seguem funcionando")
+    void deveExigirCsrfParaRotasArbitrariasSobOAuth2NaCadeiaPadraoEManterTokenELogoutFuncionando() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        UserDetailsImpl userDetails = new UserDetailsImpl(
+                10L, "Usuario", "user@petshop.com", "hash", List.of(new SimpleGrantedAuthority("ROLE_USER")));
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                userDetails, null, userDetails.getAuthorities());
+        session.setAttribute(
+                HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
+                new SecurityContextImpl(auth));
+
+        mockMvc.perform(get("/oauth2/rota-arbitraria").session(session))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(post("/oauth2/rota-arbitraria").session(session))
+                .andExpect(status().isForbidden());
     }
 
     private static String extrairValorCookie(String setCookieHeader) {
