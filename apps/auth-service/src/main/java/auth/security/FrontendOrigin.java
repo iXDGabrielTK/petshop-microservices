@@ -15,12 +15,10 @@ public final class FrontendOrigin {
     private FrontendOrigin() {}
 
     public static String resolvePostLoginRedirect(String frontendUrl, String target) {
-        if (target != null && !hasBackslash(target)) {
+        if (target != null) {
             try {
                 URI uri = new URI(target);
-                if (!uri.isOpaque() && AUTHORIZE_PATH.equals(uri.getPath())
-                        && !hasBackslash(uri.getQuery())
-                        && !hasControl(uri.getQuery()) && !hasControl(uri.getFragment())) {
+                if (!hasUnsafeComponents(uri) && AUTHORIZE_PATH.equals(uri.getPath())) {
                     String rawQuery = uri.getRawQuery();
                     return AUTHORIZE_PATH + (rawQuery != null ? "?" + rawQuery : "");
                 }
@@ -48,8 +46,7 @@ public final class FrontendOrigin {
         if (target == null) return false;
         try {
             URI uri = new URI(target);
-            if (uri.isOpaque() || hasBackslash(uri.getPath()) || hasBackslash(uri.getQuery())
-                    || hasControl(uri.getPath()) || hasControl(uri.getQuery()) || hasControl(uri.getFragment())) {
+            if (hasUnsafeComponents(uri)) {
                 return false;
             }
             if (target.startsWith("/") && !target.startsWith("//")) {
@@ -61,8 +58,62 @@ public final class FrontendOrigin {
         }
     }
 
+    private static boolean hasUnsafeComponents(URI uri) {
+        return uri.isOpaque()
+                || uri.getRawUserInfo() != null
+                || hasBackslash(uri.getRawAuthority())
+                || hasBackslash(uri.getPath())
+                || hasBackslash(uri.getQuery())
+                || hasBackslash(uri.getFragment())
+                || hasControl(uri.getPath())
+                || hasControl(uri.getQuery())
+                || hasControl(uri.getFragment());
+    }
+
     private static boolean hasBackslash(String component) {
-        return component != null && component.indexOf('\\') >= 0;
+        if (component == null) {
+            return false;
+        }
+        if (component.indexOf('\\') >= 0) {
+            return true;
+        }
+        String current = component;
+        while (current.indexOf('%') >= 0) {
+            String decoded = decodePercentLayer(current);
+            if (decoded.equals(current)) {
+                return false;
+            }
+            if (decoded.indexOf('\\') >= 0) {
+                return true;
+            }
+            current = decoded;
+        }
+        return false;
+    }
+
+    private static String decodePercentLayer(String value) {
+        int len = value.length();
+        StringBuilder sb = null;
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i);
+            if (c == '%' && i + 2 < len) {
+                int hi = Character.digit(value.charAt(i + 1), 16);
+                int lo = Character.digit(value.charAt(i + 2), 16);
+                if (hi >= 0 && lo >= 0) {
+                    if (sb == null) {
+                        sb = new StringBuilder(len);
+                        sb.append(value, 0, i);
+                    }
+                    sb.append((char) ((hi << 4) | lo));
+                    i += 2;
+                    continue;
+                }
+            }
+            if (sb != null) {
+                sb.append(c);
+            }
+        }
+        return sb != null ? sb.toString() : value;
     }
 
     private static boolean hasControl(String component) {
