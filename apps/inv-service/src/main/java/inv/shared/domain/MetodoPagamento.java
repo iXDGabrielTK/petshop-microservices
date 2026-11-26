@@ -19,4 +19,8 @@ public enum MetodoPagamento {
     MetodoPagamento(boolean exigeProcessamento) {
         this.exigeProcessamento = exigeProcessamento;
     }
+
+    public boolean isEletronico() {
+        return this != DINHEIRO;
+    }
 }

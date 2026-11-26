@@ -381,4 +381,70 @@ class VendaEventHandlerIT {
         assertThat(lancamentos.getFirst().getVendaId()).isEqualTo(vendaId);
         assertThat(lancamentos.getFirst().getValor()).isEqualByComparingTo("60.00");
     }
+
+    @Test
+    @DisplayName("PIX como meio eletrônico — Rejeita intenção acima do saldo e marca 2º PIX de 60,00 como excedente sem troco nem segundo VendaPagaEvent")
+    void doisPixParciaisEmVooDevemMarcarSegundoComoExcedenteSemTrocoEAbaixarSaldoDevedor() {
+        Produto produto = new Produto();
+        produto.setNome("Ração PIX Parcial Em Voo");
+        produto.setCodigoBarras("7890000000105");
+        produto.setUnidadeMedida(UnidadeMedida.UN);
+        produto.setPrecoVenda(new BigDecimal("50.00"));
+        produto.setEstoqueDisponivel(new BigDecimal("10.000"));
+        produto.setEstoqueReservado(new BigDecimal("0.000"));
+        produto.setEstoqueMinimo(new BigDecimal("2.000"));
+        produto = produtoRepository.saveAndFlush(produto);
+
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(produto.getId(), new BigDecimal("2.000"))
+        )));
+        Long vendaId = venda.getId();
+
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.PIX, new BigDecimal("120.00"), UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("saldo devedor atual da venda (100.00)");
+
+        Long pagIdA = pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.PIX, new BigDecimal("60.00"), UUID.randomUUID());
+        Long pagIdB = pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.PIX, new BigDecimal("60.00"), UUID.randomUUID());
+
+        pagamentoService.confirmarPagamentoWebhook(pagIdA, new BigDecimal("60.00"), "NSU-PIX-A");
+
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.PIX, new BigDecimal("60.00"), UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("saldo devedor atual da venda (40.00)");
+
+        pagamentoService.confirmarPagamentoWebhook(pagIdB, new BigDecimal("60.00"), "NSU-PIX-B");
+
+        String payloadA = "{\"vendaId\":%d,\"pagamentoId\":%d}".formatted(vendaId, pagIdA);
+        String payloadB = "{\"vendaId\":%d,\"pagamentoId\":%d}".formatted(vendaId, pagIdB);
+
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payloadA.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payloadB.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        Venda vendaFinal = vendaRepository.findById(vendaId).orElseThrow();
+        assertThat(vendaFinal.getStatus()).isEqualTo(StatusVenda.AGUARDANDO_PAGAMENTO);
+        assertThat(vendaFinal.getValorPago()).isEqualByComparingTo("60.00");
+        assertThat(vendaFinal.getValorTroco()).isEqualByComparingTo("0.00");
+
+        Pagamento pagA = pagamentoRepository.findById(pagIdA).orElseThrow();
+        Pagamento pagB = pagamentoRepository.findById(pagIdB).orElseThrow();
+        assertThat(pagA.isContabilizado()).isTrue();
+        assertThat(pagA.isExcedente()).isFalse();
+        assertThat(pagB.isExcedente()).isTrue();
+        assertThat(pagB.isContabilizado()).isFalse();
+
+        long eventosVendaPaga = applicationEvents.stream(VendaPagaEvent.class)
+                .filter(e -> e.vendaId().equals(vendaId))
+                .count();
+        assertThat(eventosVendaPaga).isEqualTo(1);
+
+        List<LancamentoFinanceiro> lancamentos = lancamentoRepository.findAll();
+        assertThat(lancamentos).hasSize(1);
+        assertThat(lancamentos.getFirst().getVendaId()).isEqualTo(vendaId);
+        assertThat(lancamentos.getFirst().getValor()).isEqualByComparingTo("60.00");
+    }
 }

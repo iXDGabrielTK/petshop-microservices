@@ -81,7 +81,7 @@ public class PagamentoService {
             throw new ConflictException("A venda não aceita pagamentos no status: " + venda.getStatus());
         }
 
-        if (metodo.isExigeProcessamento()) {
+        if (metodo.isEletronico()) {
             BigDecimal valorTotal = venda.getValorTotal() != null ? venda.getValorTotal() : BigDecimal.ZERO;
             BigDecimal valorPago = venda.getValorPago() != null ? venda.getValorPago() : BigDecimal.ZERO;
             BigDecimal emVoo = Optional.ofNullable(

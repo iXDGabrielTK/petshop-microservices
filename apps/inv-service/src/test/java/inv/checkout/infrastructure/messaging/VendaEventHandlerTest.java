@@ -404,30 +404,46 @@ class VendaEventHandlerTest {
     }
 
     @Test
-    @DisplayName("Condição 3 — PIX acima do saldo restante deve continuar gerando troco normalmente")
-    void condicao3_pixAcimaDoSaldoDeveContinuarGerandoTroco() {
+    @DisplayName("Condição 3 — Dois PIX parciais de 60,00 em venda de 100,00: 1º paga 60,00 e 2º vira excedente=true com troco 0,00 sem segundo VendaPagaEvent")
+    void condicao3_doisPixParciaisExcedendoSaldoDeveMarcarSegundoComoExcedenteSemGerarTroco() {
         Long vendaId = 10L;
-        UUID uuidRef = UUID.randomUUID();
+        UUID uuid1 = UUID.randomUUID();
+        UUID uuid2 = UUID.randomUUID();
 
         Venda venda = criarVendaAguardandoPagamento(
-                vendaId, 100L, "Ração Super Premium", new BigDecimal("50.00"), new BigDecimal("2.000"));
+                vendaId, 100L, "Ração Super Premium", new BigDecimal("50.00"), new BigDecimal("2.000")); // total = 100.00
 
-        Pagamento pagamento = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("120.00"), uuidRef);
-        ReflectionTestUtils.setField(pagamento, "id", 50L);
-        pagamento.confirmar(new BigDecimal("120.00"), "NSU-PIX-TROCO");
+        Pagamento pag1 = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("60.00"), uuid1);
+        ReflectionTestUtils.setField(pag1, "id", 50L);
+        pag1.confirmar(new BigDecimal("60.00"), "NSU-PIX-1");
+
+        Pagamento pag2 = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("60.00"), uuid2);
+        ReflectionTestUtils.setField(pag2, "id", 51L);
+        pag2.confirmar(new BigDecimal("60.00"), "NSU-PIX-2");
 
         when(vendaRepository.findByIdWithLock(vendaId)).thenReturn(Optional.of(venda));
-        when(pagamentoRepository.findById(50L)).thenReturn(Optional.of(pagamento));
+        when(pagamentoRepository.findById(50L)).thenReturn(Optional.of(pag1));
+        when(pagamentoRepository.findById(51L)).thenReturn(Optional.of(pag2));
 
         handler.handlePagamentoConfirmado(msg("{\"vendaId\":10,\"pagamentoId\":50}"));
+        assertThat(venda.getStatus()).isEqualTo(StatusVenda.AGUARDANDO_PAGAMENTO);
+        assertThat(venda.getValorPago()).isEqualByComparingTo("60.00");
+        assertThat(venda.getValorTroco()).isEqualByComparingTo("0.00");
+        assertThat(pag1.isContabilizado()).isTrue();
 
-        assertThat(venda.getStatus()).isEqualTo(StatusVenda.CONCLUIDA);
-        assertThat(venda.getValorPago()).isEqualByComparingTo("120.00");
-        assertThat(venda.getValorTroco()).isEqualByComparingTo("20.00");
-        assertThat(pagamento.isExcedente()).isFalse();
-        verify(estoqueCommandService, times(1)).confirmarBaixa(any());
-        verify(eventPublisher).publishEvent(new VendaPagaEvent(vendaId, uuidRef, new BigDecimal("100.00")));
-        assertThat(meterRegistry.counter(VendaEventHandler.METRICA_PAGAMENTO_EXCEDENTE).count()).isZero();
+        handler.handlePagamentoConfirmado(msg("{\"vendaId\":10,\"pagamentoId\":51}"));
+
+        assertThat(pag2.isExcedente()).isTrue();
+        assertThat(pag2.isContabilizado()).isFalse();
+        assertThat(venda.getStatus()).isEqualTo(StatusVenda.AGUARDANDO_PAGAMENTO);
+        assertThat(venda.getValorPago()).isEqualByComparingTo("60.00");
+        assertThat(venda.getValorTroco()).isEqualByComparingTo("0.00");
+        verify(pagamentoRepository, times(1)).save(pag2);
+        verify(vendaRepository, times(1)).save(venda);
+        verify(eventPublisher, times(1)).publishEvent(any(VendaPagaEvent.class));
+        verify(eventPublisher).publishEvent(new VendaPagaEvent(vendaId, uuid1, new BigDecimal("60.00")));
+        verifyNoInteractions(estoqueCommandService);
+        assertThat(meterRegistry.counter(VendaEventHandler.METRICA_PAGAMENTO_EXCEDENTE).count()).isEqualTo(1.0);
     }
 
     @Test

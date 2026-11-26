@@ -98,7 +98,7 @@ public class Pagamento {
             throw new BusinessException("Valor recebido deve ser maior que zero.");
         }
 
-        if (this.metodo.isExigeProcessamento()
+        if (this.metodo.isEletronico()
                 && (this.valorEsperado == null || valorRecebido.compareTo(this.valorEsperado) != 0)) {
             throw new BusinessException("Valor recebido diverge do valor esperado para pagamento eletrônico.");
         }

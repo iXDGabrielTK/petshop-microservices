@@ -236,7 +236,7 @@ class PagamentoConcorrenciaGatesIT {
 
         try (ExecutorService pool = Executors.newFixedThreadPool(totalThreads)) {
             for (int i = 0; i < totalThreads; i++) {
-                BigDecimal valorChamada = (paresDistintos && !metodo.isExigeProcessamento())
+                BigDecimal valorChamada = (paresDistintos && !metodo.isEletronico())
                         ? valorTotal.add(BigDecimal.valueOf(i))
                         : valorTotal;
                 String nsuChamada = "NSU-GATE1-" + (paresDistintos ? i : "BURST");
@@ -266,7 +266,7 @@ class PagamentoConcorrenciaGatesIT {
         if (paresDistintos) {
             int indiceVencedor = Integer.parseInt(nsuVencedor.substring("NSU-GATE1-".length()));
             assertThat(indiceVencedor).isBetween(0, totalThreads - 1);
-            BigDecimal esperado = metodo.isExigeProcessamento() ? valorTotal : valorTotal.add(BigDecimal.valueOf(indiceVencedor));
+            BigDecimal esperado = metodo.isEletronico() ? valorTotal : valorTotal.add(BigDecimal.valueOf(indiceVencedor));
             assertThat(valorVencedor).isEqualByComparingTo(esperado);
         } else {
             assertThat(valorVencedor).isEqualByComparingTo(valorTotal);
@@ -388,7 +388,7 @@ class PagamentoConcorrenciaGatesIT {
         Produto produto = salvarProduto("7893000600010", "Rollback da confirmação",
                 new BigDecimal("100.00"), new BigDecimal("10.000"), BigDecimal.ONE);
         Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(new ItemVendaRequest(produto.getId(), BigDecimal.ONE))));
-        Long pagamentoId = pagamentoService.criarIntencaoPagamento(venda.getId(), MetodoPagamento.PIX,
+        Long pagamentoId = pagamentoService.criarIntencaoPagamento(venda.getId(), MetodoPagamento.DINHEIRO,
                 new BigDecimal("100.00"), UUID.randomUUID());
         jdbcTemplate.execute("ALTER TABLE outbox ADD CONSTRAINT teste_rejeitar_confirmacao CHECK (event_type NOT LIKE '%PagamentoConfirmadoEvent')");
         try {

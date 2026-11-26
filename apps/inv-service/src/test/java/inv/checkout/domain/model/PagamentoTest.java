@@ -325,17 +325,22 @@ class PagamentoTest {
                         .hasMessage("Valor recebido diverge do valor esperado para pagamento eletrônico.");
                 assertThat(debito.getStatus()).isEqualTo(StatusPagamento.PROCESSANDO);
             }
+
+            Pagamento pix = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
+            for (String divergente : new String[]{"49.99", "50.01"}) {
+                assertThatThrownBy(() -> pix.confirmar(new BigDecimal(divergente), "NSU-PIX-DIV"))
+                        .isInstanceOf(BusinessException.class)
+                        .hasMessage("Valor recebido diverge do valor esperado para pagamento eletrônico.");
+                assertThat(pix.getStatus()).isEqualTo(StatusPagamento.PENDENTE);
+            }
         }
 
         @Test
-        @DisplayName("Deve aceitar valorRecebido diferente do esperado para DINHEIRO e PIX (ex.: troco)")
-        void deveAceitarValorDiferenteDoEsperadoParaDinheiroEPix() {
+        @DisplayName("Deve aceitar valorRecebido diferente do esperado para DINHEIRO (ex.: troco)")
+        void deveAceitarValorDiferenteDoEsperadoParaDinheiro() {
             Venda venda = new Venda();
             Pagamento dinheiro = new Pagamento(venda, MetodoPagamento.DINHEIRO, new BigDecimal("80.00"), UUID.randomUUID());
             assertThat(dinheiro.confirmar(new BigDecimal("100.00"), "DIN-TROCO")).isTrue();
-
-            Pagamento pix = new Pagamento(venda, MetodoPagamento.PIX, new BigDecimal("50.00"), UUID.randomUUID());
-            assertThat(pix.confirmar(new BigDecimal("60.00"), "PIX-EXTRA")).isTrue();
         }
     }
 

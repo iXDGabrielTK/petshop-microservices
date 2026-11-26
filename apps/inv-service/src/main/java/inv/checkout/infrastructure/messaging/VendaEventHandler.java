@@ -86,7 +86,7 @@ public class VendaEventHandler {
             // Condição 3 (Processamento normal): venda aceita pagamento
             if (venda.getStatus().aceitaPagamento()) {
                 BigDecimal valorRecebido = pagamento.getValorRecebido() != null ? pagamento.getValorRecebido() : BigDecimal.ZERO;
-                if (pagamento.getMetodo().isExigeProcessamento()) {
+                if (pagamento.getMetodo().isEletronico()) {
                     BigDecimal valorTotal = venda.getValorTotal() != null ? venda.getValorTotal() : BigDecimal.ZERO;
                     BigDecimal valorPago = venda.getValorPago() != null ? venda.getValorPago() : BigDecimal.ZERO;
                     BigDecimal saldoRestante = valorTotal.subtract(valorPago);
