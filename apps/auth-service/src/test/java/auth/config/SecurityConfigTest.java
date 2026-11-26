@@ -6,6 +6,7 @@
 package auth.config;
 
 import auth.security.ClientIpResolver;
+import auth.security.FrontendOrigin;
 import auth.security.LoginAttemptService;
 import auth.security.filter.CookieRefreshTokenRequestFilter;
 import auth.security.filter.RefreshTokenCookieFilter;
@@ -284,6 +285,11 @@ class SecurityConfigTest {
             "/%2fexample.org,http://localhost:5173",
             "/app%0d%0a,http://localhost:5173",
             "/app\tperfil,http://localhost:5173",
+            "/conta?voltar=%5Cevil.com,http://localhost:5173",
+            "http://localhost:5173/app?next=%5cevil.com,http://localhost:5173",
+            "http://localhost:8081/oauth2/authorize?x=%5C,http://localhost:5173",
+            "/oauth2/authorize?x=%5c,http://localhost:5173",
+            "http://localhost:8081/oauth2/authorize?client_id=petshop-client&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fauthorized,/oauth2/authorize?client_id=petshop-client&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fauthorized",
             "data:text/plain, http://localhost:5173",
             "http://usuario@localhost:5173/app,http://localhost:5173",
             "https://localhost:5173/app,http://localhost:5173",
@@ -301,6 +307,25 @@ class SecurityConfigTest {
 
         assertThat(response.getRedirectedUrl()).isEqualTo(expected);
         assertThat(request.getSession().getAttribute("SPRING_SECURITY_SAVED_REQUEST")).isNull();
+    }
+
+    @Test
+    @DisplayName("FrontendOrigin deve rejeitar %5C decodificado na query preservando rawQuery nas URLs aceitas")
+    void deveRejeitarBarraInvertidaDecodificadaNaQueryPreservandoRawQuery() {
+        String frontend = "http://localhost:5173";
+
+        assertThat(FrontendOrigin.acceptsRedirect(frontend, "/conta?voltar=%5Cevil.com")).isFalse();
+        assertThat(FrontendOrigin.acceptsRedirect(frontend, "http://localhost:5173/app?next=%5cevil.com")).isFalse();
+        assertThat(FrontendOrigin.acceptsRedirect(frontend, "/conta?voltar=%2Fpedidos")).isTrue();
+
+        assertThat(FrontendOrigin.resolvePostLoginRedirect(frontend, "http://localhost:8081/oauth2/authorize?x=%5C"))
+                .isEqualTo(frontend);
+        assertThat(FrontendOrigin.resolvePostLoginRedirect(frontend, "/oauth2/authorize?x=%5c"))
+                .isEqualTo(frontend);
+        assertThat(FrontendOrigin.resolvePostLoginRedirect(
+                frontend,
+                "http://localhost:8081/oauth2/authorize?client_id=petshop-client&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fauthorized"))
+                .isEqualTo("/oauth2/authorize?client_id=petshop-client&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fauthorized");
     }
 
     @Nested

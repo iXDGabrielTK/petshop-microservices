@@ -15,10 +15,11 @@ public final class FrontendOrigin {
     private FrontendOrigin() {}
 
     public static String resolvePostLoginRedirect(String frontendUrl, String target) {
-        if (target != null && target.indexOf('\\') < 0) {
+        if (target != null && !hasBackslash(target)) {
             try {
                 URI uri = new URI(target);
                 if (!uri.isOpaque() && AUTHORIZE_PATH.equals(uri.getPath())
+                        && !hasBackslash(uri.getQuery())
                         && !hasControl(uri.getQuery()) && !hasControl(uri.getFragment())) {
                     String rawQuery = uri.getRawQuery();
                     return AUTHORIZE_PATH + (rawQuery != null ? "?" + rawQuery : "");
@@ -47,7 +48,7 @@ public final class FrontendOrigin {
         if (target == null) return false;
         try {
             URI uri = new URI(target);
-            if (uri.isOpaque() || uri.getPath().indexOf('\\') >= 0
+            if (uri.isOpaque() || hasBackslash(uri.getPath()) || hasBackslash(uri.getQuery())
                     || hasControl(uri.getPath()) || hasControl(uri.getQuery()) || hasControl(uri.getFragment())) {
                 return false;
             }
@@ -58,6 +59,10 @@ public final class FrontendOrigin {
         } catch (URISyntaxException e) {
             return false;
         }
+    }
+
+    private static boolean hasBackslash(String component) {
+        return component != null && component.indexOf('\\') >= 0;
     }
 
     private static boolean hasControl(String component) {
