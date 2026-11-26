@@ -84,7 +84,9 @@ public class PagamentoService {
         if (metodo.isExigeProcessamento()) {
             BigDecimal valorTotal = venda.getValorTotal() != null ? venda.getValorTotal() : BigDecimal.ZERO;
             BigDecimal valorPago = venda.getValorPago() != null ? venda.getValorPago() : BigDecimal.ZERO;
-            BigDecimal saldoDevedor = valorTotal.subtract(valorPago);
+            BigDecimal emVoo = Optional.ofNullable(
+                    pagamentoRepository.somarConfirmadosNaoContabilizados(venda.getId())).orElse(BigDecimal.ZERO);
+            BigDecimal saldoDevedor = valorTotal.subtract(valorPago).subtract(emVoo);
             if (valor.compareTo(saldoDevedor) > 0) {
                 throw new BusinessException(
                         "Valor da intenção excede o saldo devedor atual da venda (" + saldoDevedor + ").");

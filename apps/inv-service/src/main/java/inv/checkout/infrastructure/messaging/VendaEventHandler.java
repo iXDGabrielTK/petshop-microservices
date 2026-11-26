@@ -85,11 +85,25 @@ public class VendaEventHandler {
 
             // Condição 3 (Processamento normal): venda aceita pagamento
             if (venda.getStatus().aceitaPagamento()) {
+                BigDecimal valorRecebido = pagamento.getValorRecebido() != null ? pagamento.getValorRecebido() : BigDecimal.ZERO;
+                if (pagamento.getMetodo().isExigeProcessamento()) {
+                    BigDecimal valorTotal = venda.getValorTotal() != null ? venda.getValorTotal() : BigDecimal.ZERO;
+                    BigDecimal valorPago = venda.getValorPago() != null ? venda.getValorPago() : BigDecimal.ZERO;
+                    BigDecimal saldoRestante = valorTotal.subtract(valorPago);
+                    if (valorRecebido.compareTo(saldoRestante) > 0) {
+                        pagamento.marcarComoExcedenteParaEstorno();
+                        pagamentoRepository.save(pagamento);
+                        meterRegistry.counter(METRICA_PAGAMENTO_EXCEDENTE).increment();
+                        log.warn("Pagamento eletrônico {} excede o saldo restante da venda {} (valorRecebido={}, saldoRestante={}). Marcado como excedente para estorno.",
+                                pagamento.getId(), venda.getId(), valorRecebido, saldoRestante);
+                        return;
+                    }
+                }
+
                 BigDecimal trocoAnterior = venda.getValorTroco() != null ? venda.getValorTroco() : BigDecimal.ZERO;
                 venda.registrarPagamentoConfirmado(pagamento);
                 BigDecimal trocoAtual = venda.getValorTroco() != null ? venda.getValorTroco() : BigDecimal.ZERO;
                 BigDecimal trocoDestePagamento = trocoAtual.subtract(trocoAnterior).max(BigDecimal.ZERO);
-                BigDecimal valorRecebido = pagamento.getValorRecebido() != null ? pagamento.getValorRecebido() : BigDecimal.ZERO;
                 BigDecimal valorLiquidoRetido = valorRecebido.subtract(trocoDestePagamento).max(BigDecimal.ZERO);
 
                 if (venda.estaPaga()) {

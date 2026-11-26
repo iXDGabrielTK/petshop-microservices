@@ -665,6 +665,59 @@ class PagamentoServiceTest {
         }
 
         @Test
+        @DisplayName("Deve deduzir pagamentos CONFIRMADO ainda não contabilizados do saldo devedor para método eletrônico")
+        void deveDeduzirPagamentosConfirmadosNaoContabilizadosDoSaldoDevedorParaMetodoEletronico() {
+            Venda venda = criarVendaComSaldo(10L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("100.00"), BigDecimal.ZERO);
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+            when(pagamentoRepository.somarConfirmadosNaoContabilizados(10L)).thenReturn(new BigDecimal("60.00"));
+
+            UUID uuidExcesso = UUID.randomUUID();
+            when(pagamentoRepository.findByUuidReferencia(uuidExcesso)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                    10L, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("40.01"), uuidExcesso))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("saldo devedor atual da venda");
+            verify(pagamentoRepository, never()).inserirIntencaoIdempotente(any(), any(), any(), any(), any(), any(), anyBoolean(), anyBoolean());
+
+            UUID uuidExato = UUID.randomUUID();
+            when(pagamentoRepository.findByUuidReferencia(uuidExato)).thenReturn(Optional.empty());
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidExato, 10L, "CARTAO_DEBITO", "PROCESSANDO", new BigDecimal("40.00"), BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(207L));
+
+            Long id = pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("40.00"), uuidExato);
+            assertThat(id).isEqualTo(207L);
+        }
+
+        @Test
+        @DisplayName("Não deve consultar pagamentos confirmados não contabilizados para PIX e DINHEIRO")
+        void naoDeveConsultarPagamentosEmVooParaPixEDinheiro() {
+            Venda venda = criarVendaComSaldo(10L, StatusVenda.AGUARDANDO_PAGAMENTO, new BigDecimal("100.00"), BigDecimal.ZERO);
+            when(vendaRepository.findByIdWithLock(10L)).thenReturn(Optional.of(venda));
+
+            UUID uuidPix = UUID.randomUUID();
+            when(pagamentoRepository.findByUuidReferencia(uuidPix)).thenReturn(Optional.empty());
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidPix, 10L, "PIX", "PENDENTE", new BigDecimal("120.00"), BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(208L));
+
+            assertThat(pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.PIX, new BigDecimal("120.00"), uuidPix))
+                    .isEqualTo(208L);
+
+            UUID uuidDinheiro = UUID.randomUUID();
+            when(pagamentoRepository.findByUuidReferencia(uuidDinheiro)).thenReturn(Optional.empty());
+            when(pagamentoRepository.inserirIntencaoIdempotente(
+                    uuidDinheiro, 10L, "DINHEIRO", "PENDENTE", new BigDecimal("150.00"), BigDecimal.ZERO, false, false))
+                    .thenReturn(Optional.of(209L));
+
+            assertThat(pagamentoService.criarIntencaoPagamento(10L, MetodoPagamento.DINHEIRO, new BigDecimal("150.00"), uuidDinheiro))
+                    .isEqualTo(209L);
+
+            verify(pagamentoRepository, never()).somarConfirmadosNaoContabilizados(any());
+        }
+
+        @Test
         @DisplayName("Deve permitir intenção em DINHEIRO acima do saldo devedor (para troco)")
         void devePermitirIntencaoDinheiroAcimaDoSaldoDevedor() {
             UUID uuidRef = UUID.randomUUID();

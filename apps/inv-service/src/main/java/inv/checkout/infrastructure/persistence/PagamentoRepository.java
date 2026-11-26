@@ -26,6 +26,16 @@ public interface PagamentoRepository extends JpaRepository<Pagamento, Long> {
     @Query("SELECT p FROM Pagamento p WHERE p.id = :id")
     Optional<Pagamento> findByIdWithLock(@Param("id") Long id);
 
+    @Query("""
+            SELECT COALESCE(SUM(p.valorRecebido), 0)
+            FROM Pagamento p
+            WHERE p.venda.id = :vendaId
+              AND p.status = inv.checkout.domain.model.StatusPagamento.CONFIRMADO
+              AND p.contabilizado = false
+              AND p.excedente = false
+            """)
+    BigDecimal somarConfirmadosNaoContabilizados(@Param("vendaId") Long vendaId);
+
     @Query(value = """
             INSERT INTO pagamentos (
                 uuid_referencia, venda_id, metodo, status,

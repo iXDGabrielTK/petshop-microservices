@@ -7,9 +7,11 @@ package inv.it;
 
 import common.exception.BusinessException;
 import inv.InvServiceApplication;
+import inv.checkout.domain.model.Pagamento;
 import inv.checkout.domain.model.StatusVenda;
 import inv.checkout.domain.model.Venda;
 import inv.checkout.infrastructure.messaging.VendaEventHandler;
+import inv.checkout.infrastructure.persistence.PagamentoRepository;
 import inv.checkout.infrastructure.persistence.VendaRepository;
 import inv.checkout.infrastructure.web.dto.ItemVendaRequest;
 import inv.checkout.infrastructure.web.dto.VendaRequest;
@@ -106,6 +108,9 @@ class VendaEventHandlerIT {
 
     @Autowired
     private VendaRepository vendaRepository;
+
+    @Autowired
+    private PagamentoRepository pagamentoRepository;
 
     @Autowired
     private MovimentacaoRepository movimentacaoRepository;
@@ -319,5 +324,61 @@ class VendaEventHandlerIT {
                 .filter(e -> e.vendaId().equals(venda.getId()))
                 .count();
         assertThat(eventosPublicados).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("P2-#2 — Dois CARTAO_DEBITO parciais de 60,00 em voo para venda de 100,00: deduz saldo pendente e marca 2º como excedente sem troco")
+    void doisCartoesParciaisEmVooDevemMarcarSegundoComoExcedenteSemTrocoEAbaixarSaldoDevedor() {
+        Produto produto = new Produto();
+        produto.setNome("Ração Cartão Parcial Em Voo");
+        produto.setCodigoBarras("7890000000104");
+        produto.setUnidadeMedida(UnidadeMedida.UN);
+        produto.setPrecoVenda(new BigDecimal("50.00"));
+        produto.setEstoqueDisponivel(new BigDecimal("10.000"));
+        produto.setEstoqueReservado(new BigDecimal("0.000"));
+        produto.setEstoqueMinimo(new BigDecimal("2.000"));
+        produto = produtoRepository.saveAndFlush(produto);
+
+        Venda venda = vendaService.iniciarVenda(new VendaRequest(List.of(
+                new ItemVendaRequest(produto.getId(), new BigDecimal("2.000"))
+        )));
+        Long vendaId = venda.getId();
+
+        Long pagIdA = pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("60.00"), UUID.randomUUID());
+        Long pagIdB = pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("60.00"), UUID.randomUUID());
+
+        pagamentoService.confirmarPagamentoWebhook(pagIdA, new BigDecimal("60.00"), "NSU-DEBITO-A");
+
+        assertThatThrownBy(() -> pagamentoService.criarIntencaoPagamento(
+                vendaId, MetodoPagamento.CARTAO_DEBITO, new BigDecimal("60.00"), UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("saldo devedor atual da venda (40.00)");
+
+        pagamentoService.confirmarPagamentoWebhook(pagIdB, new BigDecimal("60.00"), "NSU-DEBITO-B");
+
+        String payloadA = "{\"vendaId\":%d,\"pagamentoId\":%d}".formatted(vendaId, pagIdA);
+        String payloadB = "{\"vendaId\":%d,\"pagamentoId\":%d}".formatted(vendaId, pagIdB);
+
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payloadA.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        vendaEventHandler.handlePagamentoConfirmado(new Message(payloadB.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        Venda vendaFinal = vendaRepository.findById(vendaId).orElseThrow();
+        assertThat(vendaFinal.getStatus()).isEqualTo(StatusVenda.AGUARDANDO_PAGAMENTO);
+        assertThat(vendaFinal.getValorPago()).isEqualByComparingTo("60.00");
+        assertThat(vendaFinal.getValorTroco()).isEqualByComparingTo("0.00");
+
+        Pagamento pagA = pagamentoRepository.findById(pagIdA).orElseThrow();
+        Pagamento pagB = pagamentoRepository.findById(pagIdB).orElseThrow();
+        assertThat(pagA.isContabilizado()).isTrue();
+        assertThat(pagA.isExcedente()).isFalse();
+        assertThat(pagB.isExcedente()).isTrue();
+        assertThat(pagB.isContabilizado()).isFalse();
+
+        List<LancamentoFinanceiro> lancamentos = lancamentoRepository.findAll();
+        assertThat(lancamentos).hasSize(1);
+        assertThat(lancamentos.getFirst().getVendaId()).isEqualTo(vendaId);
+        assertThat(lancamentos.getFirst().getValor()).isEqualByComparingTo("60.00");
     }
 }
