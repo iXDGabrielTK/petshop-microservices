@@ -152,7 +152,8 @@ class RefreshTokenCookieFilterTest {
         String setCookieHeader = response.getHeader(HttpHeaders.SET_COOKIE);
         assertThat(setCookieHeader).isNotNull();
         assertThat(setCookieHeader).contains("refresh_token=secret-refresh-token-456");
-        assertThat(setCookieHeader).contains("Path=/oauth2/token");
+        assertThat(setCookieHeader).contains("Path=/oauth2;");
+        assertThat(setCookieHeader).doesNotContain("Path=/oauth2/token");
         assertThat(setCookieHeader).contains("HttpOnly");
         assertThat(setCookieHeader).contains("Secure");
         assertThat(setCookieHeader).contains("SameSite=Lax");

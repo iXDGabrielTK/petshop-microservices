@@ -40,20 +40,23 @@ public class CookieClearingLogoutHandler implements LogoutHandler {
     public void logout(HttpServletRequest request, HttpServletResponse response, Authentication authentication) {
         revogarRefreshTokenSePresente(request);
 
-        ResponseCookie cookie = ResponseCookie.from("refresh_token", "")
-                .httpOnly(true)
-                .secure(isCookieSecure)
-                .sameSite(cookieSameSite)
-                .path("/oauth2/token")
-                .maxAge(0)
-                .build();
-
-        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, expiredRefreshCookie("/oauth2").toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, expiredRefreshCookie("/oauth2/token").toString());
 
         Cookie jsessionCookie = new Cookie("JSESSIONID", null);
         jsessionCookie.setPath("/");
         jsessionCookie.setMaxAge(0);
         response.addCookie(jsessionCookie);
+    }
+
+    private ResponseCookie expiredRefreshCookie(String path) {
+        return ResponseCookie.from("refresh_token", "")
+                .httpOnly(true)
+                .secure(isCookieSecure)
+                .sameSite(cookieSameSite)
+                .path(path)
+                .maxAge(0)
+                .build();
     }
 
     private void revogarRefreshTokenSePresente(HttpServletRequest request) {

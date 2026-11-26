@@ -75,7 +75,7 @@ public class RefreshTokenCookieFilter extends OncePerRequestFilter {
                             .httpOnly(true)
                             .secure(isCookieSecure)
                             .sameSite(cookieSameSite)
-                            .path("/oauth2/token")
+                            .path("/oauth2")
                             .maxAge(Duration.ofDays(1))
                             .build();
 

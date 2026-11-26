@@ -72,6 +72,7 @@ import org.springframework.security.web.savedrequest.RequestCache;
 import org.springframework.security.web.savedrequest.SavedRequest;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -117,7 +118,10 @@ public class SecurityConfig {
     private final LoginAttemptService loginAttemptService;
     private final ClientIpResolver clientIpResolver;
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
-    private static final RequestMatcher LOGOUT_REQUEST_MATCHER = AntPathRequestMatcher.antMatcher(HttpMethod.POST, "/logout");
+    private static final RequestMatcher LOGOUT_REQUEST_MATCHER = new OrRequestMatcher(
+            AntPathRequestMatcher.antMatcher(HttpMethod.POST, "/logout"),
+            AntPathRequestMatcher.antMatcher(HttpMethod.POST, "/oauth2/logout")
+    );
 
     public SecurityConfig(
             CookieRefreshTokenRequestFilter cookieRefreshTokenRequestFilter,

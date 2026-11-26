@@ -321,7 +321,61 @@ class AuthTokenRevocationTest {
                         .cookie(new Cookie("refresh_token", "rt-enc-1")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.refresh_token").doesNotExist())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, org.hamcrest.Matchers.containsString("refresh_token=")));
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, org.hamcrest.Matchers.containsString("refresh_token=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, org.hamcrest.Matchers.containsString("Path=/oauth2;")));
+    }
+
+    @Test
+    @DisplayName("POST /oauth2/logout apenas com cookie refresh_token e Origin válido deve revogar sessão e limpar cookies /oauth2 e legado")
+    void deveRevogarSessaoEmOAuth2LogoutApenasComCookie() throws Exception {
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-oauth2-logout", "rt-oauth2-logout");
+
+        mockMvc.perform(post("/oauth2/logout")
+                        .cookie(new Cookie("refresh_token", "rt-oauth2-logout")))
+                .andExpect(status().isForbidden());
+
+        assertThat(authorizationService.findByToken("rt-oauth2-logout", OAuth2TokenType.REFRESH_TOKEN)).isNotNull();
+
+        mockMvc.perform(post("/oauth2/logout")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .cookie(new Cookie("refresh_token", "rt-oauth2-logout")))
+                .andExpect(status().isOk())
+                .andExpect(header().stringValues(HttpHeaders.SET_COOKIE,
+                        org.hamcrest.Matchers.hasItem(org.hamcrest.Matchers.containsString("Path=/oauth2;"))))
+                .andExpect(header().stringValues(HttpHeaders.SET_COOKIE,
+                        org.hamcrest.Matchers.hasItem(org.hamcrest.Matchers.containsString("Path=/oauth2/token;"))));
+
+        assertThat(authorizationService.findByToken("rt-oauth2-logout", OAuth2TokenType.REFRESH_TOKEN)).isNull();
+
+        mockMvc.perform(post("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .header(HttpHeaders.AUTHORIZATION, BASIC_AUTH)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("grant_type", "refresh_token")
+                        .cookie(new Cookie("refresh_token", "rt-oauth2-logout")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+    }
+
+    @Test
+    @DisplayName("POST /oauth2/%6cogout deve validar Origin e revogar o refresh_token normalmente")
+    void deveValidarOriginERevogarEmOAuth2LogoutComPercentEncoding() throws Exception {
+        salvarAutorizacaoAtiva("user@petshop.com", 10L, "at-oauth2-enc-logout", "rt-oauth2-enc-logout");
+
+        mockMvc.perform(post(URI.create("/oauth2/%6cogout"))
+                        .header(HttpHeaders.ORIGIN, "http://evil.com")
+                        .cookie(new Cookie("refresh_token", "rt-oauth2-enc-logout")))
+                .andExpect(status().isForbidden());
+
+        assertThat(authorizationService.findByToken("rt-oauth2-enc-logout", OAuth2TokenType.REFRESH_TOKEN)).isNotNull();
+
+        mockMvc.perform(post(URI.create("/oauth2/%6cogout"))
+                        .header(HttpHeaders.ORIGIN, ORIGIN)
+                        .cookie(new Cookie("refresh_token", "rt-oauth2-enc-logout")))
+                .andExpect(status().isOk());
+
+        assertThat(authorizationService.findByToken("rt-oauth2-enc-logout", OAuth2TokenType.REFRESH_TOKEN)).isNull();
     }
 
     @Test

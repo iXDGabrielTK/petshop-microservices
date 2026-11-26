@@ -22,6 +22,8 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -54,15 +56,25 @@ class CookieClearingLogoutHandlerTest {
 
         logoutHandler.logout(request, response, authentication);
 
-        // Verifica o cabeçalho Set-Cookie do refresh_token
-        String setCookieHeader = response.getHeader(HttpHeaders.SET_COOKIE);
-        assertThat(setCookieHeader).isNotNull();
-        assertThat(setCookieHeader).contains("refresh_token=");
-        assertThat(setCookieHeader).contains("Max-Age=0");
-        assertThat(setCookieHeader).contains("Path=/oauth2/token");
-        assertThat(setCookieHeader).contains("HttpOnly");
-        assertThat(setCookieHeader).contains("Secure");
-        assertThat(setCookieHeader).contains("SameSite=Lax");
+        // Verifica os cabeçalhos Set-Cookie do refresh_token (/oauth2 e legado /oauth2/token)
+        List<String> refreshCookieHeaders = response.getHeaders(HttpHeaders.SET_COOKIE).stream()
+                .filter(header -> header.startsWith("refresh_token="))
+                .toList();
+        assertThat(refreshCookieHeaders).hasSize(2);
+        assertThat(refreshCookieHeaders).anySatisfy(header -> assertThat(header)
+                .contains("refresh_token=")
+                .contains("Max-Age=0")
+                .contains("Path=/oauth2;")
+                .contains("HttpOnly")
+                .contains("Secure")
+                .contains("SameSite=Lax"));
+        assertThat(refreshCookieHeaders).anySatisfy(header -> assertThat(header)
+                .contains("refresh_token=")
+                .contains("Max-Age=0")
+                .contains("Path=/oauth2/token;")
+                .contains("HttpOnly")
+                .contains("Secure")
+                .contains("SameSite=Lax"));
 
         // Verifica o cookie JSESSIONID
         Cookie jsessionCookie = response.getCookie("JSESSIONID");
