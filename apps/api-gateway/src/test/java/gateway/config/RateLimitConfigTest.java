@@ -127,6 +127,58 @@ class RateLimitConfigTest {
         }
 
         @Test
+        @DisplayName("Com hops=1 e múltiplos headers X-Forwarded-For, deve descartar headers ambíguos e fazer fallback para remoteAddress")
+        void deveDescartarMultiplosHeadersXffEFazerFallbackParaRemoteAddress() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(1).userKeyResolver();
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "1.1.1.1")
+                    .header("X-Forwarded-For", "203.0.113.195")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(resolver.resolve(exchange))
+                    .expectNext("10.0.0.10")
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Com hops=1 e IPv6 no X-Forwarded-For, deve resolver o IPv6 confiável sem porta")
+        void deveResolverIpv6ConfiavelNoXffQuandoHopsUm() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(1).userKeyResolver();
+            MockServerHttpRequest request = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "1.1.1.1, 2001:db8::1")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
+                    .build();
+            ServerWebExchange exchange = MockServerWebExchange.from(request);
+
+            StepVerifier.create(resolver.resolve(exchange))
+                    .expectNext("2001:db8:0:0:0:0:0:1")
+                    .verifyComplete();
+        }
+
+        @Test
+        @DisplayName("Com hops=1 e X-Forwarded-For vazio ou em branco, deve fazer fallback para remoteAddress")
+        void deveFazerFallbackParaRemoteAddressQuandoXffEmBrancoOuVazio() throws Exception {
+            KeyResolver resolver = new RateLimitConfig(1).userKeyResolver();
+            MockServerHttpRequest emptyRequest = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
+                    .build();
+            MockServerHttpRequest blankRequest = MockServerHttpRequest.get("/produtos")
+                    .header("X-Forwarded-For", "   ")
+                    .remoteAddress(new InetSocketAddress(InetAddress.getByName("10.0.0.10"), 443))
+                    .build();
+
+            StepVerifier.create(resolver.resolve(MockServerWebExchange.from(emptyRequest)))
+                    .expectNext("10.0.0.10")
+                    .verifyComplete();
+            StepVerifier.create(resolver.resolve(MockServerWebExchange.from(blankRequest)))
+                    .expectNext("10.0.0.10")
+                    .verifyComplete();
+        }
+
+        @Test
         @DisplayName("Deve rejeitar trustedProxyHops negativo no construtor")
         void deveRejeitarHopsNegativo() {
             assertThatThrownBy(() -> new RateLimitConfig(-1))
@@ -208,6 +260,41 @@ class RateLimitConfigTest {
 
             assertThat(first).isEqualTo("172.16.0.50");
             assertThat(second).isEqualTo(first);
+        }
+
+        @Test
+        @DisplayName("Deve ignorar porta efêmera gerando a mesma chave para o mesmo IPv4 e IPv6")
+        void deveIgnorarPortaEfemeraParaMesmoIpIpv4EIpv6() throws Exception {
+            ServerWebExchange ipv4Conn1 = MockServerWebExchange.from(
+                    MockServerHttpRequest.get("/api")
+                            .remoteAddress(new InetSocketAddress(InetAddress.getByName("192.168.1.50"), 54321))
+                            .build()
+            );
+            ServerWebExchange ipv4Conn2 = MockServerWebExchange.from(
+                    MockServerHttpRequest.get("/api")
+                            .remoteAddress(new InetSocketAddress(InetAddress.getByName("192.168.1.50"), 54322))
+                            .build()
+            );
+            ServerWebExchange ipv6Conn1 = MockServerWebExchange.from(
+                    MockServerHttpRequest.get("/api")
+                            .remoteAddress(new InetSocketAddress(InetAddress.getByName("::1"), 54321))
+                            .build()
+            );
+            ServerWebExchange ipv6Conn2 = MockServerWebExchange.from(
+                    MockServerHttpRequest.get("/api")
+                            .remoteAddress(new InetSocketAddress(InetAddress.getByName("::1"), 54322))
+                            .build()
+            );
+
+            String ipv4Key1 = keyResolver.resolve(ipv4Conn1).block();
+            String ipv4Key2 = keyResolver.resolve(ipv4Conn2).block();
+            String ipv6Key1 = keyResolver.resolve(ipv6Conn1).block();
+            String ipv6Key2 = keyResolver.resolve(ipv6Conn2).block();
+
+            assertThat(ipv4Key1).isEqualTo("192.168.1.50").isEqualTo(ipv4Key2);
+            assertThat(ipv6Key1).isEqualTo("0:0:0:0:0:0:0:1").isEqualTo(ipv6Key2);
+            assertThat(ipv4Key1).doesNotContain("54321");
+            assertThat(ipv6Key1).doesNotContain("54321");
         }
     }
 
