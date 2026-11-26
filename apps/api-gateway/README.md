@@ -10,15 +10,15 @@ O **API Gateway** é o ponto de entrada único para o ecossistema Pet Shop, gere
 ## 🚀 Features & Mecanismos de Borda
 
 * **Token Bucket Rate Limiter:** Proteção contra ataques de força bruta e DoS por IP via Redis.
-  * Suporte a proxies reversos através dos cabeçalhos `X-Forwarded-For` e `X-Real-IP`.
+  * Resolução de IP por saltos confiáveis (`gateway.rate-limit.trusted-proxy-hops`, padrão `0` usando o socket direto e `XForwardedRemoteAddressResolver.maxTrustedIndex(n)` quando `>= 1`), sem leitura de `X-Real-IP` e sem porta efêmera na chave.
   * Particionamento preventivo contra DoS (`anon_<hash>`) para clientes anônimos sem IP identificável.
 * **Precedência e Isolamento de Rotas:**
   * `order: 1` — Rota de Webhook de Pagamento (`/pagamentos/webhook/**`) com prioridade e **isenta de rate limit**, evitando descarte de notificações de parceiros de pagamento (precede a rota genérica `order: 2` para resolver a sobreposição com `/pagamentos/**`).
   * `order: 2` — Rota de Negócio do `inv-service` (`/produtos/**`, `/vendas/**`, `/movimentacoes/**`, `/dashboard/**`, `/pagamentos/**`) protegida por Rate Limiting.
   * `order: 0` — Rota de Identidade do `auth-service` (`/oauth2/**`, `/usuarios/**`) protegida por Rate Limiting.
 * **Telemetria de Atividade Resiliente no Redis:**
-  * Expurgo assíncrono em segundo plano (`ActivityPurgeScheduler`) a cada 5 minutos, removendo registros com mais de 1 hora.
-  * Circuito não-bloqueante no `ActivityFilter` (`onErrorResume`) com supressão de tempestade de logs (máximo de 1 aviso a cada 10s sob falha do Redis).
+  * Buckets `O(1)` por minuto (`system:activity:bucket:<epochMinute>`) atualizados atomicamente via script Lua (`INCR` + `EXPIRE` de 1 hora), eliminando schedulers de expurgo e crescimento `O(N)`.
+  * Circuito não-bloqueante no `ActivityFilter` com timeout reativo (`200ms`) + `onErrorResume` e supressão de tempestade de logs (máximo de 1 aviso a cada 10s sob falha do Redis).
 * **Headers Globais:** Injeção de `X-Request-Id` e propagação de contexto de rastreabilidade.
 
 ---

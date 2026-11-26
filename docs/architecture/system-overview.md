@@ -397,7 +397,7 @@ O tratamento de exceções HTTP é centralizado no [`GlobalExceptionHandler`](..
   - `auth-service`: Scrape em `auth-service:8081` (emissão de tokens OAuth2, sessões e autenticações).
   - `mail-service`: Scrape em `mail-service:8082` (processamento de e-mails transacionais e deduplicação de eventos).
   - `rabbitmq`: Scrape via endpoint de métricas em `rabbitmq:15692`.
-* **Telemetria de Borda Desacoplada & Proteção contra Log Storms:** O API Gateway coleta atividade via `ActivityFilter` com fallback não-bloqueante (`onErrorResume`) e supressão de warnings (máximo de 1 log a cada 10s sob falha de conexão com o Redis). A limpeza de registros com mais de 1 hora no Redis é executada assincronamente pelo `ActivityPurgeScheduler` a cada 5 minutos.
+* **Telemetria de Borda Desacoplada & Proteção contra Log Storms:** O API Gateway coleta atividade via `ActivityFilter` em buckets `O(1)` por minuto atualizados atomicamente via script Lua com expiração automática de 1 hora no Redis, fallback não-bloqueante (`.timeout(200ms)` + `onErrorResume`) e supressão de warnings (máximo de 1 log a cada 10s sob falha de conexão com o Redis).
 * **Logs Não-Bloqueantes:** Utilização de `Logstash Async Appender` para evitar overhead de I/O de disco em threads HTTP de requisição.
 * **Consistência de Variáveis de Ambiente e Kill Switch:** Normalização estrita de variáveis de ambiente no `docker-compose.yml` (como `JWT_PUBLIC_KEY` em maiúsculas e `FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED` com padrão `false`), garantindo paridade total com o `.env.example`, validação stateless de tokens RSA entre serviços e controle operacional seguro do cancelamento pós-faturamento.
 

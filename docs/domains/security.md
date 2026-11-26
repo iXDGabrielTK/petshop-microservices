@@ -37,51 +37,37 @@ O **API Gateway** (`apps/api-gateway`) é a única porta de entrada exposta publ
 
 ### A. Rate Limiting com Redis ([`RateLimitConfig.java`](../../apps/api-gateway/src/main/java/gateway/config/RateLimitConfig.java))
 * **Algoritmo:** *Token Bucket* implementado nativamente pelo Spring Cloud Gateway e Redis.
-* **Resolução de Identidade por IP & Proxy Reverso:**
-  O `userKeyResolver` resolve a identidade da requisição na seguinte ordem de precedência:
-  1. Primeiro IP válido e não-em-branco extraído de `X-Forwarded-For` (`split(",")`).
-  2. Cabeçalho `X-Real-IP`.
-  3. IP direto da conexão de rede (`remoteAddress`).
-  4. **Mitigação de DoS para clientes anônimos:** Caso nenhum IP seja determinável, gera uma chave particionada pelo hash hexadecimal de `(User-Agent, Path)` sob o prefixo `anon_<hash>`. Isso mitiga a colisão global no bucket genérico `anonymous` (embora clientes com o mesmo `User-Agent` e mesma rota ainda compartilhem o bucket daquela partição específica).
-  5. Fallback final: `anonymous`.
+* **Resolução de Identidade por IP & Proxy Reverso Confiável (`gateway.rate-limit.trusted-proxy-hops`):**
+  O `userKeyResolver` extrai exclusivamente o endereço IP sem porta efêmera (`getAddress().getHostAddress()` / `getHostString()`), evitando bypass por abertura de novas conexões TCP, seguindo a configuração `gateway.rate-limit.trusted-proxy-hops=${GATEWAY_TRUSTED_PROXY_HOPS:0}` (rejeitando valores negativos no startup):
+  1. **`trusted-proxy-hops = 0` (padrão seguro):** ignora `X-Forwarded-For` e `X-Real-IP` e utiliza exclusivamente `exchange.getRequest().getRemoteAddress()`.
+  2. **`trusted-proxy-hops >= 1`:** delega para `XForwardedRemoteAddressResolver.maxTrustedIndex(trustedProxyHops)` do Spring Cloud Gateway (avaliando a cadeia `X-Forwarded-For` pela direita conforme o número exato de saltos confiáveis e descartando headers múltiplos/ambíguos), com fallback para `remoteAddress` do socket se ausente ou inválido. Nunca lê `X-Real-IP`.
+  3. **Mitigação de DoS para clientes anônimos:** Caso nenhum IP seja determinável, gera uma chave particionada pelo hash hexadecimal de `(User-Agent, Path)` sob o prefixo `anon_<hash>`. Isso mitiga a colisão global no bucket genérico `anonymous` (embora clientes com o mesmo `User-Agent` e mesma rota ainda compartilhem o bucket daquela partição específica).
+  4. Fallback final: `anonymous`.
 
 #### Requisitos de Configuração de Proxy Reverso (Nginx / Cloudflare)
-Para garantir que o Rate Limiter identifique o cliente real sem permitir falsificação de identidade (IP Spoofing), o proxy reverso de borda deve repassar os cabeçalhos de forma segura:
+Para garantir que o Rate Limiter identifique o cliente real sem permitir falsificação de identidade (IP Spoofing), configure `GATEWAY_TRUSTED_PROXY_HOPS` exatamente igual ao número de proxies reversos confiáveis à frente do Gateway e garanta que o Gateway não aceite tráfego direto da internet quando `hops >= 1`:
 
 ```nginx
-# Configuração para Nginx upstream ao API Gateway (Cenário de Proxy Único)
-# IMPORTANTE: Sobrescreve o cabeçalho X-Forwarded-For com o IP real da conexão ($remote_addr)
-proxy_set_header X-Real-IP $remote_addr;
+# Exemplo para Nginx upstream ao API Gateway (GATEWAY_TRUSTED_PROXY_HOPS=1)
+# Sobrescreve ou anexa após o proxy de borda confiável
 proxy_set_header X-Forwarded-For $remote_addr;
 ```
 
 ```nginx
-# Configuração para Nginx operando atrás de CDN/Cloudflare
-# IMPORTANTE: Requer aceitar conexões apenas dos IPs oficiais da Cloudflare para evitar spoofing!
-# Consulte a lista completa e dinâmica de CIDRs em: https://www.cloudflare.com/ips/
+# Exemplo para Nginx operando atrás de CDN/Cloudflare
+# Aceite conexões apenas dos CIDRs oficiais da Cloudflare (https://www.cloudflare.com/ips/)
 set_real_ip_from 173.245.48.0/20;
 set_real_ip_from 103.21.244.0/22;
 # (...demais faixas CIDR IPv4 e IPv6 oficiais da Cloudflare...)
 real_ip_header CF-Connecting-IP;
 
-proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $remote_addr;
 ```
 
-> [!WARNING]
-> **Prevenção de Spoofing via `X-Forwarded-For`:**  
-> Tratar o primeiro IP de `X-Forwarded-For` como identidade só é seguro se o proxy de borda **SOBRESCREVER** o header (`proxy_set_header X-Forwarded-For $remote_addr;`). **Nunca utilize `$proxy_add_x_forwarded_for`** quando o rate limit confia no primeiro IP, pois essa diretiva preserva o header enviado pelo cliente e apenas concatena o IP real ao final (`<ip-injetado-pelo-atacante>, <ip-real>`), permitindo que um invasor falsifique sua identidade a cada requisição. O Gateway também não pode ficar acessível diretamente da internet, apenas a partir do proxy confiável.
-> 
-> Caso a Cloudflare seja conectada **diretamente** ao API Gateway (sem Nginx intermediário), como o comportamento padrão da CDN é concatenar ao `X-Forwarded-For`, deve-se configurar uma *Cloudflare Transform Rule (Modify Request Header)* para sobrescrever `X-Real-IP` com `http.request.headers["cf-connecting-ip"][0]`, ou usar Nginx intermediário com `real_ip_header CF-Connecting-IP;`.
-
-> [!NOTE]
-> **Comportamento Atual vs Ponto de Melhoria no Código (RateLimitConfig):**  
-> O `RateLimitConfig` faz parsing manual do primeiro elemento não-em-branco de `X-Forwarded-For.split(",")`. Em arquiteturas com múltiplos proxies em cadeia, a boa prática recomendada para o Spring Cloud Gateway é utilizar `XForwardedRemoteAddressResolver.maxTrustedIndex(n)` (que avalia a cadeia pela direita com base em `n` saltos confiáveis), tornando a extração imune a cabeçalhos malformados ou múltiplos proxies intermediários. A documentação instrui a configuração segura necessária para o comportamento atual da aplicação e anota o uso de `maxTrustedIndex` como oportunidade de evolução técnica futura no código.
-
 ### B. Telemetria Redis Resiliente e Proteção contra Log Storms
-O Gateway registra métricas de atividade de tráfego através do [`ActivityFilter.java`](../../apps/api-gateway/src/main/java/gateway/filter/ActivityFilter.java) e do scheduler em segundo plano [`ActivityPurgeScheduler.java`](../../apps/api-gateway/src/main/java/gateway/telemetry/ActivityPurgeScheduler.java):
-* **Expurgo Periódico Desacoplado:** A limpeza dos registros com mais de 1 hora no Sorted Set (`ATIVIDADE_ZSET`) é executada assincronamente a cada 5 minutos (`@Scheduled(fixedRate = 300_000)`), eliminando o overhead de expurgo síncrono durante as requisições HTTP dos usuários.
-* **Circuito Não-Bloqueante & Supressão de Logs:** Na thread reativa do filtro, a operação de escrita Redis utiliza `onErrorResume`, garantindo que uma indisponibilidade temporária do Redis não bloqueie ou degrade as requisições dos clientes. O tratamento de erro emprega um circuito de throttling (`AtomicLong lastLogTimestamp`) que emite no máximo um warning no log a cada 10 segundos (`LOG_SUPPRESSION_INTERVAL_MS = 10_000`), prevenindo tempestades de logs (*log storms*) e saturação de I/O em disco.
+O Gateway registra métricas de atividade de tráfego através do [`ActivityFilter.java`](../../apps/api-gateway/src/main/java/gateway/filter/ActivityFilter.java) em buckets `O(1)` por minuto (`system:activity:bucket:<epochMinute>`):
+* **Memória `O(1)` e TTL Atômico via Script Lua:** Cada requisição incrementa o contador do minuto corrente por meio do script Lua [`TelemetriaKeys.ATIVIDADE_INCREMENT_LUA`](../../apps/common-lib/src/main/java/common/telemetry/TelemetriaKeys.java) (`INCR` + `EXPIRE` de 1 hora quando `count == 1` ou `TTL < 0`), eliminando chaves órfãs sem TTL, dispensando schedulers de expurgo e mantendo consumo de memória constante por minuto.
+* **Circuito Não-Bloqueante, Timeout Fail-Open & Supressão de Logs:** Na thread reativa do filtro, a chamada Redis é limitada por `.timeout(200ms)` seguido de `onErrorResume`, garantindo que indisponibilidade ou lentidão do Redis não bloqueie as requisições dos clientes. O tratamento de erro emprega um circuito de throttling (`AtomicLong lastLogTimestamp`) que emite no máximo um warning no log a cada 10 segundos (`LOG_SUPPRESSION_INTERVAL_MS = 10_000`), prevenindo tempestades de logs (*log storms*) e saturação de I/O em disco.
 
 ### C. Mapeamento e Precedência de Rotas ([`application.properties`](../../apps/api-gateway/src/main/resources/application.properties))
 * **`order: 1` — `inv-webhook`:** Intercepta `/pagamentos/webhook/**` e encaminha diretamente para `http://inv-service:8083`. **Isenta de `RequestRateLimiter`** para garantir que notificações legítimas de operadoras parceiras de pagamento não sofram bloqueio por estouro de cota.
@@ -147,11 +133,21 @@ Para impedir regressões mascaradas por testes que desabilitam filtros (`addFilt
 
 ---
 
-## 4. Gerenciamento Seguro de Refresh Tokens
+## 4. Gerenciamento Seguro de Refresh Tokens, Proteção de Login e Fronteiras Aceitas
 
 Para mitigar riscos de roubo de sessão em navegadores:
 * O Refresh Token é transportado exclusivamente através de cookies com flag **`HttpOnly`** e política de **`SameSite`** configurável (`Lax` em DEV / `Strict` em PROD).
 * Filtros dedicados ([`RefreshTokenCookieFilter.java`](../../apps/auth-service/src/main/java/auth/security/filter/RefreshTokenCookieFilter.java) e [`CookieRefreshTokenRequestFilter.java`](../../apps/auth-service/src/main/java/auth/security/filter/CookieRefreshTokenRequestFilter.java)) interceptam a renovação de sessão de forma transparente para o Front-end.
+
+### A. Proteção contra Brute Force no `/login` e Hardening da Página de Login
+* **Lockout por `(username normalizado, IP)`:** O [`LoginLockoutFilter.java`](../../apps/auth-service/src/main/java/auth/security/filter/LoginLockoutFilter.java) consulta o [`LoginAttemptService.java`](../../apps/auth-service/src/main/java/auth/security/LoginAttemptService.java) antes da validação de credenciais (evitando custo de `BCrypt` sob ataque e respondendo com o mesmo redirect `/login?error` para contas existentes e inexistentes). O estado em memória é limitado por LRU (`auth.login.lockout.max-entries:10000`), compacta componentes extensos de chave via SHA-256 e aplica janela/bloqueio configuráveis (`max-attempts:5`, `duration-minutes:15`).
+* **Anti-Spoofing de IP e Path:** O [`ClientIpResolver.java`](../../apps/auth-service/src/main/java/auth/security/ClientIpResolver.java) desembrulha wrappers de requisição (como `ForwardedHeaderFilter`) e lê `auth.login.lockout.trusted-proxy-hops` (padrão `0`), impedindo bypass por rotação de `X-Forwarded-For`; a detecção da rota `/login` também cobre parâmetros de matriz (ex.: `/login;jsessionid=...`).
+* **CSP e CSS Local sem CDN:** A página [`login.html`](../../apps/auth-service/src/main/resources/templates/login.html) utiliza exclusivamente a folha local [`login.css`](../../apps/auth-service/src/main/resources/static/css/login.css) (liberada publicamente via `/css/**`), sem scripts externos ou inline, protegida pelo cabeçalho `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'`.
+
+### B. Fronteiras de CSRF em `/oauth2/token` e Armazenamento de `refresh_token`
+* **CSRF double-submit em `/oauth2/token` (mantido desativado para compatibilidade atual):** A cadeia OAuth2 (`authorizationServerSecurityFilterChain`) mantém `.csrf(AbstractHttpConfigurer::disable)`, confiando na validação estrita de `Origin`/`Referer` em [`CookieRefreshTokenRequestFilter.java`](../../apps/auth-service/src/main/java/auth/security/filter/CookieRefreshTokenRequestFilter.java) (além do `logoutOriginValidationFilter` em `/logout`) combinada à política `HttpOnly` + `SameSite` do cookie `refresh_token`.
+  * **Contrato futuro para o `petshop-frontend`:** Caso a proteção CSRF double-submit venha a ser habilitada em `/oauth2/token` ou `/logout`, o frontend precisará ler o cookie `XSRF-TOKEN` emitido pelo `CookieCsrfTokenRepository` e enviar o cabeçalho **`X-XSRF-TOKEN`** em cada requisição mutável (`POST /oauth2/token` com `grant_type=refresh_token` e `POST /logout`) usando `credentials: 'include'`.
+* **Armazenamento de `refresh_token` em `oauth2_authorization` (risco aceito):** O `JdbcOAuth2AuthorizationService` permanece sem camada customizada de hash na coluna `refresh_token_value`. Esse risco é explicitamente aceito sob a condição operacional de manter acesso estritamente restrito ao banco `postgres-auth` (credenciais dedicadas de menor privilégio, isolamento em rede interna sem exposição pública de porta em produção e proteção de backups).
 
 ---
 
