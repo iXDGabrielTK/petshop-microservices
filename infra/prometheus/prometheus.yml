@@ -17,11 +17,6 @@ scrape_configs:
     static_configs:
       - targets: [ 'rabbitmq:15692' ]
 
-  - job_name: 'api-gateway'
-    metrics_path: '/actuator/prometheus'
-    static_configs:
-      - targets: ['api-gateway:8080']
-
   - job_name: 'inv-service'
     metrics_path: '/actuator/prometheus'
     static_configs:

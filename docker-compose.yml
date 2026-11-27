@@ -141,6 +141,8 @@ services:
     ports:
       - "8082:8082"
     depends_on:
+      postgres-mail:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     environment:
@@ -173,6 +175,8 @@ services:
     depends_on:
       postgres-inv:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       - FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED=${FEATURES_CANCELAMENTO_VENDA_CONCLUIDA_ENABLED:-false}
       - DB_HOST=${DB_HOST_INV}
@@ -185,6 +189,7 @@ services:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
       - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - PAGAMENTO_WEBHOOK_HMAC_SECRET=${PAGAMENTO_WEBHOOK_HMAC_SECRET}
       - SPRING_DATA_REDIS_HOST=${SPRING_DATA_REDIS_HOST}
       - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
       - TZ=America/Sao_Paulo
